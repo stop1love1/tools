@@ -2,7 +2,7 @@
 
 Backend trung tâm cho toàn bộ tools/games TikTok trong `d:\projects\tools\tiktok`:
 
-1. **Live bridge** — kết nối TikTok LIVE (thư viện Go [gotiktoklive](https://github.com/steampoweredtaco/gotiktoklive)), phát sự kiện chat/quà/tim/vào phòng qua WebSocket cho các game (demo, meme-dance…).
+1. **Live bridge** — kết nối TikTok LIVE (thư viện Go [gotiktoklive](https://github.com/steampoweredtaco/gotiktoklive)), phát sự kiện chat/quà/tim/vào phòng qua WebSocket cho các game (dance-with-music…).
 2. **Data API** — proxy sang sidecar Python (FastAPI) cung cấp API video/user/comment/trending (dựa trên TikTokApi).
 3. **MongoDB** — lưu phiên live, log quà tặng, log chat.
 

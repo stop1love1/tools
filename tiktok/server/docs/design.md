@@ -3,7 +3,7 @@
 ## Quyết định đã chốt (từ user)
 
 - Backend trung tâm tại `tiktok/server`, viết bằng **Go**, làm toàn bộ BE trước khi động frontend.
-- Vai trò: **bridge TikTok LIVE trung tâm** — các game (demo :3000, meme-dance :3100) sau này bỏ server Node nhúng, kết nối WebSocket vào đây.
+- Vai trò: **bridge TikTok LIVE trung tâm** — các game (dance-with-music :3100, trước đây còn demo :3000) sau này bỏ server Node nhúng, kết nối WebSocket vào đây.
 - Stack: **stdlib net/http + gorilla/websocket**, thư viện live: `steampoweredtaco/gotiktoklive` (fork active, signing mới qua Euler Stream).
 - Lưu trữ: **MongoDB** (driver chính thức v2) — sessions, gifts, chats. Không có DB vẫn chạy (Store nil-safe).
 - Nhóm API dữ liệu (video meta+download, user profile+posts, comments+replies, trending/search): kiến trúc **Go gateway + Python sidecar** (FastAPI + TikTokApi) vì các thư viện data đều là Python; Go proxy tại `/api/data/*`.
@@ -35,7 +35,7 @@ MongoDB ◄── store (sessions, gifts, chats)
 
 ## Đã migrate frontend (2026-07-16)
 
-- `demo` và `meme-dance` đã bỏ server Node nhúng (server.ts, src/server/, socket.io, tiktok-live-connector, tsx) — chỉ còn frontend thuần kết nối `ws://localhost:8080/ws?user=…` bằng WebSocket native, cấu hình qua `NEXT_PUBLIC_LIVE_WS_URL`.
+- `demo` (đã xoá) và `dance-with-music` (tên cũ `meme-dance`, nay ở `tiktok/dance-with-music`) đã bỏ server Node nhúng (server.ts, src/server/, socket.io, tiktok-live-connector, tsx) — chỉ còn frontend thuần kết nối `ws://localhost:8080/ws?user=…` bằng WebSocket native, cấu hình qua `NEXT_PUBLIC_LIVE_WS_URL`.
 - Verify: cả 2 app build sạch, chạy cùng Go server, WS handshake 101.
 
 ## Việc tiếp theo (chưa làm)
