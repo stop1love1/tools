@@ -43,3 +43,4 @@ venv/
 .cache/
 .turbo/
 coverage/
+tiktok/server/bin/

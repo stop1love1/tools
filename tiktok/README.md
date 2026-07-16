@@ -18,11 +18,15 @@ tiktok/
 ## Chạy nhanh
 
 ```bash
-# Start tất cả: backend Go + sidecar Python + chọn frontend (Windows/macOS/Linux)
+# Dev (hot-reload): backend Go + sidecar Python + chọn frontend (Windows/macOS/Linux)
 cd tiktok
-node start.mjs                     # hỏi chọn FE
-node start.mjs dance-with-music    # chỉ định FE luôn
-node start.mjs --no-server         # chỉ chạy FE
+node dev.mjs                       # hỏi chọn FE
+node dev.mjs dance-with-music      # chỉ định FE luôn
+node dev.mjs --no-server           # chỉ chạy FE
+
+# Production: build (go build + next build) rồi chạy tất cả
+node start.mjs dance-with-music
+node start.mjs --skip-build        # chạy lại bản đã build, khỏi build lại
 ```
 
 Hoặc chạy tay từng phần:
