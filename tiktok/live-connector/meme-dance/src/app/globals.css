@@ -1,0 +1,10 @@
+﻿@import "tailwindcss";
+
+html,
+body {
+  height: 100%;
+  background: #05060a;
+  color: #e9ebf2;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  overflow: hidden;
+}
