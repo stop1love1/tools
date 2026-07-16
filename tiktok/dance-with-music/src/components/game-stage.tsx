@@ -713,21 +713,21 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       )}
 
       {showLegend && (
-        <aside className="absolute bottom-3 right-3 flex flex-col items-end gap-0.5">
+        <aside className="absolute bottom-3 right-3 flex flex-col items-end gap-1">
           {buildLegend(rules).map((item) => (
             <span
               key={item.label}
-              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white/85 backdrop-blur"
+              className="flex items-center gap-1.5 rounded-full bg-black/60 py-0.5 pl-1 pr-2.5 text-[10px] font-bold uppercase tracking-wide text-white backdrop-blur"
             >
               {item.image ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={item.image}
                   alt=""
-                  className="h-4 w-4 shrink-0 object-contain"
+                  className="h-5 w-5 shrink-0 object-contain"
                 />
               ) : (
-                <span>{item.emoji}</span>
+                <span className="text-sm leading-none">{item.emoji}</span>
               )}
               {item.label}
             </span>

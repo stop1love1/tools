@@ -168,12 +168,9 @@ export function buildLegend(r: GameRules): LegendItem[] {
       const meta = GIFT_ACTION_META[rule.action];
       if (!meta) return;
       const gift = TIKTOK_GIFTS.find((g) => g.name === rule.gift);
-      const giftLabel = gift
-        ? `${gift.name.split(" (")[0]}`
-        : `Quà ${rule.min}💎+`;
       legend.push({
         emoji: gift?.emoji ?? meta.emoji,
-        label: `${giftLabel} — ${meta.label.toLowerCase()}`,
+        label: meta.label.split(" — ")[0],
         image: gift?.image,
       });
     });
