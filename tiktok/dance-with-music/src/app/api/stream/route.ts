@@ -2,7 +2,6 @@ import { type NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// Chặn SSRF cơ bản: chỉ cho http(s) ra ngoài, cấm địa chỉ nội bộ
 function isBlockedHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
   return (
@@ -16,10 +15,6 @@ function isBlockedHost(hostname: string): boolean {
   );
 }
 
-/**
- * Proxy media (mp3/mp4/ogg…) về same-origin để Web Audio đọc được phổ tần
- * (nguồn khác domain thường thiếu CORS → analyser câm). Hỗ trợ Range để tua.
- */
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("url");
   if (!raw) {
@@ -41,7 +36,6 @@ export async function GET(req: NextRequest) {
   };
   const range = req.headers.get("range");
   if (range) headers["Range"] = range;
-  // Một số CDN (TikTok) yêu cầu Referer
   if (/tiktok/i.test(target.hostname)) {
     headers["Referer"] = "https://www.tiktok.com/";
   }

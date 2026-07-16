@@ -1,6 +1,3 @@
-// Package events defines the JSON payloads sent to game clients over WebSocket.
-// Field names mirror src/shared/live-events.ts in the Node front-ends so games
-// can switch transports without changing their handling code.
 package events
 
 type LiveUser struct {
@@ -38,7 +35,7 @@ type Like struct {
 
 type Activity struct {
 	ID   string   `json:"id"`
-	Kind string   `json:"kind"` // join | follow | share
+	Kind string   `json:"kind"`
 	User LiveUser `json:"user"`
 	Ts   int64    `json:"ts"`
 }
@@ -51,13 +48,12 @@ type Stats struct {
 }
 
 type Status struct {
-	State    string `json:"state"` // idle|connecting|connected|ended|error
+	State    string `json:"state"`
 	Username string `json:"username,omitempty"`
 	RoomID   string `json:"roomId,omitempty"`
 	Message  string `json:"message,omitempty"`
 }
 
-// Envelope is the wire format: {"type":"chat","data":{...}}
 type Envelope struct {
 	Type string `json:"type"`
 	Data any    `json:"data"`

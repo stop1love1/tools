@@ -1,5 +1,3 @@
-// findlive prints a few currently-live TikTok streams from the recommended
-// feed — handy for picking a username to test the live bridge with.
 package main
 
 import (

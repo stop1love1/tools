@@ -1,6 +1,3 @@
-// Package store persists live-session summaries, gifts and chats to MongoDB.
-// A nil *Store is safe to use everywhere — all methods no-op, so the server
-// runs fine without a database.
 package store
 
 import (
@@ -49,8 +46,6 @@ type ChatLog struct {
 	Ts       time.Time       `bson:"ts" json:"ts"`
 }
 
-// Connect returns nil (not an error) when MongoDB is unreachable so the
-// caller can continue without persistence.
 func Connect(uri, dbName string) *Store {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

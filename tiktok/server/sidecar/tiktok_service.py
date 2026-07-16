@@ -19,7 +19,6 @@ URL_HINT = "Kiểm tra lại URL video TikTok (dạng https://www.tiktok.com/@us
 
 T = TypeVar("T")
 
-
 class UpstreamError(Exception):
     """Loi tu phia TikTok / anti-bot. Map ra HTTP 502."""
 
@@ -27,19 +26,15 @@ class UpstreamError(Exception):
         super().__init__(message)
         self.hint = hint
 
-
 class SearchNotSupported(Exception):
     """Phien ban TikTokApi khong ho tro search video. Map ra HTTP 501."""
-
 
 _api: TikTokApi | None = None
 _lock = asyncio.Lock()
 
-
 def ms_token() -> str | None:
     token = os.getenv("MS_TOKEN", "").strip()
     return token or None
-
 
 async def _create_api() -> TikTokApi:
     api = TikTokApi()
@@ -53,14 +48,12 @@ async def _create_api() -> TikTokApi:
     )
     return api
 
-
 async def _get_api() -> TikTokApi:
     global _api
     async with _lock:
         if _api is None:
             _api = await _create_api()
         return _api
-
 
 async def close_api() -> None:
     """Dong session hien tai (neu co). Goi khi loi hoac khi shutdown."""
@@ -79,7 +72,6 @@ async def close_api() -> None:
         except Exception:
             pass
 
-
 async def _call(fn: Callable[[TikTokApi], Awaitable[T]]) -> T:
     """Chay fn voi api dung chung; neu loi thi tao lai session va thu lai 1 lan."""
     last: Exception | None = None
@@ -96,11 +88,7 @@ async def _call(fn: Callable[[TikTokApi], Awaitable[T]]) -> T:
         raise last
     raise UpstreamError(f"{type(last).__name__}: {last}") from last
 
-
-# ---------------------------------------------------------------- URL helpers
-
 _VIDEO_ID_RE = re.compile(r"/(?:video|photo)/(\d+)")
-
 
 async def resolve_video_url(url: str) -> str:
     """Tra ve URL day du dang www.tiktok.com/@user/video/<id> tu URL bat ky."""
@@ -122,7 +110,6 @@ async def resolve_video_url(url: str) -> str:
     if _VIDEO_ID_RE.search(final_url):
         return final_url
     raise UpstreamError(f"no video id found in url: {final_url}", hint=URL_HINT)
-
 
 async def resolve_video_id(url: str) -> str:
     """Lay video id tu URL day du hoac short link (vm.tiktok.com...)."""
@@ -147,15 +134,11 @@ async def resolve_video_id(url: str) -> str:
         return match.group(1)
     raise UpstreamError(f"no video id found in url: {final_url}", hint=URL_HINT)
 
-
-# ------------------------------------------------------------------- mappers
-
 def _to_int(value: Any) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
 
 def _first_url(value: Any) -> str:
     if isinstance(value, dict):
@@ -163,12 +146,10 @@ def _first_url(value: Any) -> str:
         return urls[0] if urls else ""
     return value or ""
 
-
 def map_video(raw: dict[str, Any]) -> dict[str, Any]:
     author = raw.get("author") or {}
     if isinstance(author, str):
         author = {"uniqueId": author}
-    # statsV2 chua so dang chuoi, khong bi tran int32 nhu stats (video >2 ty view)
     stats = raw.get("statsV2") or raw.get("stats") or {}
     music = raw.get("music") or {}
     video = raw.get("video") or {}
@@ -199,7 +180,6 @@ def map_video(raw: dict[str, Any]) -> dict[str, Any]:
         },
     }
 
-
 def _map_user(info: dict[str, Any]) -> dict[str, Any]:
     user_info = info.get("userInfo") or {}
     user = user_info.get("user") or info.get("user") or {}
@@ -219,7 +199,6 @@ def _map_user(info: dict[str, Any]) -> dict[str, Any]:
         },
     }
 
-
 def _map_comment(raw: dict[str, Any]) -> dict[str, Any]:
     user = raw.get("user") or {}
     return {
@@ -236,11 +215,7 @@ def _map_comment(raw: dict[str, Any]) -> dict[str, Any]:
         ),
     }
 
-
-# ------------------------------------------------------------------ services
-
 async def video_meta(url: str) -> dict[str, Any]:
-    # TikTokApi v7: video.info() bat buoc phai co url (khong dung duoc voi id)
     video_url = await resolve_video_url(url)
 
     async def run(api: TikTokApi) -> dict[str, Any]:
@@ -249,14 +224,12 @@ async def video_meta(url: str) -> dict[str, Any]:
 
     return await _call(run)
 
-
 async def user_profile(username: str) -> dict[str, Any]:
     async def run(api: TikTokApi) -> dict[str, Any]:
         info = await api.user(username=username).info()
         return _map_user(info)
 
     return await _call(run)
-
 
 async def user_posts(username: str, count: int) -> list[dict[str, Any]]:
     async def run(api: TikTokApi) -> list[dict[str, Any]]:
@@ -268,7 +241,6 @@ async def user_posts(username: str, count: int) -> list[dict[str, Any]]:
         return out
 
     return await _call(run)
-
 
 async def video_comments(url: str, count: int) -> list[dict[str, Any]]:
     video_id = await resolve_video_id(url)
@@ -282,7 +254,6 @@ async def video_comments(url: str, count: int) -> list[dict[str, Any]]:
         return out
 
     return await _call(run)
-
 
 async def comment_replies(url: str, comment_id: str, count: int) -> list[dict[str, Any]]:
     video_id = await resolve_video_id(url)
@@ -304,7 +275,6 @@ async def comment_replies(url: str, comment_id: str, count: int) -> list[dict[st
 
     return await _call(run)
 
-
 async def trending(count: int) -> list[dict[str, Any]]:
     async def run(api: TikTokApi) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -316,10 +286,8 @@ async def trending(count: int) -> list[dict[str, Any]]:
 
     return await _call(run)
 
-
 async def search_videos(keyword: str, count: int) -> list[dict[str, Any]]:
     async def run(api: TikTokApi) -> list[dict[str, Any]]:
-        # Ban moi co the co search.videos; 7.3.x dung search_type(..., "item").
         videos_fn = getattr(api.search, "videos", None)
         if videos_fn is not None:
             iterator = videos_fn(keyword, count=count)

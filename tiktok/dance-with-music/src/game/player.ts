@@ -2,10 +2,9 @@ import * as THREE from "three";
 import type { LiveUser } from "@/shared/live-events";
 import { makeBubbleTexture, makeLabelTexture, type Skin } from "./skins";
 
-const BASE_H = 1.875; // chiều cao chuẩn của nhân vật, bề rộng theo aspect skin
+const BASE_H = 1.875;
 const BUBBLE_MS = 3200;
 
-// Thời gian nhảy mặc định — giá trị thật do GameRules (admin setting) truyền vào
 const DANCE_START_MS = 30_000;
 const DANCE_EXTEND_MS = 15_000;
 const DANCE_MAX_AHEAD_MS = 90_000;
@@ -13,17 +12,6 @@ const DANCE_MAX_AHEAD_MS = 90_000;
 const DROP_HEIGHT = 9;
 const DROP_SECONDS = 1.1;
 
-/**
- * Bộ điệu nhảy phong cách hiphop Việt Nam:
- * - bounce: nhún gối cơ bản theo kick
- * - two-step: bước ngang trái/phải luân phiên (toprock)
- * - lean-back: ngả người ra sau giữ 1 beat (swag)
- * - double-bounce: nhún double-time (2 nhịp/beat)
- * - spin: quay 360° trong 1 beat
- * - squat: xuống tấn nảy (bounce thấp)
- * - shoulder: lắc vai (nghiêng nhanh 2 bên)
- * - hop: bật cao
- */
 export type DanceMove =
   | "bounce"
   | "two-step"
@@ -38,8 +26,13 @@ export type DanceMove =
   | "roll"
   | "freeze"
   | "charleston"
-  | "fan";
-/** Danh sách điệu đang dùng — dùng cho trang test showcase. */
+  | "fan"
+  | "sway"
+  | "slide"
+  | "kick"
+  | "twist"
+  | "headbang"
+  | "robot";
 export const ALL_DANCE_MOVES: DanceMove[] = [
   "bounce",
   "two-step",
@@ -54,8 +47,13 @@ export const ALL_DANCE_MOVES: DanceMove[] = [
   "freeze",
   "charleston",
   "fan",
+  "sway",
+  "slide",
+  "kick",
+  "twist",
+  "headbang",
+  "robot",
 ];
-// bounce/two-step chiếm tỉ trọng cao — nền của hiphop
 const DANCE_MOVES: DanceMove[] = [
   "bounce",
   "bounce",
@@ -72,12 +70,39 @@ const DANCE_MOVES: DanceMove[] = [
   "freeze",
   "charleston",
   "fan",
+  "sway",
+  "sway",
+  "slide",
+  "kick",
+  "twist",
+  "headbang",
+  "robot",
 ];
+const MOVE_BEATS: Record<DanceMove, number> = {
+  bounce: 2,
+  "two-step": 2,
+  "lean-back": 1,
+  "double-bounce": 2,
+  spin: 1,
+  squat: 2,
+  shoulder: 2,
+  hop: 1,
+  wave: 2,
+  "cross-step": 2,
+  roll: 2,
+  freeze: 1,
+  charleston: 2,
+  fan: 2,
+  sway: 2,
+  slide: 2,
+  kick: 2,
+  twist: 2,
+  headbang: 2,
+  robot: 2,
+};
 
-/** Nhịp nhạc toàn sàn do game đẩy xuống: index tăng mỗi beat, pulse 0..1 trong beat. */
 export type Beat = { index: number; pulse: number };
 
-// Rơi xuống có độ nảy khi chạm đất
 function easeOutBounce(x: number): number {
   const n1 = 7.5625;
   const d1 = 2.75;
@@ -92,11 +117,10 @@ export class Player {
   readonly group = new THREE.Group();
   lastActive = 0;
   diamonds = 0;
-  /** Đang đứng trên sàn nhảy (true) hay dưới khán đài (false). */
+  /** Điểm tương tác (chat/tim/quà) — xếp hạng ưu tiên hàng đầu sát sân khấu. */
+  score = 0;
   onFloor = false;
-  /** Top donate — đứng trên bục cạnh DJ, không bị luân chuyển sàn/khán đài. */
   onPodium = false;
-  /** Trang test: ép nhảy đúng 1 điệu thay vì bốc ngẫu nhiên mỗi beat. */
   forcedMove: DanceMove | null = null;
 
   private sprite: THREE.Sprite;
@@ -108,20 +132,24 @@ export class Player {
   private frame = 0;
   private lastBeat = -1;
 
-  // Nhảy: chỉ khi còn "năng lượng" (chat 1 để bật, comment để gia hạn)
   private danceUntil = 0;
-  private readonly ampScale = 0.85 + Math.random() * 0.3; // mỗi người bốc một kiểu
+  private readonly ampScale = 0.85 + Math.random() * 0.3;
   private readonly phase = Math.random() * Math.PI * 2;
   private tilt = 0;
   private tiltTarget = 0;
   private hopBoost = 0;
-  // Điệu nhảy hiện tại (đổi mỗi beat) — bộ điệu phong cách hiphop VN
   private move: DanceMove = "bounce";
+  private moveBeatsLeft = 0;
   private sideOffset = 0;
   private sideTarget = 0;
-  private sideDir = 1; // hướng two-step luân phiên
+  private sideDir = 1;
   private halfBeatSwapped = false;
-  // Hướng mặt (1 = gốc, -1 = lật gương) — điệu spin quay người 180°
+  private danceY = 0;
+  private smoothSX = 1;
+  private smoothSY = 1;
+  private smoothRot = 0;
+  private dimTarget = 1;
+  private dimCurrent = 1;
   private facing = 1;
   private facingFrom = 1;
 
@@ -132,14 +160,13 @@ export class Player {
   private scaleTarget = 1;
   private scaleCurrent = 1;
   private scaleResetAt = 0;
-  /** Khán đài: nhân vật nhỏ lại + ẩn tên để không che khung hình. */
   private baseScale = 1;
   private zone: "audience" | "floor" | "podium" = "audience";
   private labelForceUntil = 0;
 
   private jumpT = -1;
   private circleT = -1;
-  private dropT = 0; // 0..1, <1 = đang rơi từ trời xuống
+  private dropT = 0;
   private badge: THREE.Mesh | null = null;
   private badgeUntil = 0;
 
@@ -155,7 +182,6 @@ export class Player {
         transparent: true,
       }),
     );
-    // Ghìm độ sáng dưới ngưỡng bloom để mặt trắng của meme không bị cháy sáng
     this.sprite.material.color.setScalar(0.72);
     this.applyAspect();
     this.sprite.position.y = BASE_H / 2;
@@ -172,7 +198,6 @@ export class Player {
     this.label.position.y = BASE_H + 0.28;
 
     this.group.add(this.sprite, this.label);
-    // Xuất phát lơ lửng trên trời, update() sẽ thả rơi xuống
     this.group.position.set(this.home.x, this.home.y + DROP_HEIGHT, this.home.z);
   }
 
@@ -180,7 +205,6 @@ export class Player {
     return this.skins[this.skinIndex % this.skins.length];
   }
 
-  /** First frame of the current skin — used for the podium clone. */
   get texture(): THREE.Texture {
     return this.currentSkin.frames[0];
   }
@@ -189,28 +213,35 @@ export class Player {
     return performance.now() < this.danceUntil;
   }
 
-  /** Chuyển chỗ đứng (lên sàn / về khán đài) với bước di chuyển mượt. */
+  get skinNumber(): number {
+    return this.skinIndex % this.skins.length;
+  }
+
+  get skinAspect(): number {
+    return this.currentSkin.aspect;
+  }
+
   setHome(target: THREE.Vector3) {
     this.moveFrom = this.home.clone();
     this.moveTo = target.clone();
     this.moveT = 0;
   }
 
-  /**
-   * Kích thước + nhãn theo khu vực: khán đài nhỏ và ẩn tên (đỡ che hình),
-   * sàn nhảy chuẩn, bục DJ to nổi bật.
-   */
   setZone(zone: "audience" | "floor" | "podium") {
     this.zone = zone;
     this.baseScale = zone === "audience" ? 0.72 : zone === "podium" ? 1.4 : 1;
+    // Bục podium đã có bảng tên 🥇 riêng — ẩn nhãn cá nhân tránh trùng đôi
     this.label.visible =
-      zone !== "audience" || performance.now() < this.labelForceUntil;
+      zone === "floor" || performance.now() < this.labelForceUntil;
   }
 
-  /** Tạm hiện tên (vd: đang được camera zoom cận cảnh) rồi trả về theo khu. */
   showLabel(ms: number) {
     this.labelForceUntil = performance.now() + ms;
     this.label.visible = true;
+  }
+
+  setDimmed(dimmed: boolean) {
+    this.dimTarget = dimmed ? 0.22 : 1;
   }
 
   setSkins(skins: Skin[]) {
@@ -230,15 +261,11 @@ export class Player {
     this.sprite.material.needsUpdate = true;
   }
 
-  // --- Commands -----------------------------------------------------------
-
-  /** Chat lệnh lên sàn: bật chế độ nhảy. */
   startDancing(ms = DANCE_START_MS) {
     const now = performance.now();
     this.danceUntil = Math.max(this.danceUntil, now + ms);
   }
 
-  /** Comment thường: nếu đang nhảy thì gia hạn (bỏ qua khi nhảy vĩnh viễn). */
   keepDancing(extendMs = DANCE_EXTEND_MS, maxAheadMs = DANCE_MAX_AHEAD_MS) {
     if (!this.isDancing || !Number.isFinite(this.danceUntil)) return;
     this.danceUntil = Math.min(
@@ -255,7 +282,6 @@ export class Player {
     this.setSkin(this.skinIndex + 1);
   }
 
-  /** Gán skin theo chỉ số (trang test dùng để duyệt tuần tự). */
   setSkin(index: number) {
     this.skinIndex = index % this.skins.length;
     const { texture, aspect } = makeLabelTexture(
@@ -291,7 +317,6 @@ export class Player {
     this.jump();
   }
 
-  /** Huy hiệu vàng dưới chân cho đại gia donate (mặc định 2 phút). */
   giveBadge(ms = 120_000) {
     this.badgeUntil = performance.now() + ms;
     if (!this.badge) {
@@ -312,7 +337,6 @@ export class Player {
     }
   }
 
-  /** Hiện bong bóng chat trên đầu vài giây. */
   say(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -333,17 +357,11 @@ export class Player {
     this.bubbleUntil = performance.now() + BUBBLE_MS;
   }
 
-  // --- Per-frame update ----------------------------------------------------
-
   update(dt: number, hype: number, beat: Beat, musicOn = true) {
     const now = performance.now();
     const t = now / 1000;
-    // Không có nhạc → TẤT CẢ tạm dừng nhảy, chỉ chuyển động nhỏ.
-    // Ngoại lệ duy nhất: nhân vật test của trang preview (soi điệu).
-    const dancing =
-      now < this.danceUntil && (musicOn || this.forcedMove !== null);
+    const dancing = musicOn && now < this.danceUntil;
 
-    // Đi bộ sang chỗ mới (lên sàn / về khán đài)
     if (this.moveT < 1 && this.moveFrom && this.moveTo) {
       this.moveT = Math.min(1, this.moveT + dt / 0.9);
       const e =
@@ -357,19 +375,26 @@ export class Player {
 
     let scaleX = 1;
     let scaleY = 1;
+    let rot = 0;
     if (dancing) {
-      // Vào beat mới: đổi frame + bốc điệu hiphop mới
       if (beat.index !== this.lastBeat) {
         this.lastBeat = beat.index;
         this.frame = (this.frame + 1) % this.currentSkin.frames.length;
         this.applyFrame();
         this.halfBeatSwapped = false;
-        this.move =
-          this.forcedMove ??
-          DANCE_MOVES[Math.floor(Math.random() * DANCE_MOVES.length)];
+        this.moveBeatsLeft -= 1;
+        if (this.forcedMove) {
+          this.move = this.forcedMove;
+        } else if (this.moveBeatsLeft <= 0) {
+          let next =
+            DANCE_MOVES[Math.floor(Math.random() * DANCE_MOVES.length)];
+          if (next === this.move)
+            next = DANCE_MOVES[Math.floor(Math.random() * DANCE_MOVES.length)];
+          this.move = next;
+          this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
+        }
         this.sideDir = -this.sideDir;
         if (this.move === "spin") {
-          // Quay người: lật hướng mặt trong nửa beat đầu
           this.facingFrom = this.facing;
           this.facing = -this.facing;
         }
@@ -381,18 +406,28 @@ export class Player {
               ? this.sideDir * 0.26
               : this.move === "two-step"
                 ? this.sideDir * 0.14
-                : 0;
+                : this.move === "sway"
+                  ? -this.sideDir * 0.12
+                  : this.move === "slide"
+                    ? this.sideDir * 0.08
+                    : this.move === "kick"
+                      ? -0.1
+                      : 0;
         this.sideTarget =
-          this.move === "two-step" ? this.sideDir * 0.7 : 0;
+          this.move === "two-step"
+            ? this.sideDir * 0.7
+            : this.move === "sway"
+              ? this.sideDir * 0.5
+              : this.move === "slide"
+                ? this.sideDir * 0.9
+                : 0;
       }
-      // Tay chân cử động RÕ: đổi frame mỗi NỬA beat cho mọi điệu
       if (!this.halfBeatSwapped && beat.pulse > 0.5) {
         this.halfBeatSwapped = true;
         this.frame = (this.frame + 1) % this.currentSkin.frames.length;
         this.applyFrame();
       }
 
-      // Bật NGAY đầu phách rồi tiếp đất chờ phách sau — nhún theo kick
       const amp = (0.24 + hype * 0.26 + this.hopBoost) * this.ampScale;
       const hopPhase =
         this.move === "double-bounce" || this.move === "charleston"
@@ -400,26 +435,36 @@ export class Player {
           : Math.min(1, beat.pulse * 1.7);
       y = Math.sin(hopPhase * Math.PI) * amp;
       if (this.move === "squat") {
-        // Xuống tấn: nhún thấp, người bè ra theo nhịp
         const s = Math.sin(Math.min(1, beat.pulse * 1.5) * Math.PI);
         y *= 0.4;
         scaleY = 1 - 0.24 * s;
         scaleX = 1 + 0.2 * s;
       } else if (this.move === "wave") {
-        // Body wave: gợn sóng dọc thân, nhún nhẹ
         y *= 0.55;
         scaleY = 1 + 0.07 * Math.sin(beat.pulse * Math.PI * 4);
         scaleX = 1 - 0.05 * Math.sin(beat.pulse * Math.PI * 4);
       } else if (this.move === "freeze") {
-        // Freeze: khựng pose 1 beat, phồng nhẹ
         y = amp * 0.12;
         scaleX = 1.06;
         scaleY = 1.06;
       } else if (this.move === "roll") {
-        // Lăn người: quỹ đạo tròn nhỏ
         y = amp * 0.5 * (1 - Math.cos(beat.pulse * Math.PI * 2)) * 0.5;
+      } else if (this.move === "sway") {
+        y *= 0.4;
+      } else if (this.move === "slide") {
+        y = amp * 0.08;
+        scaleY = 0.96;
+      } else if (this.move === "kick") {
+        y *= 0.6;
+      } else if (this.move === "twist") {
+        y *= 0.5;
+        scaleX = 1 - 0.22 * Math.abs(Math.sin(beat.pulse * Math.PI * 2));
+      } else if (this.move === "headbang") {
+        y *= 0.35;
+        scaleY = 0.97;
+      } else if (this.move === "robot") {
+        y = amp * 0.1;
       }
-      // Bước chéo nhanh trái-phải trong 1 beat
       if (this.move === "cross-step") {
         this.sideTarget =
           Math.sin(beat.pulse * Math.PI * 3) * 0.4 * this.sideDir;
@@ -427,71 +472,86 @@ export class Player {
         this.sideTarget =
           Math.sin(beat.pulse * Math.PI * 2) * 0.3 * this.sideDir;
       } else if (this.move === "fan") {
-        // Múa quạt: lướt người theo vòng cung quét của tay quạt
         this.sideTarget =
           Math.sin(beat.pulse * Math.PI) * 0.5 * this.sideDir;
+      } else if (this.move === "twist") {
+        this.sideTarget =
+          Math.sin(beat.pulse * Math.PI * 2) * 0.15 * this.sideDir;
+      } else if (this.move === "robot") {
+        const step = Math.floor(beat.pulse * 4) % 4;
+        this.sideTarget = (step === 1 || step === 2 ? 0.3 : 0) * this.sideDir;
       }
 
-      // Xoay/nghiêng theo điệu
       this.tilt += (this.tiltTarget - this.tilt) * Math.min(1, dt * 10);
       if (this.move === "spin") {
-        // Quay người 180°: xoay từ hướng cũ sang hướng mới trong nửa beat,
-        // sau đó đứng theo hướng mới — giống xoay người thật
         const p = Math.min(1, beat.pulse * 2);
         const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
         let f = this.facingFrom + (this.facing - this.facingFrom) * e;
         if (Math.abs(f) < 0.06) f = f < 0 ? -0.06 : 0.06;
         scaleX *= f;
-        this.sprite.material.rotation = this.tilt;
+        rot = this.tilt;
       } else if (this.move === "shoulder") {
-        this.sprite.material.rotation =
-          this.tilt + Math.sin(beat.pulse * Math.PI * 4) * 0.18;
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 4) * 0.18;
       } else if (this.move === "wave") {
-        this.sprite.material.rotation =
-          this.tilt + Math.sin(beat.pulse * Math.PI * 2 - 1.2) * 0.15;
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 2 - 1.2) * 0.15;
       } else if (this.move === "charleston") {
-        this.sprite.material.rotation =
-          this.tilt + Math.sin(beat.pulse * Math.PI * 4) * 0.2 * this.sideDir;
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 4) * 0.2 * this.sideDir;
       } else if (this.move === "fan") {
-        // Múa quạt: vung một vòng cung rộng qua đầu, đổi bên mỗi nhịp
-        this.sprite.material.rotation =
-          this.tilt + Math.sin(beat.pulse * Math.PI) * 0.38 * this.sideDir;
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI) * 0.38 * this.sideDir;
+      } else if (this.move === "sway") {
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI) * 0.1 * this.sideDir;
+      } else if (this.move === "kick") {
+        rot =
+          this.tilt +
+          Math.max(0, Math.sin(beat.pulse * Math.PI * 2)) * 0.25 * this.sideDir;
+      } else if (this.move === "twist") {
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 2) * 0.1;
+      } else if (this.move === "headbang") {
+        rot = this.tilt - Math.abs(Math.sin(beat.pulse * Math.PI * 2)) * 0.26;
+      } else if (this.move === "robot") {
+        const step = Math.floor(beat.pulse * 4) % 4;
+        rot = this.tilt + [0, 0.14, 0, -0.14][step] * this.sideDir;
       } else {
-        this.sprite.material.rotation =
-          this.tilt + Math.sin(Math.PI * 2 * beat.pulse + this.phase) * 0.06;
+        rot = this.tilt + Math.sin(Math.PI * 2 * beat.pulse + this.phase) * 0.06;
       }
-      // Bước ngang two-step mượt
       this.sideOffset +=
         (this.sideTarget - this.sideOffset) * Math.min(1, dt * 7);
     } else {
-      // Đứng thở nhẹ chờ lệnh "1"
       if (this.frame !== 0) {
         this.frame = 0;
         this.applyFrame();
       }
       this.lastBeat = -1;
-      // Chuyển động nhỏ chờ nhạc: thở nhẹ + lắc lư rất khẽ
+      this.moveBeatsLeft = 0;
       y = (Math.sin(t * 1.6 + this.phase) * 0.5 + 0.5) * 0.04;
       this.tilt += (0 - this.tilt) * Math.min(1, dt * 6);
-      this.sprite.material.rotation =
-        this.tilt + Math.sin(t * 1.1 + this.phase) * 0.03;
+      rot = this.tilt + Math.sin(t * 1.1 + this.phase) * 0.03;
       this.sideOffset += (0 - this.sideOffset) * Math.min(1, dt * 6);
     }
-    // Áp squash/stretch + hướng mặt lên sprite (spin tự nội suy hướng riêng)
     const spinActive = dancing && this.move === "spin";
+    const targetSX = scaleX * (spinActive ? 1 : this.facing);
+    const smooth = Math.min(1, dt * 18);
+    this.danceY += (y - this.danceY) * smooth;
+    y = this.danceY;
+    this.smoothSX += (targetSX - this.smoothSX) * smooth;
+    this.smoothSY += (scaleY - this.smoothSY) * smooth;
+    this.smoothRot += (rot - this.smoothRot) * smooth;
+    this.sprite.material.rotation = this.smoothRot;
     this.sprite.scale.set(
-      BASE_H * this.currentSkin.aspect * scaleX * (spinActive ? 1 : this.facing),
-      BASE_H * scaleY,
+      BASE_H * this.currentSkin.aspect * this.smoothSX,
+      BASE_H * this.smoothSY,
       1,
     );
 
-    // Rơi từ trời xuống khi mới vào
+    this.dimCurrent += (this.dimTarget - this.dimCurrent) * Math.min(1, dt * 6);
+    this.sprite.material.opacity = this.dimCurrent;
+    this.label.material.opacity = this.dimCurrent;
+
     if (this.dropT < 1) {
       this.dropT = Math.min(1, this.dropT + dt / DROP_SECONDS);
       y += (1 - easeOutBounce(this.dropT)) * DROP_HEIGHT;
     }
 
-    // Jump arc
     if (this.jumpT >= 0) {
       this.jumpT += dt / 0.65;
       if (this.jumpT >= 1) {
@@ -501,7 +561,6 @@ export class Player {
       }
     }
 
-    // Run one lap around home position
     let offsetX = 0;
     let offsetZ = 0;
     if (this.circleT >= 0) {
@@ -515,7 +574,6 @@ export class Player {
       }
     }
 
-    // Scale tween + timed reset
     if (this.scaleResetAt && now > this.scaleResetAt) {
       this.scaleTarget = 1;
       this.scaleResetAt = 0;
@@ -523,13 +581,11 @@ export class Player {
     this.scaleCurrent += (this.scaleTarget - this.scaleCurrent) * Math.min(1, dt * 5);
     this.group.scale.setScalar(this.scaleCurrent * this.baseScale);
 
-    // Hết thời gian hiện tên tạm → trả về quy tắc theo khu vực
     if (this.labelForceUntil && now > this.labelForceUntil) {
       this.labelForceUntil = 0;
-      this.label.visible = this.zone !== "audience";
+      this.label.visible = this.zone === "floor";
     }
 
-    // Huy hiệu vàng xoay + nhấp nháy, hết hạn thì gỡ
     if (this.badge) {
       if (now > this.badgeUntil) {
         this.group.remove(this.badge);
@@ -543,7 +599,6 @@ export class Player {
       }
     }
 
-    // Bong bóng chat mờ dần rồi biến mất
     if (this.bubble) {
       const remain = this.bubbleUntil - now;
       if (remain <= 0) {
@@ -552,7 +607,7 @@ export class Player {
         this.bubble.material.dispose();
         this.bubble = null;
       } else {
-        this.bubble.material.opacity = Math.min(1, remain / 500);
+        this.bubble.material.opacity = Math.min(1, remain / 500) * this.dimCurrent;
       }
     }
 

@@ -3,11 +3,6 @@
 import type { ConnectionStatus, RoomStats } from "@/shared/live-events";
 import type { GameRules } from "@/game/rules";
 
-/**
- * Kênh điều khiển giữa trang admin (/admin) và trang game (/) — chạy trên
- * BroadcastChannel nên 2 tab cùng trình duyệt đồng bộ realtime.
- */
-
 export type AdminCommand =
   | { t: "hello" }
   | { t: "join"; username: string }

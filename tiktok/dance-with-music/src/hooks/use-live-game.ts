@@ -8,7 +8,6 @@ import type {
 } from "@/shared/live-events";
 import type { MemeDanceGame } from "@/game/game";
 
-// Go backend (tiktok/server) — override with NEXT_PUBLIC_LIVE_WS_URL
 const WS_BASE = process.env.NEXT_PUBLIC_LIVE_WS_URL ?? "ws://localhost:8080/ws";
 
 const EMPTY_STATS: RoomStats = {
@@ -18,10 +17,6 @@ const EMPTY_STATS: RoomStats = {
   joinCount: 0,
 };
 
-/**
- * Bridges the Go backend WebSocket into the three.js game instance.
- * The game ref may be set after mount — events before that are dropped.
- */
 export function useLiveGame(gameRef: React.RefObject<MemeDanceGame | null>) {
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>({ state: "idle" });

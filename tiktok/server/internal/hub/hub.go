@@ -1,5 +1,3 @@
-// Package hub manages TikTok LIVE rooms: one gotiktoklive connection per
-// streamer, shared by every WebSocket client watching that streamer.
 package hub
 
 import (
@@ -27,15 +25,10 @@ const (
 	pingPeriod         = 45 * time.Second
 	sendBuffer         = 256
 
-	// Chống rate limit signer (Euler Stream):
-	// - giữ kết nối TikTok thêm một lúc sau khi client cuối rời (reload trang
-	//   không tốn lượt ký mới)
-	// - khi dính 429 thì khóa mọi lần thử lại một thời gian
 	lingerDuration = 5 * time.Minute
 	signCooldown   = 15 * time.Minute
 )
 
-// webcast control action signalling the stream has finished
 const controlActionStreamEnded = 3
 
 type Hub struct {
@@ -56,7 +49,6 @@ func NormalizeUsername(input string) string {
 	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(input), "@"))
 }
 
-// getTikTok lazily creates the shared gotiktoklive instance.
 func (h *Hub) getTikTok() (*gotiktoklive.TikTok, error) {
 	h.tiktokMu.Lock()
 	defer h.tiktokMu.Unlock()
@@ -77,17 +69,12 @@ func (h *Hub) getTikTok() (*gotiktoklive.TikTok, error) {
 	return t, nil
 }
 
-// Join attaches a WebSocket client to the room for username, creating the
-// room (and the TikTok connection) if needed. Returns nil when the join was
-// rejected (signer cooldown) — the status is written to conn before closing.
 func (h *Hub) Join(username string, conn *websocket.Conn) *Client {
 	username = NormalizeUsername(username)
 
 	h.mu.Lock()
 	room, ok := h.rooms[username]
 	if !ok {
-		// Đang trong thời gian khóa vì 429 → từ chối tạo kết nối mới,
-		// tránh đốt thêm quota của signer
 		if remain := time.Until(h.cooldownUntil); remain > 0 {
 			h.mu.Unlock()
 			payload, _ := json.Marshal(events.Envelope{
@@ -117,8 +104,6 @@ func (h *Hub) Join(username string, conn *websocket.Conn) *Client {
 	return client
 }
 
-// setSignCooldown chặn mọi kết nối mới trong một khoảng thời gian sau khi
-// signer trả 429 (giới hạn tính theo tài khoản/IP, không theo streamer).
 func (h *Hub) setSignCooldown(d time.Duration) {
 	h.mu.Lock()
 	h.cooldownUntil = time.Now().Add(d)
@@ -156,8 +141,6 @@ func (h *Hub) Snapshot() []RoomSummary {
 	return out
 }
 
-// --- Room -------------------------------------------------------------------
-
 type Room struct {
 	hub      *Hub
 	username string
@@ -190,7 +173,6 @@ func newRoom(h *Hub, username string) *Room {
 func (r *Room) addClient(c *Client) {
 	r.mu.Lock()
 	r.clients[c] = struct{}{}
-	// Có người xem lại → hủy hẹn giờ đóng kết nối
 	if r.linger != nil {
 		r.linger.Stop()
 		r.linger = nil
@@ -216,7 +198,6 @@ func (r *Room) removeClient(c *Client) {
 		r.close()
 		return
 	}
-	// Giữ kết nối TikTok thêm một lúc — reload trang không tốn lượt ký mới
 	r.mu.Lock()
 	if r.linger == nil {
 		r.linger = time.AfterFunc(lingerDuration, func() {
@@ -232,7 +213,6 @@ func (r *Room) removeClient(c *Client) {
 	r.mu.Unlock()
 }
 
-// close tears down the TikTok connection and unregisters the room.
 func (r *Room) close() {
 	r.closeOnce.Do(func() {
 		close(r.done)
@@ -317,8 +297,6 @@ func (r *Room) run() {
 	}
 }
 
-// handleEvent maps one gotiktoklive event to our DTOs. Returns true when the
-// stream reached a terminal state.
 func (r *Room) handleEvent(ev gotiktoklive.Event) bool {
 	now := time.Now().UnixMilli()
 	switch e := ev.(type) {
@@ -431,11 +409,8 @@ func (r *Room) flushStats() {
 	r.broadcast("stats", stats)
 }
 
-// fail reports a connection error and unregisters the room so that a new
-// WebSocket connection retries from scratch.
 func (r *Room) fail(message string) {
 	log.Printf("[hub] @%s: %s", r.username, message)
-	// Dính rate limit của signer → khóa kết nối mới, báo lỗi dễ hiểu
 	lower := strings.ToLower(message)
 	if strings.Contains(lower, "429") ||
 		strings.Contains(lower, "rate limit") ||
@@ -498,8 +473,6 @@ func giftName(e gotiktoklive.GiftEvent) string {
 	return fmt.Sprintf("Quà #%d", e.ID)
 }
 
-// --- Client ------------------------------------------------------------------
-
 type Client struct {
 	conn *websocket.Conn
 	room *Room
@@ -519,7 +492,6 @@ func (c *Client) sendEnvelope(eventType string, data any) {
 	c.sendRaw(payload)
 }
 
-// sendRaw drops the message if the client's buffer is full (slow consumer).
 func (c *Client) sendRaw(payload []byte) {
 	select {
 	case c.send <- payload:

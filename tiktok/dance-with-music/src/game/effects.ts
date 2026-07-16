@@ -3,15 +3,12 @@ import type { Beat } from "./player";
 
 const NEON = [0xfe2c55, 0x25f4ee, 0x8a2be2, 0xffc94d, 0x2ecc71, 0x3498db];
 
-// --- Sàn nhảy: gạch trung tính bóng, MÀU SẮC do đèn sân khấu quét lên ----------------
-
 export class DiscoFloor {
   readonly mesh: THREE.InstancedMesh;
 
   constructor(width: number, depth: number, cols = 16, rows = 12) {
     const tileW = width / cols;
     const tileD = depth / rows;
-    // Khối gạch mỏng nổi trên mặt gương; bề mặt bóng để hứng đèn sân khấu
     const geometry = new THREE.BoxGeometry(tileW * 0.92, 0.1, tileD * 0.92);
     const material = new THREE.MeshStandardMaterial({
       metalness: 0.55,
@@ -31,7 +28,6 @@ export class DiscoFloor {
         );
         dummy.updateMatrix();
         this.mesh.setMatrixAt(i, dummy.matrix);
-        // Kẻ ô caro tối 2 tông — tĩnh, ánh sáng màu là việc của đèn
         color.setHex((c + r) % 2 === 0 ? 0x262b3d : 0x171a28);
         this.mesh.setColorAt(i, color);
         i++;
@@ -40,11 +36,8 @@ export class DiscoFloor {
   }
 
   update(_dt: number, _hype: number, _beat: Beat) {
-    // Sàn trung tính — mọi hiệu ứng màu do ClubLights/LightBeams đảm nhiệm
   }
 }
-
-// --- Tường LED sau sân khấu (throttle ~20fps cho nhẹ CPU) -----------------------
 
 export class LedWall {
   readonly mesh: THREE.InstancedMesh;
@@ -74,25 +67,27 @@ export class LedWall {
     }
   }
 
-  update(dt: number, hype: number, beat: Beat, level = 0) {
+  update(dt: number, hype: number, beat: Beat, level = 0, musicOn = true) {
     this.acc += dt;
-    if (this.acc < 0.05) return; // ~20fps là đủ mượt cho LED
+    if (this.acc < 0.05) return;
     this.acc = 0;
     const t = performance.now() / 1000;
-    // "Kick" bùng đúng đầu beat + nền sáng thở theo bass thật
     const kick =
       Math.max(0, 1 - beat.pulse * 3) * (0.1 + hype * 0.15 + level * 0.25) +
       level * 0.08;
+    const dim = musicOn ? 1 : 0.22;
     let i = 0;
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const wave =
-          Math.sin(c * 0.55 - t * (0.7 + hype * 1.4) + r * 0.35) * 0.5 + 0.5;
+          Math.sin(c * 0.55 - t * (musicOn ? 0.7 + hype * 1.4 : 0.25) + r * 0.35) *
+            0.5 +
+          0.5;
         const hue = (0.9 + c * 0.012 + t * 0.03) % 1;
         this.color.setHSL(
           hue,
           0.85,
-          Math.min(0.42, 0.07 + wave * (0.14 + hype * 0.2) + kick),
+          Math.min(0.42, (0.07 + wave * (0.14 + hype * 0.2) + kick) * dim),
         );
         this.mesh.setColorAt(i, this.color);
         i++;
@@ -101,8 +96,6 @@ export class LedWall {
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 }
-
-// --- Đèn quét + vòng truss treo ---------------------------------------------------
 
 export class LightBeams {
   readonly group = new THREE.Group();
@@ -122,8 +115,6 @@ export class LightBeams {
     this.group.add(ring);
 
     const geometry = new THREE.ConeGeometry(0.75, 12, 18, 1, true);
-    // Dời gốc lên ĐỈNH nón: đèn xoay/quét quanh điểm treo trên truss,
-    // không văng đỉnh ra khỏi vòng
     geometry.translate(0, -6, 0);
     for (let i = 0; i < 6; i++) {
       const material = new THREE.MeshBasicMaterial({
@@ -136,7 +127,6 @@ export class LightBeams {
       });
       const beam = new THREE.Mesh(geometry, material);
       const angle = (i / 6) * Math.PI * 2;
-      // Điểm treo (gốc = đỉnh nón) đặt ngay mép dưới vòng truss
       beam.position.set(
         Math.cos(angle) * 6.2,
         10.4,
@@ -147,22 +137,25 @@ export class LightBeams {
     }
   }
 
-  update(dt: number, hype: number, beat: Beat, level = 0) {
+  update(dt: number, hype: number, beat: Beat, level = 0, musicOn = true) {
     const t = performance.now() / 1000;
-    // Đèn lắc kiểu con lắc: đổi hướng ĐÚNG mỗi phách, độ sáng THỞ theo bass
     const kick = Math.max(0, 1 - beat.pulse * 3);
-    const swing = (beat.index % 2 === 0 ? 1 : -1) * (0.42 + hype * 0.25);
+    const swing = musicOn
+      ? (beat.index % 2 === 0 ? 1 : -1) * (0.42 + hype * 0.25)
+      : 0;
     this.beams.forEach((beam, i) => {
       const target = i % 2 === 0 ? swing : -swing;
       beam.rotation.z += (target - beam.rotation.z) * Math.min(1, dt * 5);
-      beam.rotation.x = Math.cos(t * (0.18 + hype * 0.35) + i) * 0.25;
-      (beam.material as THREE.MeshBasicMaterial).opacity =
-        0.05 + hype * 0.06 + level * 0.16 + kick * (0.04 + level * 0.14);
+      const targetX = musicOn
+        ? Math.cos(t * (0.18 + hype * 0.35) + i) * 0.25
+        : 0;
+      beam.rotation.x += (targetX - beam.rotation.x) * Math.min(1, dt * 5);
+      (beam.material as THREE.MeshBasicMaterial).opacity = musicOn
+        ? 0.05 + hype * 0.06 + level * 0.16 + kick * (0.04 + level * 0.14)
+        : 0.015;
     });
   }
 }
-
-// --- Quả cầu disco -----------------------------------------------------------------
 
 export class DiscoBall {
   readonly group = new THREE.Group();
@@ -181,14 +174,12 @@ export class DiscoBall {
     );
     this.ball.position.set(0, 9.1, 0);
 
-    // Dây treo
     const wire = new THREE.Mesh(
       new THREE.CylinderGeometry(0.03, 0.03, 2.6),
       new THREE.MeshBasicMaterial({ color: 0x333a55 }),
     );
     wire.position.set(0, 11.4, 0);
 
-    // Vệt sáng lấp lánh bay quanh quả cầu
     const count = 90;
     const positions = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
@@ -221,8 +212,6 @@ export class DiscoBall {
   }
 }
 
-// --- Dàn loa 2 bên, màng loa đập theo beat ------------------------------------------
-
 export class SpeakerStack {
   readonly group = new THREE.Group();
   private woofers: THREE.Mesh[] = [];
@@ -238,22 +227,22 @@ export class SpeakerStack {
       metalness: 0.6,
       roughness: 0.35,
     });
-    for (let i = 0; i < 2; i++) {
-      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.5, 1.3), boxMat);
-      cab.position.set(x, 0.78 + i * 1.55, z);
+    for (let i = 0; i < 3; i++) {
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.9, 1.7), boxMat);
+      cab.position.set(x, 1.0 + i * 1.95, z);
       this.group.add(cab);
 
       const woofer = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.5, 0.62, 0.16, 24),
+        new THREE.CylinderGeometry(0.66, 0.82, 0.2, 24),
         wooferMat,
       );
       woofer.rotation.x = Math.PI / 2;
-      woofer.position.set(x, 0.78 + i * 1.55, z + 0.72);
+      woofer.position.set(x, 1.0 + i * 1.95, z + 0.92);
       this.group.add(woofer);
       this.woofers.push(woofer);
 
       const rim = new THREE.Mesh(
-        new THREE.TorusGeometry(0.62, 0.045, 8, 28),
+        new THREE.TorusGeometry(0.82, 0.055, 8, 28),
         new THREE.MeshBasicMaterial({ color: 0xfe2c55 }),
       );
       rim.position.copy(woofer.position);
@@ -262,15 +251,12 @@ export class SpeakerStack {
   }
 
   update(_dt: number, hype: number, beat: Beat) {
-    // Màng loa "đập" ra đúng đầu beat
     const punch = Math.max(0, 1 - beat.pulse * 4) * (0.12 + hype * 0.25);
     this.woofers.forEach((w) => {
       w.scale.setScalar(1 + punch);
     });
   }
 }
-
-// --- Đèn màu thật (PointLight) quét quanh sàn ----------------------------------------
 
 export class ClubLights {
   readonly group = new THREE.Group();
@@ -282,17 +268,16 @@ export class ClubLights {
   constructor() {
     const colors = [0xfe2c55, 0x25f4ee, 0x8a2be2, 0xffc94d];
     for (let i = 0; i < colors.length; i++) {
-      const light = new THREE.PointLight(colors[i], 60, 34, 1.8);
+      const light = new THREE.PointLight(colors[i], 60, 44, 1.6);
       light.position.set(0, 6, 0);
       this.group.add(light);
       this.lights.push(light);
     }
   }
 
-  update(dt: number, hype: number, beat: Beat, level = 0) {
+  update(dt: number, hype: number, beat: Beat, level = 0, musicOn = true) {
     const t = performance.now() / 1000;
     const kick = Math.max(0, 1 - beat.pulse * 3);
-    // Nhảy vị trí theo TỪNG PHÁCH (bước 30°) thay vì trôi liên tục
     if (beat.index !== this.lastBeat) {
       this.lastBeat = beat.index;
       this.angleTarget += Math.PI / 6;
@@ -301,18 +286,17 @@ export class ClubLights {
     this.lights.forEach((light, i) => {
       const a = this.angle + (i / this.lights.length) * Math.PI * 2;
       light.position.set(
-        Math.cos(a) * 8.5,
-        4.6 + Math.sin(t * 0.3 + i) * 1,
-        Math.sin(a) * 5.5,
+        Math.cos(a) * 12,
+        5.2 + Math.sin(t * 0.3 + i) * 1.2,
+        Math.sin(a) * 8,
       );
-      // Bass thật đẩy cường độ realtime; không nhạc → nền dịu
-      light.intensity =
-        35 + hype * 35 + level * 110 + kick * (25 + level * 80 + hype * 25);
+      const target = musicOn
+        ? 35 + hype * 35 + level * 110 + kick * (25 + level * 80 + hype * 25)
+        : 8;
+      light.intensity += (target - light.intensity) * Math.min(1, dt * 6);
     });
   }
 }
-
-// --- Fireworks ---------------------------------------------------------------
 
 const PARTICLES_PER_BURST = 140;
 const BURST_LIFE = 1.6;
@@ -397,8 +381,6 @@ export class Fireworks {
   }
 }
 
-// --- Tim bay khi thả like -------------------------------------------------------
-
 type Heart = {
   sprite: THREE.Sprite;
   vy: number;
@@ -473,8 +455,6 @@ export class Hearts {
   }
 }
 
-// --- Confetti rơi khi hype cao ----------------------------------------------------
-
 const CONFETTI_MAX = 400;
 
 export class Confetti {
@@ -491,7 +471,7 @@ export class Confetti {
     const colors = new Float32Array(CONFETTI_MAX * 3);
     const color = new THREE.Color();
     for (let i = 0; i < CONFETTI_MAX; i++) {
-      this.positions[i * 3 + 1] = -10; // giấu dưới sàn
+      this.positions[i * 3 + 1] = -10;
       color.setHex(NEON[i % NEON.length]);
       colors[i * 3] = color.r;
       colors[i * 3 + 1] = color.g;

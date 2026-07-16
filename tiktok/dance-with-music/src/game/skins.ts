@@ -1,16 +1,8 @@
 import * as THREE from "three";
 
-/**
- * Nhân vật "đầu nấm" theo phong cách meme sticker: mặt trắng bệch, tóc bát úp
- * đen kịt, biểu cảm deadpan/nhếch mép/cười XD/kính đen.
- * Mỗi skin có 2 frame (tay xuống / tay lên) đảo theo nhịp.
- * Bỏ PNG vào /public/characters để thay bằng ảnh meme thật (1 file = 1 skin).
- */
-
 export type Skin = {
   frames: THREE.Texture[];
   accent: string;
-  /** width/height của sprite — dùng để scale đúng tỉ lệ ảnh. */
   aspect: number;
 };
 
@@ -18,7 +10,6 @@ const FACE_COLOR = "#f3efe6";
 const HAIR_COLOR = "#0a0a0c";
 const INK = "#141414";
 
-// Trang phục meme: đồ đen, áo trắng, hoodie đỏ, sơ mi xanh đậm...
 const OUTFITS = [
   { shirt: "#17171a", accent: "#fe2c55" },
   { shirt: "#f5f4f0", accent: "#25f4ee" },
@@ -42,10 +33,9 @@ function drawAccessory(
   accent: string,
 ) {
   const cx = 128;
-  const headTop = 26; // đỉnh tóc
+  const headTop = 26;
   ctx.lineCap = "round";
   if (accessory === "cap") {
-    // Mũ lưỡi trai đội ngược — chất hiphop
     ctx.fillStyle = accent;
     ctx.beginPath();
     ctx.ellipse(cx, headTop + 22, 62, 30, 0, Math.PI, 0);
@@ -116,7 +106,6 @@ function drawCharacter(
   const headCy = 116;
   const headR = 96;
 
-  // ---- Thân nhỏ xíu kiểu sticker
   const bodyTop = headCy + headR - 30;
   ctx.fillStyle = shirt;
   ctx.strokeStyle = INK;
@@ -126,7 +115,6 @@ function drawCharacter(
   ctx.fill();
   ctx.stroke();
 
-  // Chân + giày
   ctx.strokeStyle = HAIR_COLOR;
   ctx.lineWidth = 14;
   const legY = bodyTop + 62;
@@ -143,7 +131,6 @@ function drawCharacter(
   ctx.ellipse(cx + spread + 7, legY + 32, 15, 8, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Tay: frame nhảy giơ cao hẳn cho máu lửa
   ctx.strokeStyle = shirt === "#f5f4f0" || shirt === "#e8e4da" ? "#d9d4c7" : shirt;
   ctx.lineWidth = 13;
   ctx.beginPath();
@@ -173,36 +160,30 @@ function drawCharacter(
   ctx.fill();
   ctx.stroke();
 
-  // ---- Đầu: tóc đen tròn, mặt trắng lộ nửa dưới => bát úp
   ctx.fillStyle = HAIR_COLOR;
   ctx.beginPath();
   ctx.arc(cx, headCy, headR, 0, Math.PI * 2);
   ctx.fill();
 
-  // Mặt trắng
   ctx.fillStyle = FACE_COLOR;
   ctx.beginPath();
   ctx.arc(cx, headCy + 18, headR - 12, 0, Math.PI * 2);
   ctx.fill();
 
-  // Mái bát úp che nửa trán (đặc trưng meme)
   ctx.fillStyle = HAIR_COLOR;
   ctx.beginPath();
   ctx.ellipse(cx, headCy - 34, headR - 2, 52, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Hai bên tóc ôm má
   ctx.beginPath();
   ctx.roundRect(cx - headR - 2, headCy - 14, 26, 74, 12);
   ctx.roundRect(cx + headR - 24, headCy - 14, 26, 74, 12);
   ctx.fill();
 
-  // ---- Biểu cảm meme
   const eyeY = headCy + 30;
   ctx.fillStyle = INK;
   ctx.strokeStyle = INK;
 
   if (face === 0) {
-    // Deadpan: mắt chấm nhỏ + mồm ngang dài (mặt vô cảm huyền thoại)
     ctx.beginPath();
     ctx.arc(cx - 32, eyeY, 6, 0, Math.PI * 2);
     ctx.arc(cx + 32, eyeY, 6, 0, Math.PI * 2);
@@ -213,7 +194,6 @@ function drawCharacter(
     ctx.lineTo(cx + 26, eyeY + 38);
     ctx.stroke();
   } else if (face === 1) {
-    // Nhếch mép: mắt lườm + cười đểu 1 bên
     ctx.lineWidth = 7;
     ctx.beginPath();
     ctx.moveTo(cx - 44, eyeY - 4);
@@ -226,7 +206,6 @@ function drawCharacter(
     ctx.quadraticCurveTo(cx + 22, eyeY + 44, cx + 34, eyeY + 26);
     ctx.stroke();
   } else if (face === 2) {
-    // Cười XD: mắt ><, mồm đen há to
     ctx.lineWidth = 7;
     ctx.beginPath();
     ctx.moveTo(cx - 44, eyeY - 10);
@@ -244,7 +223,6 @@ function drawCharacter(
     ctx.ellipse(cx, eyeY + 42, 12, 7, 0, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    // Kính đen swag + cười mím
     ctx.fillStyle = "#000";
     ctx.beginPath();
     ctx.roundRect(cx - 52, eyeY - 14, 42, 24, 8);
@@ -262,7 +240,6 @@ function drawCharacter(
     ctx.stroke();
   }
 
-  // Má hồng nhẹ cho frame nhảy
   if (pose === "arms-up") {
     ctx.fillStyle = "rgba(255,110,110,0.35)";
     ctx.beginPath();
@@ -311,11 +288,6 @@ export function generateSkins(): Skin[] {
 
 const ACCENTS = ["#fe2c55", "#25f4ee", "#ffc94d", "#7cc0ff", "#b18cff", "#5dffb0"];
 
-/**
- * Xóa nền sáng bằng flood-fill từ 4 mép: chỉ xóa vùng near-white ĐỤC dính với
- * mép ảnh, nên ảnh đã trong suốt sẵn hay mặt trắng của nhân vật không bị ảnh
- * hưởng. Chạy cho mọi ảnh (một số PNG có alpha nhưng vẫn kèm nền trắng).
- */
 function stripWhiteBackground(img: HTMLImageElement): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = img.naturalWidth;
@@ -326,7 +298,6 @@ function stripWhiteBackground(img: HTMLImageElement): HTMLCanvasElement {
   const data = ctx.getImageData(0, 0, width, height);
   const px = data.data;
 
-  // Đục + gần trắng (nới ngưỡng nhẹ để ăn cả nền xám sáng/viền nén JPG)
   const isBackground = (i: number) =>
     px[i + 3] > 40 && px[i] > 228 && px[i + 1] > 228 && px[i + 2] > 228;
 
@@ -351,7 +322,6 @@ function stripWhiteBackground(img: HTMLImageElement): HTMLCanvasElement {
   return canvas;
 }
 
-/** Lật gương ngang — tạo frame thứ 2 cho skin tĩnh để nhân vật lắc qua lại. */
 function mirrorCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = source.width;
@@ -372,10 +342,6 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-/**
- * Nạp skin PNG/WebP tùy chỉnh. File đặt tên `ten_0.png, ten_1.png…` được gộp
- * thành 1 skin nhiều frame (animation); file lẻ = skin 1 frame.
- */
 export async function loadCustomSkins(urls: string[]): Promise<Skin[]> {
   const groups = new Map<string, { order: number; url: string }[]>();
   for (const url of urls) {
@@ -405,10 +371,8 @@ export async function loadCustomSkins(urls: string[]): Promise<Skin[]> {
         texture.anisotropy = 16;
         frames.push(texture);
       } catch {
-        // bỏ frame lỗi
       }
     }
-    // Skin tĩnh 1 frame → thêm frame lật gương để tay chân vẫn "cử động"
     if (frames.length === 1 && firstCanvas) {
       const mirrored = new THREE.CanvasTexture(mirrorCanvas(firstCanvas));
       mirrored.colorSpace = THREE.SRGBColorSpace;
@@ -427,7 +391,6 @@ export async function loadCustomSkins(urls: string[]): Promise<Skin[]> {
   return skins;
 }
 
-/** Bảng tên bo tròn trên đầu nhân vật. */
 export function makeLabelTexture(
   text: string,
   accent: string,
@@ -461,7 +424,6 @@ export function makeLabelTexture(
   return { texture, aspect: canvas.width / canvas.height };
 }
 
-/** Bong bóng chat trắng chữ đen kiểu sticker. */
 export function makeBubbleTexture(text: string): {
   texture: THREE.Texture;
   aspect: number;
@@ -484,7 +446,6 @@ export function makeBubbleTexture(text: string): {
   c.roundRect(2, 2, canvas.width - 4, canvas.height - 10, 14);
   c.fill();
   c.stroke();
-  // đuôi bong bóng
   c.beginPath();
   c.moveTo(canvas.width / 2 - 7, canvas.height - 9);
   c.lineTo(canvas.width / 2, canvas.height);

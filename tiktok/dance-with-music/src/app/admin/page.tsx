@@ -47,7 +47,6 @@ export default function AdminPage() {
 
   useEffect(() => {
     setRules(loadRules());
-    // Nhớ username đã nhập qua các lần reload
     setUsername(localStorage.getItem("md:admin-user") ?? "");
     const bus = openBus((msg: BusMessage) => {
       if (msg.t !== "state") return;
@@ -441,17 +440,17 @@ export default function AdminPage() {
                   />
                 </label>
                 <label className="text-xs text-white/70">
-                  BPM khi không nhạc
+                  Lượt order DJ / bài
                   <input
                     type="number"
-                    min={60}
-                    max={200}
-                    value={rules.autoBpm}
+                    min={0}
+                    max={10}
+                    value={rules.djOrderPerSong}
                     onChange={(e) =>
                       updateRules({
-                        autoBpm: Math.min(
-                          200,
-                          Math.max(60, +e.target.value || 128),
+                        djOrderPerSong: Math.min(
+                          10,
+                          Math.max(0, parseInt(e.target.value, 10) || 0),
                         ),
                       })
                     }
@@ -584,7 +583,7 @@ export default function AdminPage() {
         </Card>
 
         <p className="text-xs text-white/40">
-          Trang game (đưa vào OBS): http://localhost:3100 — trang này chỉ để điều
+          Trang game (đưa vào OBS): http:
           khiển, không hiện trên stream. Nhạc phát ra từ tab game.
         </p>
       </div>

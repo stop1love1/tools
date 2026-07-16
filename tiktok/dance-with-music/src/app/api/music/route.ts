@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-/** Liệt kê nhạc trong public/music — thả MP3/OGG vào đó để phát trong game. */
 export async function GET() {
   try {
     const dir = join(process.cwd(), "public", "music");

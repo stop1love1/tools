@@ -4,7 +4,7 @@
 
 Game tương tác TikTok LIVE kiểu "vũ trường meme": người xem comment là nhân vật **đầu nấm** của họ xuất hiện trên sàn nhảy 3D, gõ lệnh để điều khiển, tặng quà để bắn pháo hoa và leo bục top.
 
-Một tool trong bộ `tiktok/live-connector`. Frontend thuần **Next.js 16 + TypeScript + three.js**, nhận dữ liệu từ **backend Go** (`tiktok/server`) qua WebSocket.
+Một tool trong bộ `tiktok/`. Frontend thuần **Next.js 16 + TypeScript + three.js**, nhận dữ liệu từ **backend Go** (`tiktok/server`) qua WebSocket.
 
 ## Chạy
 

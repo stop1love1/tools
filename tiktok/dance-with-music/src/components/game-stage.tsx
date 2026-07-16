@@ -47,6 +47,12 @@ const TONE_CLASS = {
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-cyan-300/60 disabled:opacity-50";
 
+// Trạng thái khôi phục nhạc sau reload — biến module vì GameStage chỉ mount
+// một lần mỗi trang và React Compiler không cho gán ref dùng chéo giữa effect
+let resumeAtSeconds = 0;
+let playItemLatest: (index: number) => void = () => {};
+let addOrderedLatest: (nickname: string, query: string) => void = () => {};
+
 function Section({
   title,
   children,
@@ -75,7 +81,13 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   const [demoRunning, setDemoRunning] = useState(false);
   const [rules, setRules] = useState<GameRules>(DEFAULT_RULES);
 
-  type PlaylistItem = { input: string; title: string; kind: "file" | "url" };
+  type PlaylistItem = {
+    input: string;
+    title: string;
+    kind: "file" | "url";
+    /** Nickname người order — bài do khán giả yêu cầu qua quà tặng. */
+    orderedBy?: string;
+  };
   const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
   const playlistRef = useRef<PlaylistItem[]>([]);
   playlistRef.current = playlist;
@@ -90,12 +102,10 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     status.state === "connecting" || status.state === "connected";
   const s = statusText(status);
 
-  // --- Khởi tạo game ---------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const game = new MemeDanceGame(canvas);
-    // Áp luật đã lưu NGAY khi tạo game (không đợi effect sau, tránh race)
     game.rules = loadRules();
     gameRef.current = game;
 
@@ -103,7 +113,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       .then((r) => r.json())
       .then((data: { urls: string[] }) => game.useCustomSkins(data.urls))
       .catch(() => {});
-    // Chế độ preview: tự spawn toàn bộ nhân vật × điệu nhảy để test
     if (preview) skinsReady.finally(() => game.startShowcase());
 
     const observer = new ResizeObserver(() => game.resize());
@@ -122,35 +131,56 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     const loaded = loadRules();
     setRules(loaded);
     if (gameRef.current) gameRef.current.rules = loaded;
-    // Playlist = file trong public/music + các URL đã thêm (lưu localStorage)
-    fetch("/api/music")
-      .then((r) => r.json())
-      .then((data: { tracks: { url: string; title: string }[] }) => {
-        const files: PlaylistItem[] = data.tracks.map((t) => ({
+    const loadPlaylist = async () => {
+      let files: PlaylistItem[] = [];
+      try {
+        const r = await fetch("/api/music");
+        const data = (await r.json()) as {
+          tracks: { url: string; title: string }[];
+        };
+        files = data.tracks.map((t) => ({
           input: t.url,
           title: t.title,
-          kind: "file",
+          kind: "file" as const,
         }));
-        let saved: PlaylistItem[] = [];
-        try {
-          saved = (JSON.parse(localStorage.getItem("md:playlist") ?? "[]") as
-            PlaylistItem[]).filter((i) => i.kind === "url");
-        } catch {
-          // bỏ playlist hỏng
+      } catch {
+        // API lỗi vẫn phải hiện các URL đã lưu
+      }
+      let saved: PlaylistItem[] = [];
+      try {
+        saved = (JSON.parse(localStorage.getItem("md:playlist") ?? "[]") as
+          PlaylistItem[]).filter((i) => i.kind === "url");
+      } catch {
+      }
+      const list = [...files, ...saved];
+      setPlaylist(list);
+      playlistRef.current = list;
+      // Tự phát lại bài đang nghe dở trước khi reload (đúng vị trí đang nghe)
+      try {
+        const m = JSON.parse(
+          localStorage.getItem("md:music") ?? "null",
+        ) as { input: string; time: number; paused?: boolean } | null;
+        if (m?.input && !m.paused) {
+          const idx = list.findIndex((i) => i.input === m.input);
+          if (idx >= 0) {
+            resumeAtSeconds = m.time || 0;
+            playItemLatest(idx);
+          }
         }
-        setPlaylist([...files, ...saved]);
-      })
-      .catch(() => {});
+      } catch {
+      }
+    };
+    loadPlaylist();
   }, []);
 
   const persistPlaylist = (list: PlaylistItem[]) => {
+    // Bài order của khán giả là tạm thời — không lưu vào playlist cố định
     localStorage.setItem(
       "md:playlist",
-      JSON.stringify(list.filter((i) => i.kind === "url")),
+      JSON.stringify(list.filter((i) => i.kind === "url" && !i.orderedBy)),
     );
   };
 
-  // Tab khác (admin/preview) đổi luật → tự nạp lại qua storage event
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== "md:rules") return;
@@ -162,7 +192,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Màn hình chính dành cho người xem — mở cài đặt bằng phím S / Esc đóng
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (
@@ -188,7 +217,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     localStorage.setItem("md:stats", value ? "1" : "0");
   };
 
-  // Admin sửa luật chơi → áp vào game ngay + lưu lại
   const updateRules = (patch: Partial<GameRules>) => {
     const next = { ...rules, ...patch };
     setRules(next);
@@ -212,7 +240,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       giftActions: rules.giftActions.filter((_, i) => i !== index),
     });
 
-  // --- Kết nối TikTok ---------------------------------------------------------
   const syncUrl = (user: string | null) => {
     const url = user
       ? `${window.location.pathname}?user=${encodeURIComponent(user)}`
@@ -221,7 +248,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   };
 
   useEffect(() => {
-    if (preview) return; // preview không tự kết nối
+    if (preview) return;
     const user = new URLSearchParams(window.location.search).get("user");
     if (user) {
       setUsername(user);
@@ -244,7 +271,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     }
   };
 
-  // Preview: bắn sự kiện giả để test từng chức năng theo config hiện tại
   const testUser = useRef({
     userId: "preview-tester",
     uniqueId: "preview_tester",
@@ -296,11 +322,28 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     }
   };
 
-  // --- Nhạc: playlist nhiều URL/file, tự chuyển bài -----------------------------
-  const playItemRef = useRef<(index: number) => void>(() => {});
-  // Trình duyệt chặn autoplay khi tab game chưa được click → chờ 1 cú click
   const pendingPlayRef = useRef<number | null>(null);
   const [needsGesture, setNeedsGesture] = useState(false);
+
+  // Lưu định kỳ bài + vị trí đang nghe để reload trang không mất nhạc
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const game = gameRef.current;
+      const idx = playingIndexRef.current;
+      if (!game || idx < 0) return;
+      const item = playlistRef.current[idx];
+      if (!item) return;
+      localStorage.setItem(
+        "md:music",
+        JSON.stringify({
+          input: item.input,
+          time: game.music.progress?.time ?? 0,
+          paused: !game.music.playing,
+        }),
+      );
+    }, 3000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const onPointer = () => {
@@ -308,7 +351,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       const index = pendingPlayRef.current;
       pendingPlayRef.current = null;
       setNeedsGesture(false);
-      playItemRef.current(index);
+      playItemLatest(index);
     };
     window.addEventListener("pointerdown", onPointer);
     return () => window.removeEventListener("pointerdown", onPointer);
@@ -335,9 +378,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       }
       title = meta?.music?.title || meta?.author?.nickname || "TikTok audio";
     } else if (!isDirectMedia) {
-      // YouTube / SoundCloud / trang khác → giải bằng yt-dlp qua sidecar
+      // Không phải link → coi là tên bài, tìm trên YouTube qua yt-dlp
+      const target = /^[a-z][a-z0-9+.-]*:/i.test(input)
+        ? input
+        : `ytsearch1:${input}`;
       const r = await fetch(
-        `${apiBase}/api/data/audio/resolve?url=${encodeURIComponent(input)}`,
+        `${apiBase}/api/data/audio/resolve?url=${encodeURIComponent(target)}`,
       );
       const resolved = await r.json();
       if (!r.ok || !resolved?.audioUrl) {
@@ -357,24 +403,26 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     setPlayingIndex(index);
     setMusicPaused(false);
     setMusicError(null);
-    // Hết bài → bài kế trong playlist (lặp vòng)
     game.music.onEndedCb = () => {
       const list = playlistRef.current;
-      if (list.length) playItemRef.current((playingIndexRef.current + 1) % list.length);
+      if (list.length) playItemLatest((playingIndexRef.current + 1) % list.length);
     };
     try {
       if (item.kind === "file") {
         setNowPlaying(item.title);
-        await game.playMusic(item.input, item.title);
+        await game.playMusic(item.input, item.title, item.orderedBy ?? null);
       } else {
         setNowPlaying("Đang phân tích link…");
         const { media, title } = await resolveMedia(item.input);
         setNowPlaying(title);
-        // Cập nhật lại tên bài trong playlist sau khi giải link
         setPlaylist((prev) =>
           prev.map((p, i) => (i === index ? { ...p, title } : p)),
         );
-        await game.playMusic(media, title);
+        await game.playMusic(media, title, item.orderedBy ?? null);
+      }
+      if (resumeAtSeconds > 0) {
+        game.music.seekTo(resumeAtSeconds);
+        resumeAtSeconds = 0;
       }
     } catch (err) {
       setNowPlaying(null);
@@ -383,7 +431,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         (err instanceof DOMException && err.name === "NotAllowedError") ||
         /user didn't interact|not allowed/i.test(message)
       ) {
-        // Autoplay bị chặn — chờ người dùng click vào tab game rồi phát lại
         pendingPlayRef.current = index;
         setNeedsGesture(true);
         setMusicError(
@@ -394,7 +441,47 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       setMusicError(message || "Không phát được URL này");
     }
   };
-  playItemRef.current = playItem;
+  // Bài do khán giả order: chèn ngay sau bài đang phát để lên sóng kế tiếp
+  const addOrderedSong = (nickname: string, query: string) => {
+    const list = [...playlistRef.current];
+    const at =
+      playingIndexRef.current >= 0 ? playingIndexRef.current + 1 : list.length;
+    list.splice(at, 0, {
+      input: query,
+      title: `🎧 ${query}`,
+      kind: "url",
+      orderedBy: nickname,
+    });
+    setPlaylist(list);
+    playlistRef.current = list;
+    // Không phát ngay — bài hiện tại chạy xong sẽ tự chuyển sang bài order
+  };
+
+  useEffect(() => {
+    playItemLatest = playItem;
+    addOrderedLatest = addOrderedSong;
+  });
+
+  // Lưu ngay trước khi trang đóng/reload để không mất vị trí đang nghe
+  useEffect(() => {
+    const save = () => {
+      const game = gameRef.current;
+      const idx = playingIndexRef.current;
+      if (!game || idx < 0) return;
+      const item = playlistRef.current[idx];
+      if (!item) return;
+      localStorage.setItem(
+        "md:music",
+        JSON.stringify({
+          input: item.input,
+          time: game.music.progress?.time ?? 0,
+          paused: !game.music.playing,
+        }),
+      );
+    };
+    window.addEventListener("pagehide", save);
+    return () => window.removeEventListener("pagehide", save);
+  }, []);
 
   const addToPlaylist = (raw: string, playNow: boolean) => {
     const input = raw.trim();
@@ -438,7 +525,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     setMusicPaused((p) => !p);
   };
 
-  // Nút ⏮⏯⏭ trên màn hình DJ 3D — dùng ref để tránh closure cũ
   const screenControlRef = useRef<(a: "prev" | "toggle" | "next") => void>(
     () => {},
   );
@@ -464,9 +550,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     const game = gameRef.current;
     if (!game) return;
     game.onScreenControl = (a) => screenControlRef.current(a);
+    game.onSongRequest = (nickname, query) => addOrderedLatest(nickname, query);
   }, []);
 
-  // --- Kênh điều khiển từ trang /admin -----------------------------------------
   const stateRef = useRef<Record<string, unknown>>({});
   stateRef.current = {
     status,
@@ -537,14 +623,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
 
   useEffect(() => {
     const bus = openBus((msg) => {
-      if (msg.t === "state") return; // tin từ chính mình
+      if (msg.t === "state") return;
       commandRef.current(msg);
-      // Phản hồi trạng thái ngay sau khi xử lý lệnh để admin thấy tức thì
       setTimeout(() => {
         bus.send({ t: "state", ...stateRef.current } as never);
       }, 60);
     });
-    // Phát trạng thái định kỳ cho trang admin
     const timer = setInterval(() => {
       bus.send({ t: "state", ...stateRef.current } as never);
     }, 800);
@@ -554,14 +638,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     };
   }, []);
 
-  // --- UI ---------------------------------------------------------------------
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-[#05060a]">
       <div className="absolute inset-0">
         <canvas ref={canvasRef} className="block h-full w-full" />
       </div>
 
-      {/* Nhắc bấm 1 lần để trình duyệt cho phép phát nhạc */}
       {needsGesture && (
         <button
           type="button"
@@ -573,11 +655,10 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
 
       {preview && (
         <div className="absolute left-3 top-3 rounded-full border border-amber-300/40 bg-black/60 px-4 py-1.5 text-xs font-semibold text-amber-300 backdrop-blur">
-          🧪 PREVIEW — nhấn S mở Settings; phát nhạc để test bắt nhịp thật
+          🧪 PREVIEW — nhấn S mở Settings; phát nhạc để nhân vật nhảy theo beat
         </div>
       )}
 
-      {/* Preview: nút bắn sự kiện test — sinh theo config Luật chơi hiện tại */}
       {preview && (
         <aside className="absolute bottom-3 left-3 flex max-w-[70vw] flex-wrap gap-1.5">
           <button
@@ -623,7 +704,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         </aside>
       )}
 
-      {/* Stats góc trái — chỉ hiện khi admin bật trong Settings */}
       {showStats && (
         <div className="absolute left-3 top-3 flex flex-col gap-1 font-mono text-[13px] text-white/80">
           <span>👀 {stats.viewerCount.toLocaleString("vi-VN")}</span>
@@ -632,21 +712,29 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         </div>
       )}
 
-      {/* Bảng lệnh (tùy chọn hiển thị trong settings, sinh theo luật admin) */}
       {showLegend && (
-        <aside className="absolute bottom-3 right-3 flex flex-col items-end gap-1">
+        <aside className="absolute bottom-3 right-3 flex flex-col items-end gap-0.5">
           {buildLegend(rules).map((item) => (
             <span
               key={item.label}
-              className="rounded-full border border-white/10 bg-black/55 px-3 py-1 text-[11px] font-semibold text-white/85 backdrop-blur"
+              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white/85 backdrop-blur"
             >
-              {item.emoji} {item.label}
+              {item.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={item.image}
+                  alt=""
+                  className="h-4 w-4 shrink-0 object-contain"
+                />
+              ) : (
+                <span>{item.emoji}</span>
+              )}
+              {item.label}
             </span>
           ))}
         </aside>
       )}
 
-      {/* Màn settings */}
       {showSettings && (
         <div className="absolute right-3 top-14 flex max-h-[calc(100dvh-5rem)] w-80 flex-col gap-5 overflow-y-auto rounded-xl border border-white/10 bg-black/80 p-4 backdrop-blur-md">
           <div className="flex items-center justify-between">
@@ -897,15 +985,18 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 />
               </label>
               <label className="text-xs text-white/70">
-                BPM khi không nhạc
+                Lượt order DJ / bài
                 <input
                   type="number"
-                  min={60}
-                  max={200}
-                  value={rules.autoBpm}
+                  min={0}
+                  max={10}
+                  value={rules.djOrderPerSong}
                   onChange={(e) =>
                     updateRules({
-                      autoBpm: Math.min(200, Math.max(60, +e.target.value || 128)),
+                      djOrderPerSong: Math.min(
+                        10,
+                        Math.max(0, parseInt(e.target.value, 10) || 0),
+                      ),
                     })
                   }
                   className={inputClass}
@@ -1037,11 +1128,24 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
             </button>
           </Section>
 
-          <Section title="Xem trước bảng lệnh">
+          <Section title="Xem trước bảng lệnh (chỉ hiện quà donate)">
             <ul className="flex flex-col gap-1">
               {buildLegend(rules).map((item) => (
-                <li key={item.label} className="text-xs text-white/75">
-                  {item.emoji} {item.label}
+                <li
+                  key={item.label}
+                  className="flex items-center gap-1.5 text-xs text-white/75"
+                >
+                  {item.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.image}
+                      alt=""
+                      className="h-4 w-4 shrink-0 object-contain"
+                    />
+                  ) : (
+                    <span>{item.emoji}</span>
+                  )}
+                  {item.label}
                 </li>
               ))}
             </ul>

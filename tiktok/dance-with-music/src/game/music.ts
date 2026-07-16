@@ -1,12 +1,5 @@
 import type { Beat } from "./player";
 
-/**
- * Phát nhạc + bắt nhịp thật bằng Web Audio:
- * - đo năng lượng dải bass mỗi frame
- * - vượt ngưỡng trung bình trượt → tính là 1 phách (onset)
- * - khoảng cách giữa các phách cho ra BPM; pha (pulse) = thời gian từ phách cuối
- * Khi không có nhạc, game rơi về nhịp auto 128 BPM.
- */
 export class MusicPlayer {
   private audio: HTMLAudioElement | null = null;
   private ctx: AudioContext | null = null;
@@ -14,11 +7,8 @@ export class MusicPlayer {
   private freq: Uint8Array<ArrayBuffer> | null = null;
 
   title = "";
-  /** Năng lượng bass 0..1 đã làm mượt — dùng cho hiệu ứng. */
   level = 0;
-  /** Độ nhạy beat: năng lượng phải > trung bình × sensitivity (admin chỉnh). */
   sensitivity = 1.35;
-  /** Gọi khi bài hát kết thúc (để HUD chuyển bài). */
   onEndedCb: (() => void) | null = null;
 
   private loBin = 1;
@@ -27,14 +17,38 @@ export class MusicPlayer {
   private beatIndex = 0;
   private lastOnset = 0;
   private lastRealOnset = 0;
-  private interval = 60 / 128; // giây / phách, cập nhật theo nhạc thật
+  private interval = 60 / 128;
   private history: number[] = [];
 
   get playing(): boolean {
     return !!this.audio && !this.audio.paused && !this.audio.ended;
   }
 
-  /** Gọi từ sự kiện bấm nút (trình duyệt yêu cầu user gesture để phát audio). */
+  /** Tiến độ bài hiện tại (giây) — null khi chưa có bài/chưa biết độ dài. */
+  get progress(): { time: number; duration: number } | null {
+    if (!this.audio) return null;
+    const duration = this.audio.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return null;
+    return { time: this.audio.currentTime, duration };
+  }
+
+  /** Tua tới mốc giây tuyệt đối (khôi phục vị trí nghe dở sau khi reload). */
+  seekTo(seconds: number) {
+    if (!this.audio) return;
+    this.audio.currentTime = Math.max(0, seconds);
+  }
+
+  /** Tua tới vị trí 0..1 của bài (bấm vào thanh tiến độ trên màn hình DJ). */
+  seek(frac: number) {
+    if (!this.audio) return;
+    const duration = this.audio.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    this.audio.currentTime = Math.min(
+      duration - 0.05,
+      Math.max(0, frac * duration),
+    );
+  }
+
   async play(url: string, title: string) {
     if (!this.audio) {
       this.audio = new Audio();
@@ -43,7 +57,6 @@ export class MusicPlayer {
       this.ctx = new AudioContext();
       const source = this.ctx.createMediaElementSource(this.audio);
       this.analyser = this.ctx.createAnalyser();
-      // fftSize lớn để chia bin mịn, bắt đúng dải kick drum 20–150Hz
       this.analyser.fftSize = 2048;
       this.analyser.smoothingTimeConstant = 0.6;
       source.connect(this.analyser);
@@ -77,29 +90,24 @@ export class MusicPlayer {
     else await this.resume();
   }
 
-  /** Phát lại bài hiện tại từ đầu. */
   async restart() {
     if (!this.audio) return;
     this.audio.currentTime = 0;
     await this.resume();
   }
 
-  /** Phổ tần hiện tại (cho màn hình EQ). Null khi chưa phát. */
   getSpectrum(): Uint8Array<ArrayBuffer> | null {
     if (!this.analyser || !this.freq || !this.playing) return null;
     this.analyser.getByteFrequencyData(this.freq);
     return this.freq;
   }
 
-  /** Gọi mỗi frame để dò phách. */
   update() {
     if (!this.playing || !this.analyser || !this.freq) {
       this.level = Math.max(0, this.level - 0.02);
       return;
     }
     this.analyser.getByteFrequencyData(this.freq);
-    // Năng lượng bình phương dải bass 20–150Hz (kick drum) — theo chuẩn
-    // moving-average beat detection của Web Audio
     let sum = 0;
     for (let i = this.loBin; i <= this.hiBin; i++) {
       sum += this.freq[i] * this.freq[i];
@@ -114,26 +122,19 @@ export class MusicPlayer {
 
     const now = performance.now() / 1000;
 
-    // Free-wheel: giữa 2 phách thật vẫn tự đếm phách theo BPM ước lượng,
-    // để sàn nhảy đều kể cả khi bắt trượt vài phách
     while (now - this.lastOnset > this.interval) {
       this.lastOnset += this.interval;
       this.beatIndex++;
     }
 
-    // Onset thật: năng lượng vượt trung bình × sensitivity + sàn chống nhiễu
     const gap = now - this.lastRealOnset;
     if (bass > avg * this.sensitivity && bass > 0.02 && gap > 0.25) {
       if (gap > 0.33 && gap < 0.86) {
-        // 70–180 BPM
         this.interval = this.interval * 0.6 + gap * 0.4;
       } else if (gap / 2 > 0.33 && gap / 2 < 0.86) {
-        // lỡ đúng 1 phách ở giữa
         this.interval = this.interval * 0.7 + (gap / 2) * 0.3;
       }
       this.lastRealOnset = now;
-      // Đồng bộ pha MỀM: onset rơi gần cuối phách free-wheel → coi là phách
-      // mới; rơi giữa chừng → chỉ nắn pha dần, tránh cú giật reset giữa nhịp
       const phase = (now - this.lastOnset) / this.interval;
       if (phase >= 0.6) {
         this.lastOnset = now;
@@ -144,7 +145,6 @@ export class MusicPlayer {
     }
   }
 
-  /** Nhịp hiện tại của bài nhạc. */
   getBeat(): Beat {
     const now = performance.now() / 1000;
     const pulse = Math.min(0.999, (now - this.lastOnset) / this.interval);

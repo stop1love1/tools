@@ -1,5 +1,3 @@
-// Package httpapi exposes the WebSocket endpoint, the REST API and the
-// reverse proxy to the Python data sidecar.
 package httpapi
 
 import (
@@ -20,7 +18,6 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 4096,
-	// Local tool: front-ends run on other localhost ports (3000, 3100…)
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
@@ -55,8 +52,6 @@ func (s *Server) Routes() http.Handler {
 	return withCORS(mux)
 }
 
-// --- WebSocket ---------------------------------------------------------------
-
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	username := hub.NormalizeUsername(r.URL.Query().Get("user"))
 	if username == "" {
@@ -70,12 +65,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	client := s.hub.Join(username, conn)
 	if client == nil {
-		return // bị từ chối do signer cooldown, status đã gửi trước khi đóng
+		return
 	}
 	client.Run()
 }
-
-// --- REST ---------------------------------------------------------------------
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -113,8 +106,6 @@ func (s *Server) handleGifts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, gifts)
 }
 
-// --- Sidecar proxy --------------------------------------------------------------
-
 func (s *Server) dataProxy() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.sidecar == nil {
@@ -124,8 +115,6 @@ func (s *Server) dataProxy() http.Handler {
 		s.sidecar.ServeHTTP(w, r)
 	})
 }
-
-// --- Helpers ---------------------------------------------------------------------
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

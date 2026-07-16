@@ -34,17 +34,16 @@ import {
 
 const FLOOR_W = 28;
 const FLOOR_D = 19;
+const NEON_MH = [0x25f4ee, 0xfe2c55, 0xffc94d, 0x8a2be2];
 const MAX_PLAYERS = 220;
 const HYPE_DECAY_PER_S = 0.14;
 const STAGE_H = 0.9;
-// Khán đài phía trước-dưới: chỗ đứng xem của người chưa nhảy
 const AUDIENCE_Y = -0.35;
 const AUDIENCE_Z0 = FLOOR_D / 2 + 0.5;
 
 type PodiumSlot = {
   pedestal: THREE.Mesh;
   label: THREE.Sprite;
-  /** Vị trí đứng trên mặt bục — người donate top đứng thật ở đây. */
   pos: THREE.Vector3;
   userId: string | null;
 };
@@ -65,7 +64,6 @@ export class MemeDanceGame {
   private players = new Map<string, Player>();
   private danceSlotsFree: THREE.Vector3[] = [];
   private audienceSlotsFree: THREE.Vector3[] = [];
-  // Chỗ đứng hiện tại của từng người để trả lại pool khi rời đi/chuyển khu
   private playerSlots = new Map<
     string,
     { zone: "floor" | "audience" | "podium"; pos: THREE.Vector3 }
@@ -82,30 +80,56 @@ export class MemeDanceGame {
   private podium: PodiumSlot[] = [];
   private banners: Banner[] = [];
   private djSprite!: THREE.Sprite;
+  // Cả khối sân khấu (bục, bàn DJ, giàn đèn, loa) nhún nhẹ theo nhạc
+  private stageGroup = new THREE.Group();
+  private boothLeds: THREE.MeshBasicMaterial[] = [];
+  private movingHeads: { yoke: THREE.Group; head: THREE.Mesh; dir: number }[] =
+    [];
+  private movingHeadBeams: THREE.MeshBasicMaterial[] = [];
+  private djLastBeat = -1;
+  private djFacing = 1;
+  private djFacingCur = 1;
+  private djX = 0;
+  private djXTarget = 0;
+  private djW = 1.7;
+  // Order nhạc: user thay NPC trên bàn DJ đến khi đổi bài
+  private djTakeover: { userId: string; nickname: string } | null = null;
+  private djOrderWaiting: { userId: string; nickname: string } | null = null;
+  private djOrdersThisSong = 0;
+  private djDefaultMap: THREE.Texture | null = null;
+  private djDefaultW = 1.7;
+  /** HUD gắn handler: user order xong chat bài muốn nghe → thêm vào playlist. */
+  onSongRequest: ((nickname: string, query: string) => void) | null = null;
   private djBaseY = 0;
   private decks: THREE.Mesh[] = [];
-  // Các khối hộp tạm — sẽ bị thay khi model GLB thật load xong
   private boothParts: THREE.Object3D[] = [];
   private subwooferBoxes: THREE.Object3D[] = [];
   private strobe!: THREE.Mesh;
   private npScreen!: NowPlayingScreen;
   private raycaster = new THREE.Raycaster();
-  /** Bấm nút ⏮⏯⏭ trên màn hình DJ (raycast) — HUD gắn handler. */
   onScreenControl: ((action: "prev" | "toggle" | "next") => void) | null = null;
   readonly music = new MusicPlayer();
-  /** Luật chơi do admin cấu hình trong Settings. */
   rules: GameRules = DEFAULT_RULES;
   private hype = 0;
 
-  // Camera zoom cận cảnh người donate lớn
   private focusPlayer: Player | null = null;
   private focusUntil = 0;
   private focusBlend = 0;
   private lookTarget = new THREE.Vector3();
   private orbitAngle = 0;
 
-  // Nhịp nhạc toàn sàn
-  private beatT = 0;
+  private spotlightPlayer: Player | null = null;
+  private spotlightUntil = 0;
+  // Hàng đầu sát sân khấu: giữ riêng cho top tương tác/donate
+  private frontSlots: THREE.Vector3[] = [];
+  private frontRow: (Player | null)[] = [];
+  private frontSlotSet = new Set<THREE.Vector3>();
+  private reseatT = 0;
+  private followSpot!: THREE.SpotLight;
+  private followSpotTarget = new THREE.Object3D();
+  private followBeam!: THREE.Mesh;
+  private followBlend = 0;
+
   private beatIndex = 0;
 
   private demoTimers: ReturnType<typeof setInterval>[] = [];
@@ -123,28 +147,26 @@ export class MemeDanceGame {
     this.scene.background = new THREE.Color(0x04050a);
     this.scene.fog = new THREE.Fog(0x04050a, 34, 78);
 
-    // Khung hình chuẩn: sân khấu 1/3 trên, sàn nhảy giữa, khán đài mép dưới
     this.camera = new THREE.PerspectiveCamera(58, 1, 0.1, 200);
     this.camera.position.set(0, 7.2, 19.5);
     this.camera.lookAt(0, 1.8, -2.5);
 
-    // Ánh sáng thật để vật thể 3D có khối
     this.scene.add(new THREE.AmbientLight(0x8890c0, 0.5));
     const key = new THREE.DirectionalLight(0xffffff, 0.5);
     key.position.set(4, 12, 10);
     this.scene.add(key);
 
-    // Post-processing: bloom cho đèn neon/LED phát quang như club thật
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(1280, 720),
-      0.45, // strength — tăng theo hype trong loop
-      0.55, // radius
-      0.82, // threshold — chỉ đèn/neon thật sáng mới glow, nhân vật không bị cháy
+      0.45,
+      0.55,
+      0.82,
     );
     this.composer.addPass(this.bloom);
 
+    this.scene.add(this.stageGroup);
     this.skins = generateSkins();
     this.preuploadSkins(this.skins);
     this.buildStage();
@@ -153,22 +175,23 @@ export class MemeDanceGame {
     this.floor = new DiscoFloor(FLOOR_W, FLOOR_D, 20, 15);
     this.ledWall = new LedWall(FLOOR_W + 8, 8, -FLOOR_D / 2 - 2.4);
     this.speakers = [
-      new SpeakerStack(-FLOOR_W / 2 - 1.6, -3),
-      new SpeakerStack(FLOOR_W / 2 + 1.6, -3),
+      new SpeakerStack(-FLOOR_W / 2 - 2.1, -3),
+      new SpeakerStack(FLOOR_W / 2 + 2.1, -3),
     ];
     this.scene.add(
       this.floor.mesh,
-      this.ledWall.mesh,
       this.beams.group,
       this.ball.group,
       this.clubLights.group,
-      this.speakers[0].group,
-      this.speakers[1].group,
       this.fireworks.group,
       this.confetti.points,
     );
+    this.stageGroup.add(
+      this.ledWall.mesh,
+      this.speakers[0].group,
+      this.speakers[1].group,
+    );
 
-    // Click vào màn hình DJ trong khung 3D → nút ⏮⏯⏭
     this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
 
     this.resize();
@@ -183,10 +206,11 @@ export class MemeDanceGame {
     const hit = this.raycaster.intersectObject(this.npScreen.mesh, false)[0];
     if (!hit?.uv) return;
     const action = this.npScreen.hitTest(hit.uv.x, hit.uv.y);
-    if (action) this.onScreenControl?.(action);
+    if (!action) return;
+    if (typeof action === "string") this.onScreenControl?.(action);
+    else this.music.seek(action.seek);
   };
 
-  /** Upload sẵn toàn bộ texture lên GPU để không khựng lúc đổi frame. */
   private preuploadSkins(skins: Skin[]) {
     for (const skin of skins) {
       for (const frame of skin.frames) {
@@ -195,10 +219,7 @@ export class MemeDanceGame {
     }
   }
 
-  // --- Scene setup ----------------------------------------------------------
-
   private buildStage() {
-    // Nền tối lì dưới các ô gạch (đã bỏ mặt gương phản chiếu theo yêu cầu)
     const floorBase = new THREE.Mesh(
       new THREE.PlaneGeometry(FLOOR_W + 6, FLOOR_D + 6),
       new THREE.MeshStandardMaterial({
@@ -211,12 +232,10 @@ export class MemeDanceGame {
     floorBase.position.y = -0.01;
     this.scene.add(floorBase);
 
-    // Vòm vũ trụ bao quanh sân khấu: tinh vân + sao vẽ bằng canvas
     const space = document.createElement("canvas");
     space.width = 2048;
     space.height = 1024;
     const sctx = space.getContext("2d")!;
-    // Nền tím thẫm chuyển sắc thay vì đen tuyền
     const bgGrad = sctx.createLinearGradient(0, 0, 0, space.height);
     bgGrad.addColorStop(0, "#0a0620");
     bgGrad.addColorStop(0.5, "#120a2e");
@@ -224,7 +243,6 @@ export class MemeDanceGame {
     sctx.fillStyle = bgGrad;
     sctx.fillRect(0, 0, space.width, space.height);
 
-    // Dải ngân hà chéo vắt ngang trời
     sctx.save();
     sctx.translate(space.width / 2, space.height / 2);
     sctx.rotate(-0.28);
@@ -238,7 +256,6 @@ export class MemeDanceGame {
     sctx.fillRect(-space.width, -190, space.width * 2, 380);
     sctx.restore();
 
-    // Tinh vân sáng nhiều lớp (đậm hơn hẳn)
     const nebulaColors = [
       "rgba(150,70,255,0.42)",
       "rgba(60,110,255,0.36)",
@@ -259,13 +276,11 @@ export class MemeDanceGame {
       sctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
 
-    // Sao: dày hơn, sao sáng có quầng glow
     for (let i = 0; i < 2200; i++) {
       const b = Math.random();
       const x = Math.random() * space.width;
       const y = Math.random() * space.height;
       if (b > 0.965) {
-        // Sao sáng: quầng glow + chữ thập lấp lánh
         const r = 3 + Math.random() * 6;
         const glow = sctx.createRadialGradient(x, y, 0, x, y, r * 3);
         const hue = [200, 45, 280, 0][Math.floor(Math.random() * 4)];
@@ -300,7 +315,6 @@ export class MemeDanceGame {
     );
     this.scene.add(dome);
 
-    // Sân khấu nổi phía sau cho bục top
     const stage = new THREE.Mesh(
       new THREE.BoxGeometry(23, STAGE_H, 4.2),
       new THREE.MeshStandardMaterial({
@@ -310,17 +324,15 @@ export class MemeDanceGame {
       }),
     );
     stage.position.set(0, STAGE_H / 2, -FLOOR_D / 2 + 0.4);
-    this.scene.add(stage);
+    this.stageGroup.add(stage);
 
-    // Viền neon mép sân khấu
     const lip = new THREE.Mesh(
       new THREE.BoxGeometry(23, 0.06, 0.08),
       new THREE.MeshBasicMaterial({ color: 0xfe2c55 }),
     );
     lip.position.set(0, STAGE_H, -FLOOR_D / 2 + 2.52);
-    this.scene.add(lip);
+    this.stageGroup.add(lip);
 
-    // Khán đài phía trước-dưới cho người chưa nhảy
     const deck = new THREE.Mesh(
       new THREE.BoxGeometry(FLOOR_W + 8, 0.5, 3.4),
       new THREE.MeshStandardMaterial({
@@ -332,7 +344,6 @@ export class MemeDanceGame {
     deck.position.set(0, AUDIENCE_Y - 0.25, AUDIENCE_Z0 + 0.8);
     this.scene.add(deck);
 
-    // Lan can neon ngăn khán đài với sàn nhảy
     const rail = new THREE.Mesh(
       new THREE.BoxGeometry(FLOOR_W + 4, 0.05, 0.05),
       new THREE.MeshBasicMaterial({ color: 0x25f4ee }),
@@ -352,7 +363,6 @@ export class MemeDanceGame {
       this.scene.add(post);
     }
 
-    // Bụi sáng lơ lửng cho có chiều sâu
     const starCount = 260;
     const positions = new Float32Array(starCount * 3);
     for (let i = 0; i < starCount; i++) {
@@ -368,38 +378,278 @@ export class MemeDanceGame {
     );
     this.scene.add(stars);
 
-    // Bàn DJ giữa sân khấu
+    const boothZ = -FLOOR_D / 2 + 0.2;
     const booth = new THREE.Mesh(
-      new THREE.BoxGeometry(3.6, 1.1, 1.1),
+      new THREE.BoxGeometry(4.6, 1.15, 1.35),
       new THREE.MeshStandardMaterial({
         color: 0x141828,
         metalness: 0.6,
         roughness: 0.4,
       }),
     );
-    booth.position.set(0, STAGE_H + 0.55, -FLOOR_D / 2 + 0.2);
-    const boothNeon = new THREE.Mesh(
-      new THREE.BoxGeometry(3.6, 0.3, 0.05),
-      new THREE.MeshBasicMaterial({ color: 0x25f4ee }),
+    booth.position.set(0, STAGE_H + 0.575, boothZ);
+    const boothTop = new THREE.Mesh(
+      new THREE.BoxGeometry(4.9, 0.08, 1.55),
+      new THREE.MeshStandardMaterial({
+        color: 0x1b2033,
+        metalness: 0.7,
+        roughness: 0.3,
+      }),
     );
-    boothNeon.position.set(0, STAGE_H + 0.42, -FLOOR_D / 2 + 0.78);
-    this.scene.add(booth, boothNeon);
-    this.boothParts.push(booth, boothNeon);
-    for (const dx of [-0.85, 0.85]) {
-      const deck = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.32, 0.32, 0.06, 24),
-        new THREE.MeshStandardMaterial({
-          color: 0x2c3350,
-          metalness: 0.8,
-          roughness: 0.25,
+    boothTop.position.set(0, STAGE_H + 1.19, boothZ);
+    const frontLedMat = new THREE.MeshBasicMaterial({ color: 0x25f4ee });
+    const frontLed = new THREE.Mesh(
+      new THREE.PlaneGeometry(4.3, 0.7),
+      frontLedMat,
+    );
+    frontLed.position.set(0, STAGE_H + 0.62, boothZ + 0.68);
+    this.boothLeds.push(frontLedMat);
+    const rimMat = new THREE.MeshBasicMaterial({ color: 0xfe2c55 });
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(4.9, 0.05, 0.05), rimMat);
+    rim.position.set(0, STAGE_H + 1.24, boothZ + 0.775);
+    this.stageGroup.add(booth, boothTop, frontLed, rim);
+    this.boothParts.push(booth, boothTop, frontLed, rim);
+
+    for (const dx of [-2.35, 2.35]) {
+      const barMat = new THREE.MeshBasicMaterial({ color: 0x8a2be2 });
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.6, 0.12), barMat);
+      bar.position.set(dx, STAGE_H + 1.3, boothZ - 0.1);
+      this.stageGroup.add(bar);
+      this.boothParts.push(bar);
+      this.boothLeds.push(barMat);
+    }
+
+    const cdjBaseMat = new THREE.MeshStandardMaterial({
+      color: 0x10141f,
+      metalness: 0.5,
+      roughness: 0.5,
+    });
+    const platterMat = new THREE.MeshStandardMaterial({
+      color: 0x2c3350,
+      metalness: 0.8,
+      roughness: 0.25,
+    });
+    for (const dx of [-1.45, 1.45]) {
+      const cdjBase = new THREE.Mesh(
+        new THREE.BoxGeometry(1.05, 0.09, 0.9),
+        cdjBaseMat,
+      );
+      cdjBase.position.set(dx, STAGE_H + 1.275, boothZ);
+      const platter = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.32, 0.32, 0.05, 28),
+        platterMat,
+      );
+      platter.position.set(dx, STAGE_H + 1.345, boothZ - 0.06);
+      const marker = new THREE.Mesh(
+        new THREE.BoxGeometry(0.26, 0.02, 0.05),
+        new THREE.MeshBasicMaterial({ color: 0x25f4ee }),
+      );
+      marker.position.set(0.14, 0.03, 0);
+      platter.add(marker);
+      const hub = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, 0.06, 16),
+        new THREE.MeshBasicMaterial({ color: 0xfe2c55 }),
+      );
+      hub.position.set(dx, STAGE_H + 1.35, boothZ - 0.06);
+      const cue = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.03, 0.1),
+        new THREE.MeshBasicMaterial({ color: 0x2ecc71 }),
+      );
+      cue.position.set(dx - 0.38, STAGE_H + 1.33, boothZ + 0.3);
+      this.stageGroup.add(cdjBase, platter, hub, cue);
+      this.decks.push(platter);
+      this.boothParts.push(cdjBase, platter, hub, cue);
+    }
+
+    const mixer = new THREE.Mesh(
+      new THREE.BoxGeometry(0.85, 0.1, 0.8),
+      new THREE.MeshStandardMaterial({
+        color: 0x171c2c,
+        metalness: 0.6,
+        roughness: 0.4,
+      }),
+    );
+    mixer.position.set(0, STAGE_H + 1.28, boothZ);
+    this.stageGroup.add(mixer);
+    this.boothParts.push(mixer);
+    for (let i = -1; i <= 1; i++) {
+      const rail = new THREE.Mesh(
+        new THREE.BoxGeometry(0.03, 0.02, 0.34),
+        new THREE.MeshBasicMaterial({ color: 0x0a0d16 }),
+      );
+      rail.position.set(i * 0.24, STAGE_H + 1.34, boothZ + 0.14);
+      const fader = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.04, 0.07),
+        new THREE.MeshBasicMaterial({ color: 0xdfe6ff }),
+      );
+      fader.position.set(i * 0.24, STAGE_H + 1.35, boothZ + 0.14 - i * 0.08);
+      const knob = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.035, 0.035, 0.05, 12),
+        new THREE.MeshBasicMaterial({
+          color: [0xfe2c55, 0xffc94d, 0x25f4ee][i + 1],
         }),
       );
-      deck.position.set(dx, STAGE_H + 1.14, -FLOOR_D / 2 + 0.2);
-      this.scene.add(deck);
-      this.decks.push(deck);
+      knob.position.set(i * 0.24, STAGE_H + 1.35, boothZ - 0.24);
+      this.stageGroup.add(rail, fader, knob);
+      this.boothParts.push(rail, fader, knob);
     }
-    // DJ đầu nấm đứng sau bàn — nhún theo beat trong loop
-    this.djBaseY = STAGE_H + 1.6;
+    const riser = new THREE.Mesh(
+      new THREE.BoxGeometry(5.6, 0.22, 2.9),
+      new THREE.MeshStandardMaterial({
+        color: 0x0d1020,
+        metalness: 0.55,
+        roughness: 0.45,
+      }),
+    );
+    riser.position.set(0, STAGE_H + 0.11, boothZ + 0.3);
+    const riserLedMat = new THREE.MeshBasicMaterial({ color: 0x25f4ee });
+    const riserLed = new THREE.Mesh(
+      new THREE.BoxGeometry(5.6, 0.05, 0.05),
+      riserLedMat,
+    );
+    riserLed.position.set(0, STAGE_H + 0.22, boothZ + 0.3 + 1.45);
+    this.boothLeds.push(riserLedMat);
+    this.stageGroup.add(riser, riserLed);
+
+    const lipLedMat = new THREE.MeshBasicMaterial({
+      color: 0x25f4ee,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const lipLed = new THREE.Mesh(new THREE.PlaneGeometry(22.6, 0.42), lipLedMat);
+    lipLed.position.set(0, 0.45, -FLOOR_D / 2 + 2.51);
+    this.boothLeds.push(lipLedMat);
+    this.stageGroup.add(lipLed);
+
+    const wedgeMat = new THREE.MeshStandardMaterial({
+      color: 0x14161f,
+      metalness: 0.3,
+      roughness: 0.7,
+    });
+    for (const dx of [-1.9, 1.9]) {
+      const wedge = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.42, 0.7), wedgeMat);
+      wedge.position.set(dx, STAGE_H + 0.24, boothZ + 1.9);
+      wedge.rotation.x = 0.45;
+      this.stageGroup.add(wedge);
+    }
+
+    const arrayBoxMat = new THREE.MeshStandardMaterial({
+      color: 0x171a26,
+      metalness: 0.45,
+      roughness: 0.6,
+    });
+    const arrayGrillMat = new THREE.MeshStandardMaterial({
+      color: 0x272d42,
+      metalness: 0.7,
+      roughness: 0.3,
+    });
+    for (const dx of [-11, 11]) {
+      const cable = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.03, 0.03, 1),
+        new THREE.MeshBasicMaterial({ color: 0x333a55 }),
+      );
+      cable.position.set(dx, 11.35, -FLOOR_D / 2 + 1.4);
+      this.stageGroup.add(cable);
+      for (let i = 0; i < 6; i++) {
+        const box = new THREE.Mesh(
+          new THREE.BoxGeometry(1.7, 0.52, 1.15),
+          arrayBoxMat,
+        );
+        box.position.set(dx, 10.7 - i * 0.56, -FLOOR_D / 2 + 1.5 + i * 0.12);
+        box.rotation.x = i * 0.09;
+        this.stageGroup.add(box);
+        const grill = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.52, 0.38),
+          arrayGrillMat,
+        );
+        grill.position.set(dx, 10.7 - i * 0.56, -FLOOR_D / 2 + 2.09 + i * 0.12);
+        grill.rotation.x = i * 0.09;
+        this.stageGroup.add(grill);
+      }
+      const arrayLedMat = new THREE.MeshBasicMaterial({ color: 0xfe2c55 });
+      const arrayLed = new THREE.Mesh(
+        new THREE.BoxGeometry(1.7, 0.05, 0.05),
+        arrayLedMat,
+      );
+      arrayLed.position.set(dx, 7.7, -FLOOR_D / 2 + 2.2);
+      this.boothLeds.push(arrayLedMat);
+      this.stageGroup.add(arrayLed);
+    }
+
+    const frontTrussMat = new THREE.MeshStandardMaterial({
+      color: 0x262c44,
+      metalness: 0.85,
+      roughness: 0.35,
+    });
+    for (const x of [-(FLOOR_W / 2 + 2.4), FLOOR_W / 2 + 2.4]) {
+      const tower = new THREE.Mesh(
+        new THREE.BoxGeometry(0.4, 12, 0.4),
+        frontTrussMat,
+      );
+      tower.position.set(x, 6, 6.5);
+      this.stageGroup.add(tower);
+    }
+    const frontBar = new THREE.Mesh(
+      new THREE.BoxGeometry(FLOOR_W + 5.2, 0.35, 0.35),
+      frontTrussMat,
+    );
+    frontBar.position.set(0, 11.8, 6.5);
+    this.stageGroup.add(frontBar);
+    const frontParColors = [0x25f4ee, 0xffc94d, 0xfe2c55, 0x8a2be2];
+    for (let i = 0; i < 9; i++) {
+      const par = new THREE.Mesh(
+        new THREE.BoxGeometry(0.35, 0.45, 0.35),
+        new THREE.MeshBasicMaterial({
+          color: frontParColors[i % frontParColors.length],
+        }),
+      );
+      par.position.set((i - 4) * (FLOOR_W / 9), 11.45, 6.5);
+      this.stageGroup.add(par);
+    }
+
+    const headBodyMat = new THREE.MeshStandardMaterial({
+      color: 0x1c2136,
+      metalness: 0.7,
+      roughness: 0.35,
+    });
+    const beamGeoMh = new THREE.ConeGeometry(0.55, 11.5, 14, 1, true);
+    beamGeoMh.translate(0, -5.75, 0);
+    const mhSpots: Array<[number, number]> = [
+      [-8, 6.5],
+      [8, 6.5],
+      [0, -FLOOR_D / 2 + 1.2],
+    ];
+    mhSpots.forEach(([x, z], i) => {
+      const yoke = new THREE.Group();
+      yoke.position.set(x, 11.55, z);
+      const mount = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 0.16, 0.22),
+        headBodyMat,
+      );
+      const head = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.14, 0.17, 0.45, 12),
+        headBodyMat,
+      );
+      head.position.y = -0.38;
+      const beamMat = new THREE.MeshBasicMaterial({
+        color: NEON_MH[i % NEON_MH.length],
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const beam = new THREE.Mesh(beamGeoMh, beamMat);
+      beam.position.y = -0.2;
+      head.add(beam);
+      this.movingHeadBeams.push(beamMat);
+      yoke.add(mount, head);
+      this.stageGroup.add(yoke);
+      // Truss sau (z âm) phải nghiêng NGƯỢC lại để chiếu về phía sàn nhảy
+      this.movingHeads.push({ yoke, head, dir: z < 0 ? -1 : 1 });
+    });
+
+    this.djBaseY = STAGE_H + 1.75;
     this.djSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.skins[3 % this.skins.length].frames[0],
@@ -407,19 +657,19 @@ export class MemeDanceGame {
       }),
     );
     this.djSprite.material.color.setScalar(0.72);
-    this.djSprite.scale.set(1.5, 1.875, 1);
+    this.djSprite.scale.set(1.7, 2.125, 1);
     this.djSprite.position.set(0, this.djBaseY, -FLOOR_D / 2 - 0.5);
-    this.scene.add(this.djSprite);
+    this.djDefaultMap = this.skins[3 % this.skins.length].frames[0];
+    this.djDefaultW = 1.7;
+    this.stageGroup.add(this.djSprite);
 
-    // Màn hình LED to phía trên DJ: tên bài nhạc + EQ
     this.npScreen = new NowPlayingScreen(
       9.5,
       3,
       new THREE.Vector3(0, 6.6, -FLOOR_D / 2 - 2.35),
     );
-    this.scene.add(this.npScreen.mesh);
+    this.stageGroup.add(this.npScreen.mesh);
 
-    // Strobe trắng sau lưng DJ, lóe theo beat
     this.strobe = new THREE.Mesh(
       new THREE.PlaneGeometry(9, 3.6),
       new THREE.MeshBasicMaterial({
@@ -431,9 +681,28 @@ export class MemeDanceGame {
       }),
     );
     this.strobe.position.set(0, STAGE_H + 2, -FLOOR_D / 2 - 1.4);
-    this.scene.add(this.strobe);
+    this.stageGroup.add(this.strobe);
 
-    // Giàn truss hai bên + thanh ngang trên đỉnh cho giống sân khấu thật
+    this.followSpot = new THREE.SpotLight(0xfff2cf, 0, 45, Math.PI / 12, 0.5, 1.2);
+    this.followSpot.position.set(0, 12.5, 3);
+    this.followSpot.target = this.followSpotTarget;
+    const beamGeo = new THREE.ConeGeometry(0.85, 12, 20, 1, true);
+    beamGeo.translate(0, -6, 0);
+    this.followBeam = new THREE.Mesh(
+      beamGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0xfff6dd,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    this.followBeam.position.copy(this.followSpot.position);
+    this.followBeam.visible = false;
+    this.scene.add(this.followSpot, this.followSpotTarget, this.followBeam);
+
     const trussMat = new THREE.MeshStandardMaterial({
       color: 0x262c44,
       metalness: 0.85,
@@ -445,16 +714,15 @@ export class MemeDanceGame {
         trussMat,
       );
       tower.position.set(x, 6, -FLOOR_D / 2 + 1.2);
-      this.scene.add(tower);
+      this.stageGroup.add(tower);
     }
     const topBar = new THREE.Mesh(
       new THREE.BoxGeometry(FLOOR_W + 5.2, 0.35, 0.35),
       trussMat,
     );
     topBar.position.set(0, 11.8, -FLOOR_D / 2 + 1.2);
-    this.scene.add(topBar);
+    this.stageGroup.add(topBar);
 
-    // Dàn đèn par gắn dọc thanh truss
     const parColors = [0xfe2c55, 0x25f4ee, 0xffc94d, 0x8a2be2];
     for (let i = 0; i < 9; i++) {
       const par = new THREE.Mesh(
@@ -462,30 +730,25 @@ export class MemeDanceGame {
         new THREE.MeshBasicMaterial({ color: parColors[i % parColors.length] }),
       );
       par.position.set((i - 4) * (FLOOR_W / 9), 11.45, -FLOOR_D / 2 + 1.2);
-      this.scene.add(par);
+      this.stageGroup.add(par);
     }
 
-    // (Không còn tường — sân khấu lơ lửng giữa vũ trụ)
-
-    // Subwoofer chân sân khấu
     for (const x of [-8, -4, 0, 4, 8]) {
       const sub = new THREE.Mesh(
-        new THREE.BoxGeometry(2.4, 0.95, 0.9),
+        new THREE.BoxGeometry(2.9, 1.15, 1.05),
         new THREE.MeshStandardMaterial({
           color: 0x101322,
           metalness: 0.4,
           roughness: 0.7,
         }),
       );
-      sub.position.set(x, 0.48, -FLOOR_D / 2 + 2.95);
-      this.scene.add(sub);
+      sub.position.set(x, 0.58, -FLOOR_D / 2 + 2.95);
+      this.stageGroup.add(sub);
       this.subwooferBoxes.push(sub);
     }
 
-    // Nạp model GLB thật (public/models) thay các khối hộp — chạy nền
     this.loadStageModels();
 
-    // Bục top donate 1-2-3 hai bên bàn DJ — người donate top đứng THẬT trên bục
     const podiumColors = [0xffc94d, 0xc0c8d8, 0xcd7f52];
     const podiumHeights = [2.0, 1.5, 1.15];
     const podiumX = [-3.8, 3.8, 6.6];
@@ -528,14 +791,12 @@ export class MemeDanceGame {
     }
   }
 
-  /** Nạp model GLB miễn phí; thiếu model nào thì giữ khối hộp fallback. */
   private async loadStageModels() {
     const loader = new GLTFLoader();
     const tryLoad = (url: string) =>
       new Promise<THREE.Group | null>((resolve) =>
         loader.load(url, (g) => resolve(g.scene), undefined, () => resolve(null)),
       );
-    // Scale model về chiều cao mong muốn, chân chạm y=0 của group
     const normalize = (model: THREE.Group, targetH: number) => {
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
@@ -550,7 +811,6 @@ export class MemeDanceGame {
       return wrapper;
     };
 
-    // 2 dàn loa giữ bản dựng tay (màng loa đập theo beat) — không thay model
     const [sub, booth, spot] = await Promise.all([
       tryLoad("/models/subwoofer.glb"),
       tryLoad("/models/dj-booth.glb"),
@@ -559,56 +819,60 @@ export class MemeDanceGame {
     if (this.disposed) return;
 
     if (sub) {
-      this.subwooferBoxes.forEach((s) => this.scene.remove(s));
+      this.subwooferBoxes.forEach((s) => s.removeFromParent());
       for (const x of [-8, -4, 0, 4, 8]) {
         const clone = normalize(sub.clone(true), 1.0);
         clone.position.set(x, 0, -FLOOR_D / 2 + 2.95);
-        this.scene.add(clone);
+        this.stageGroup.add(clone);
       }
     }
     if (booth) {
-      this.boothParts.forEach((p) => this.scene.remove(p));
-      this.decks.forEach((d) => this.scene.remove(d));
+      this.boothParts.forEach((p) => p.removeFromParent());
+      this.decks.forEach((d) => d.removeFromParent());
       this.decks = [];
+      this.boothLeds = [];
       const clone = normalize(booth, 1.7);
       clone.position.set(0, STAGE_H, -FLOOR_D / 2 + 0.2);
-      this.scene.add(clone);
+      this.stageGroup.add(clone);
     }
     if (spot) {
       for (let i = 0; i < 6; i++) {
         const angle = (i / 6) * Math.PI * 2;
         const clone = normalize(spot.clone(true), 1.0);
-        // Treo đúng trên vòng truss tròn (bán kính 6.2, tâm z=-2),
-        // trùng vị trí gốc các beam đèn quét
         clone.position.set(
           Math.cos(angle) * 6.2,
-          10.45, // đỉnh đèn chạm mép dưới ống truss (10.48)
+          10.45,
           -2 + Math.sin(angle) * 6.2,
         );
-        clone.rotation.x = Math.PI; // chúc đầu đèn xuống sàn
+        clone.rotation.x = Math.PI;
         this.scene.add(clone);
       }
     }
   }
 
   private buildSlots() {
-    // Sàn nhảy: lưới dày, chừa sân khấu phía sau
     const cols = 17;
     const rows = 13;
+    this.frontSlots = [];
+    this.frontSlotSet.clear();
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        this.danceSlotsFree.push(
-          new THREE.Vector3(
-            (c + 0.5 - cols / 2) * (FLOOR_W / cols - 0.1) +
-              (Math.random() - 0.5) * 0.6,
-            0.1,
-            (r + 2.2 - rows / 2) * ((FLOOR_D - 5) / rows) +
-              (Math.random() - 0.5) * 0.4,
-          ),
+        const pos = new THREE.Vector3(
+          (c + 0.5 - cols / 2) * (FLOOR_W / cols - 0.1) +
+            (Math.random() - 0.5) * 0.6,
+          0.1,
+          (r + 2.2 - rows / 2) * ((FLOOR_D - 5) / rows) +
+            (Math.random() - 0.5) * 0.4,
         );
+        // Hàng sát sân khấu (r=0) để dành cho top tương tác/donate
+        if (r === 0) this.frontSlots.push(pos);
+        else this.danceSlotsFree.push(pos);
       }
     }
-    // Khán đài: 4 hàng phía trước-dưới
+    // Xếp từ giữa ra hai bên — hạng cao nhất đứng chính giữa
+    this.frontSlots.sort((a, b) => Math.abs(a.x) - Math.abs(b.x));
+    this.frontRow = this.frontSlots.map(() => null);
+    this.frontSlots.forEach((p) => this.frontSlotSet.add(p));
     for (let r = 0; r < 4; r++) {
       for (let c = 0; c < 18; c++) {
         this.audienceSlotsFree.push(
@@ -633,7 +897,6 @@ export class MemeDanceGame {
       zone === "floor" ? this.danceSlotsFree : this.audienceSlotsFree;
     const pos = pool.pop();
     if (pos) return pos;
-    // Hết chỗ xếp sẵn thì chen ngẫu nhiên trong khu
     return zone === "floor"
       ? new THREE.Vector3(
           (Math.random() - 0.5) * (FLOOR_W - 2),
@@ -650,8 +913,11 @@ export class MemeDanceGame {
   private releaseSlot(userId: string) {
     const ref = this.playerSlots.get(userId);
     if (!ref) return;
-    // Chỗ trên bục DJ không thuộc pool nào
-    if (ref.zone !== "podium") {
+    if (this.frontSlotSet.has(ref.pos)) {
+      // Chỗ hàng đầu là khu để dành riêng — không trả vào pool thường
+      const idx = this.frontSlots.indexOf(ref.pos);
+      if (idx >= 0) this.frontRow[idx] = null;
+    } else if (ref.zone !== "podium") {
       (ref.zone === "floor"
         ? this.danceSlotsFree
         : this.audienceSlotsFree
@@ -660,7 +926,40 @@ export class MemeDanceGame {
     this.playerSlots.delete(userId);
   }
 
-  /** Chat "1" → được lên sàn; hết năng lượng nhảy → về khán đài xem. */
+  /**
+   * Xếp lại hàng đầu sát sân khấu theo điểm tương tác/donate.
+   * Người đã ở hàng đầu giữ nguyên chỗ để tránh xáo trộn liên tục.
+   */
+  private updateFrontRow() {
+    const dancers: Player[] = [];
+    this.players.forEach((p) => {
+      if (p.onFloor && !p.onPodium && p.score > 0) dancers.push(p);
+    });
+    dancers.sort((a, b) => b.score - a.score);
+    const top = dancers.slice(0, this.frontSlots.length);
+    const topSet = new Set(top);
+    this.frontRow.forEach((p, i) => {
+      if (p && (!topSet.has(p) || !p.onFloor)) {
+        this.frontRow[i] = null;
+        const pos = this.takeSlot("floor");
+        this.playerSlots.set(p.user.userId, { zone: "floor", pos });
+        p.setHome(pos);
+      }
+    });
+    top.forEach((p) => {
+      if (this.frontRow.includes(p)) return;
+      const free = this.frontRow.findIndex((v) => v === null);
+      if (free === -1) return;
+      this.releaseSlot(p.user.userId);
+      this.frontRow[free] = p;
+      this.playerSlots.set(p.user.userId, {
+        zone: "floor",
+        pos: this.frontSlots[free],
+      });
+      p.setHome(this.frontSlots[free]);
+    });
+  }
+
   private promoteToFloor(player: Player) {
     const pos = this.takeSlot("floor");
     this.releaseSlot(player.user.userId);
@@ -679,35 +978,33 @@ export class MemeDanceGame {
     player.setHome(pos);
   }
 
-  // --- Skins ------------------------------------------------------------------
-
   async useCustomSkins(urls: string[]) {
     if (!urls.length) return;
     const custom = await loadCustomSkins(urls);
     if (!custom.length || this.disposed) return;
     this.preuploadSkins(custom);
-    // CHỈ dùng meme thật từ public/characters — bộ tự vẽ chỉ là fallback
-    // khi folder trống
     this.skins = custom;
     this.players.forEach((p) => p.setSkins(custom));
-    // DJ cũng đổi sang skin meme
     const dj = custom[3 % custom.length];
-    this.djSprite.material.map = dj.frames[0];
-    this.djSprite.material.needsUpdate = true;
-    this.djSprite.scale.set(1.875 * dj.aspect, 1.875, 1);
+    this.djDefaultMap = dj.frames[0];
+    this.djDefaultW = 2.125 * dj.aspect;
+    if (!this.djTakeover) {
+      this.djSprite.material.map = this.djDefaultMap;
+      this.djSprite.material.needsUpdate = true;
+      this.djW = this.djDefaultW;
+      this.djSprite.scale.set(this.djW, 2.125, 1);
+    }
   }
-
-  // --- Live event handlers ------------------------------------------------------
 
   private ensurePlayer(user: LiveUser): Player {
     let player = this.players.get(user.userId);
     if (!player) {
       if (this.players.size >= MAX_PLAYERS) this.evictOldest();
-      // Người mới rơi từ trời xuống; khu vực theo zoneMode admin cấu hình
       const zone = this.rules.zoneMode === "all-floor" ? "floor" : "audience";
       const slot = this.takeSlot(zone);
       this.playerSlots.set(user.userId, { zone, pos: slot });
       player = new Player(user, this.skins, slot);
+      player.setSkin(this.pickFreeSkin());
       player.setZone(zone);
       if (zone === "floor") {
         player.onFloor = true;
@@ -718,6 +1015,18 @@ export class MemeDanceGame {
     }
     player.lastActive = performance.now();
     return player;
+  }
+
+  /** Skin chưa ai dùng cho user mới; hết skin trống thì mới cho phép trùng. */
+  private pickFreeSkin(): number {
+    const used = new Set<number>();
+    this.players.forEach((p) => used.add(p.skinNumber));
+    const free: number[] = [];
+    for (let i = 0; i < this.skins.length; i++) {
+      if (!used.has(i)) free.push(i);
+    }
+    if (!free.length) return Math.floor(Math.random() * this.skins.length);
+    return free[Math.floor(Math.random() * free.length)];
   }
 
   private evictOldest() {
@@ -739,10 +1048,24 @@ export class MemeDanceGame {
     const isStart =
       normalizeComment(event.comment) === normalizeComment(r.startCommand);
 
-    // Comment (bất kỳ) gia hạn thời gian nhảy nếu đang nhảy
+    // User vừa order nhạc: tin chat kế tiếp = bài muốn nghe → thêm playlist
+    if (
+      !isStart &&
+      this.djOrderWaiting &&
+      this.djOrderWaiting.userId === event.user.userId &&
+      event.comment.trim()
+    ) {
+      const request = this.djOrderWaiting;
+      this.djOrderWaiting = null;
+      this.onSongRequest?.(request.nickname, event.comment.trim());
+      player.say(event.comment);
+      this.showBanner(`🎵 ${request.nickname} yêu cầu: ${event.comment.trim()}`);
+      player.score += 1;
+      this.hype = Math.min(1, this.hype + 0.015);
+      return;
+    }
+
     player.keepDancing(r.danceExtendSec * 1000, r.danceMaxSec * 1000);
-    // Lệnh lên sàn (hoặc admin tắt yêu cầu lệnh → ai comment cũng nhảy).
-    // stayOnFloor: đã lên sàn là ở lại luôn cho tới khi rời live.
     if (isStart || !r.requireStartCommand) {
       player.startDancing(
         r.stayOnFloor ? Number.POSITIVE_INFINITY : r.danceStartSec * 1000,
@@ -770,6 +1093,7 @@ export class MemeDanceGame {
         if (!isStart) player.say(event.comment);
         break;
     }
+    player.score += 1;
     this.hype = Math.min(1, this.hype + 0.015);
   }
 
@@ -787,7 +1111,14 @@ export class MemeDanceGame {
         (event.totalDiamonds > 0 ? ` 💎${event.totalDiamonds}` : ""),
     );
 
-    // Hành động theo bảng quà admin tự soạn: mốc cao nhất đạt được sẽ thắng
+    // Cộng 💎 TRƯỚC khi xử lý action — orderDj cần so tổng donate mới nhất
+    if (!event.streaking) {
+      player.diamonds += event.totalDiamonds;
+      // Donate tính điểm nặng nhất — 1💎 = 5 điểm tương tác
+      player.score += event.totalDiamonds * 5;
+      this.updatePodium();
+    }
+
     const value = event.diamondCount;
     const matched = this.rules.giftActions
       .filter((rule) => value >= rule.min)
@@ -822,27 +1153,82 @@ export class MemeDanceGame {
       case "jump":
         player.jump();
         break;
+      case "dj":
+        this.orderDj(player);
+        break;
       default:
         break;
     }
-
-    if (!event.streaking) {
-      player.diamonds += event.totalDiamonds;
-      this.updatePodium();
-    }
+    // Ai donate cũng được spotlight — đèn rọi + mờ nhân vật xung quanh
+    if (event.diamondCount > 0) this.spotlightOn(player);
     this.hype = Math.min(1, this.hype + 0.18);
   }
 
-  /** Camera lướt tới cận cảnh nhân vật vài giây rồi trở lại. */
   private focusOn(player: Player, ms = 3500) {
     this.focusPlayer = player;
     this.focusUntil = performance.now() + ms;
-    // Đảm bảo thấy tên người được zoom (kể cả khi đang ở khán đài)
     player.showLabel(ms + 1200);
   }
 
-  /** Phát nhạc + cập nhật màn hình "now playing" (gọi từ nút bấm trên HUD). */
-  async playMusic(url: string, title: string) {
+  /**
+   * Order nhạc: user thay NPC đứng bàn DJ, tên hiện trên màn hình "now playing".
+   * Tin chat kế tiếp của user này được coi là bài muốn nghe (link/tên bài).
+   * Giới hạn số lượt mỗi bài đặt trong Settings (djOrderPerSong).
+   */
+  private orderDj(player: Player) {
+    if (this.djOrdersThisSong >= this.rules.djOrderPerSong) return;
+    this.djOrdersThisSong++;
+    const info = {
+      userId: player.user.userId,
+      nickname: player.user.nickname,
+    };
+    this.djOrderWaiting = info;
+    this.npScreen.orderedBy = player.user.nickname;
+    // Chỉ người tặng NHIỀU NHẤT mới được đứng bàn DJ — còn lại order từ dưới
+    let maxOther = 0;
+    this.players.forEach((p) => {
+      if (p !== player) maxOther = Math.max(maxOther, p.diamonds);
+    });
+    if (player.diamonds > 0 && player.diamonds >= maxOther) {
+      this.djTakeover = info;
+      this.djSprite.material.map = player.texture;
+      this.djSprite.material.needsUpdate = true;
+      this.djW = 2.125 * player.skinAspect;
+      this.showBanner(
+        `🎧 ${player.user.nickname} top donate — lên bàn DJ! Chat tên bài/link để thêm vào playlist`,
+      );
+    } else {
+      this.showBanner(
+        `🎧 ${player.user.nickname} order nhạc — chat tên bài/link để thêm vào playlist`,
+      );
+    }
+  }
+
+  /** Quà có action theo setting → mờ các nhân vật khác vài giây cho nổi bật. */
+  private spotlightOn(player: Player, ms = 4000) {
+    this.spotlightPlayer = player;
+    this.spotlightUntil = performance.now() + ms;
+    player.showLabel(ms + 800);
+  }
+
+  /**
+   * orderedBy: nickname người order nếu bài này do user yêu cầu — giữ họ trên
+   * bàn DJ suốt bài; bài thường (null) thì trả bàn DJ về NPC mặc định.
+   */
+  async playMusic(url: string, title: string, orderedBy: string | null = null) {
+    this.djOrdersThisSong = 0;
+    const keepTakeover =
+      this.djTakeover !== null && orderedBy === this.djTakeover.nickname;
+    if (!keepTakeover) {
+      this.djTakeover = null;
+      this.djOrderWaiting = null;
+      if (this.djDefaultMap) {
+        this.djSprite.material.map = this.djDefaultMap;
+        this.djSprite.material.needsUpdate = true;
+      }
+      this.djW = this.djDefaultW;
+      this.npScreen.orderedBy = orderedBy;
+    }
     await this.music.play(url, title);
     this.npScreen.setTitle(title);
   }
@@ -850,13 +1236,17 @@ export class MemeDanceGame {
   handleLike(event: LikeEvent) {
     this.hype = Math.min(1, this.hype + event.count * 0.014);
     const player = this.players.get(event.user.userId);
-    if (player) player.lastActive = performance.now();
+    if (player) {
+      player.lastActive = performance.now();
+      player.score += event.count * 0.05;
+    }
   }
 
   handleActivity(event: ActivityEvent) {
     const player = this.ensurePlayer(event.user);
     if (event.kind === "follow" || event.kind === "share") {
       player.celebrate();
+      player.score += 2;
       this.hype = Math.min(1, this.hype + 0.06);
     }
   }
@@ -880,8 +1270,6 @@ export class MemeDanceGame {
       slot.label.material.opacity = 0;
     });
   }
-
-  // --- Banner quà tặng -------------------------------------------------------------
 
   private showBanner(text: string) {
     const { texture, aspect } = makeLabelTexture(text, "#ffc94d");
@@ -919,8 +1307,6 @@ export class MemeDanceGame {
     }
   }
 
-  // --- Podium ---------------------------------------------------------------------
-
   private updatePodium() {
     const top = [...this.players.values()]
       .filter((p) => p.diamonds > 0)
@@ -928,7 +1314,6 @@ export class MemeDanceGame {
       .slice(0, 3);
     const topIds = new Set(top.map((p) => p.user.userId));
 
-    // Rớt khỏi top → rời bục, quay về sàn (nếu đang nhảy) hoặc khán đài
     for (const slot of this.podium) {
       if (!slot.userId || topIds.has(slot.userId)) continue;
       const player = this.players.get(slot.userId);
@@ -940,7 +1325,6 @@ export class MemeDanceGame {
         else this.demoteToAudience(player);
       }
     }
-    // Đổi hạng (1↔2...) → nhả slot cũ trước khi gán lại
     this.podium.forEach((slot, i) => {
       const expected = top[i]?.user.userId ?? null;
       if (slot.userId !== expected) {
@@ -962,11 +1346,9 @@ export class MemeDanceGame {
         player.onPodium = true;
         player.onFloor = false;
         player.setZone("podium");
-        // VIP trên bục quẩy không nghỉ đến khi rớt hạng
         player.startDancing(Number.POSITIVE_INFINITY);
         player.setHome(slot.pos);
       }
-      // Label luôn cập nhật theo số kim cương mới
       slot.label.material.map?.dispose();
       const { texture, aspect } = makeLabelTexture(
         `${medals[i]} ${player.user.nickname} · ${player.diamonds}💎`,
@@ -979,8 +1361,6 @@ export class MemeDanceGame {
       slot.label.scale.set(h * aspect, h, 1);
     });
   }
-
-  // --- Chế độ demo: giả lập đám đông để xem độ sôi động --------------------------------
 
   get demoRunning() {
     return this.demoTimers.length > 0;
@@ -1006,7 +1386,7 @@ export class MemeDanceGame {
 
     const start = this.rules.startCommand;
     const phrases = [
-      start, start, start, // chat lệnh lên sàn
+      start, start, start,
       "hello cả nhà 👋", "quẩy lên nào!!!", "nhạc gì căng z", "cho 1 slot",
       "kkkk", "đỉnh quá", "ai kb hông", "xin vía 🍀",
       "nhảy", "đi vòng", "to lên", "nhỏ lại", "đổi nv", "hay quá trời",
@@ -1020,7 +1400,6 @@ export class MemeDanceGame {
       { name: "Sư tử", diamonds: 500 },
     ];
 
-    // Người vào phòng dồn dập lúc đầu, vào xong chat "1" để quẩy luôn
     const seed = setInterval(() => {
       const user = pick();
       this.handleActivity({ id: `demo-a-${id++}`, kind: "join", user, ts: now() });
@@ -1079,10 +1458,6 @@ export class MemeDanceGame {
     this.demoTimers = [];
   }
 
-  /**
-   * Trang /test: spawn mỗi skin × mỗi điệu nhảy, nhãn ghi tên điệu —
-   * không cần kết nối gì để soi nhân vật + động tác.
-   */
   startShowcase() {
     this.reset();
     const total = Math.min(
@@ -1105,35 +1480,45 @@ export class MemeDanceGame {
     this.hype = 0.5;
   }
 
-  // --- Loop -------------------------------------------------------------------------
-
   private loop = () => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t = performance.now() / 1000;
 
-    // Nhịp: có nhạc thật thì bắt beat từ nhạc (Web Audio), không thì auto BPM
     this.music.sensitivity = this.rules.beatSensitivity;
     this.music.update();
     let beat: Beat;
     if (this.music.playing) {
       beat = this.music.getBeat();
+      this.beatIndex = beat.index;
     } else {
-      this.beatT += (dt * (this.rules.autoBpm * (1 + this.hype * 0.12))) / 60;
-      if (this.beatT >= 1) {
-        this.beatT -= 1;
-        this.beatIndex++;
-      }
-      beat = { index: this.beatIndex, pulse: this.beatT };
+      beat = { index: this.beatIndex, pulse: 1 };
     }
 
     this.hype = Math.max(0, this.hype - HYPE_DECAY_PER_S * dt);
-    // Nhạc căng cũng đẩy không khí lên như tim/quà
     const effHype = Math.max(this.hype, this.music.level * 0.75);
 
+    const spotlighting =
+      this.spotlightPlayer !== null && performance.now() < this.spotlightUntil;
+    if (!spotlighting) this.spotlightPlayer = null;
+
+    // Mỗi 4 giây xếp lại hàng đầu theo điểm tương tác/donate
+    this.reseatT += dt;
+    if (this.reseatT >= 4) {
+      this.reseatT = 0;
+      this.updateFrontRow();
+    }
+
+    // Người đang được camera zoom cận cảnh không bao giờ bị làm mờ/mất tên
+    const focused =
+      this.focusPlayer !== null && performance.now() < this.focusUntil
+        ? this.focusPlayer
+        : null;
     this.players.forEach((p) => {
-      // Luân chuyển sàn/khán đài theo zoneMode (VIP trên bục DJ không đụng)
+      p.setDimmed(
+        spotlighting && p !== this.spotlightPlayer && p !== focused,
+      );
       if (!p.onPodium) {
         switch (this.rules.zoneMode) {
           case "all-floor":
@@ -1152,38 +1537,112 @@ export class MemeDanceGame {
       }
       p.update(dt, effHype, beat, this.music.playing);
     });
-    // Năng lượng bass realtime của nhạc — đèn "thở" theo tiếng nhạc
     const level = this.music.playing ? this.music.level : 0;
     this.floor.update(dt, effHype, beat);
-    this.ledWall.update(dt, effHype, beat, level);
-    this.beams.update(dt, effHype, beat, level);
+    this.ledWall.update(dt, effHype, beat, level, this.music.playing);
+    this.beams.update(dt, effHype, beat, level, this.music.playing);
     this.ball.update(dt, effHype);
-    this.clubLights.update(dt, effHype, beat, level);
+    this.clubLights.update(dt, effHype, beat, level, this.music.playing);
     this.speakers[0].update(dt, effHype, beat);
     this.speakers[1].update(dt, effHype, beat);
     this.fireworks.update(dt);
     this.confetti.update(dt, effHype);
     this.updateBanners(dt);
 
-    // Khu DJ quẩy theo beat để cả sàn bắt nhịp
     const kick = Math.max(0, 1 - beat.pulse * 3);
-    this.djSprite.position.y = this.djBaseY + kick * 0.28;
-    this.djSprite.material.rotation = Math.sin(t * 2.4) * 0.1;
-    this.decks.forEach((d) => (d.rotation.y += dt * (2 + effHype * 6)));
+    // Cả khối sân khấu nhún rất nhẹ theo kick + đung đưa theo bass
+    const stageBobTarget = this.music.playing ? kick * 0.06 + level * 0.04 : 0;
+    this.stageGroup.position.y +=
+      (stageBobTarget - this.stageGroup.position.y) * Math.min(1, dt * 14);
+    const stageSwayTarget = this.music.playing
+      ? Math.sin(t * 1.9) * level * 0.05
+      : 0;
+    this.stageGroup.position.x +=
+      (stageSwayTarget - this.stageGroup.position.x) * Math.min(1, dt * 8);
+    // DJ quẩy: nhún theo kick (mạnh hơn mỗi 4 beat), đi qua lại sau bàn,
+    // thi thoảng quay người, gật đầu theo nhịp
+    if (this.music.playing && beat.index !== this.djLastBeat) {
+      this.djLastBeat = beat.index;
+      if (Math.random() < 0.22) this.djFacing = -this.djFacing;
+      if (Math.random() < 0.3) this.djXTarget = (Math.random() - 0.5) * 1.7;
+    }
+    this.djX += (this.djXTarget - this.djX) * Math.min(1, dt * 3.5);
+    this.djFacingCur += (this.djFacing - this.djFacingCur) * Math.min(1, dt * 9);
+    const djF =
+      Math.abs(this.djFacingCur) < 0.08
+        ? this.djFacingCur < 0
+          ? -0.08
+          : 0.08
+        : this.djFacingCur;
+    this.djSprite.scale.x = this.djW * djF;
+    const strongBeat = this.beatIndex % 4 === 0 ? 1.5 : 1;
+    this.djSprite.position.x = this.djX;
+    this.djSprite.position.y = this.djBaseY + kick * 0.3 * strongBeat;
+    this.djSprite.material.rotation = this.music.playing
+      ? Math.sin(t * 2.4) * 0.05 + Math.sin(beat.pulse * Math.PI * 2) * 0.09
+      : Math.sin(t * 1.2) * 0.03;
+    if (this.music.playing) {
+      this.decks.forEach((d) => (d.rotation.y += dt * (2 + effHype * 6)));
+    }
+    this.movingHeads.forEach(({ yoke, head, dir }, i) => {
+      const panTarget = this.music.playing
+        ? Math.sin(t * (0.4 + i * 0.06) + i * 1.3) * 0.65
+        : 0;
+      yoke.rotation.y += (panTarget - yoke.rotation.y) * Math.min(1, dt * 3);
+      const tiltTarget = this.music.playing
+        ? dir * (0.3 + Math.sin(t * 0.33 + i * 1.7) * 0.32)
+        : dir * 0.1;
+      head.rotation.x += (tiltTarget - head.rotation.x) * Math.min(1, dt * 3);
+      this.movingHeadBeams[i].opacity = this.music.playing
+        ? 0.035 + level * 0.1 + kick * level * 0.08
+        : 0;
+    });
+    this.boothLeds.forEach((mat, i) => {
+      const hue = (0.52 + i * 0.17 + this.beatIndex * 0.02) % 1;
+      const bright = this.music.playing
+        ? Math.min(0.62, 0.22 + level * 0.5 + kick * 0.18)
+        : 0.1;
+      mat.color.setHSL(hue, 0.9, bright);
+    });
     (this.strobe.material as THREE.MeshBasicMaterial).opacity =
       kick * (0.06 + level * 0.45 + effHype * 0.18);
     this.npScreen.paused = !this.music.playing;
-    this.npScreen.update(dt, this.music.getSpectrum(), beat);
+    this.npScreen.update(dt, this.music.getSpectrum(), beat, this.music.progress);
 
-    // Camera: lắc nhẹ như quay tay; khi có donate lớn thì lướt vào cận cảnh
+    this.followBlend +=
+      ((spotlighting ? 1 : 0) - this.followBlend) * Math.min(1, dt * 5);
+    if (this.spotlightPlayer) {
+      const pos = this.spotlightPlayer.group.position;
+      this.followSpotTarget.position.lerp(
+        new THREE.Vector3(pos.x, pos.y + 1, pos.z),
+        Math.min(1, dt * 9),
+      );
+    }
+    this.followSpot.intensity = this.followBlend * 220;
+    this.followBeam.visible = this.followBlend > 0.02;
+    if (this.followBeam.visible) {
+      const dir = new THREE.Vector3()
+        .subVectors(this.followSpotTarget.position, this.followBeam.position)
+        .normalize();
+      this.followBeam.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, -1, 0),
+        dir,
+      );
+      const dist = this.followBeam.position.distanceTo(
+        this.followSpotTarget.position,
+      );
+      this.followBeam.scale.set(1, dist / 12 + 0.15, 1);
+      // Tia mảnh + nhạt để không lóa nhân vật đang được spotlight
+      (this.followBeam.material as THREE.MeshBasicMaterial).opacity =
+        this.followBlend * (0.05 + kick * 0.02);
+    }
+
     const focusing =
       this.focusPlayer !== null && performance.now() < this.focusUntil;
     this.focusBlend +=
       ((focusing ? 1 : 0) - this.focusBlend) * Math.min(1, dt * 2.5);
     if (!focusing && this.focusBlend < 0.01) this.focusPlayer = null;
 
-    // Camera: sway (đứng lắc nhẹ) / orbit (lắc cung ±50° phía TRƯỚC sân khấu,
-    // không vòng ra sau lưng LED). Trọng tâm luôn là trục sân khấu–sàn nhảy.
     let baseX: number;
     let baseZ: number;
     const lookY = 1.8;
@@ -1192,18 +1651,16 @@ export class MemeDanceGame {
       7.2 + Math.sin(t * 0.09) * 0.3 + Math.sin(t * 5) * effHype * 0.04;
     if (this.rules.cameraMode === "orbit") {
       this.orbitAngle += dt * (0.18 + effHype * 0.06);
-      const arc = Math.sin(this.orbitAngle) * 0.85; // ±~49°
+      const arc = Math.sin(this.orbitAngle) * 0.85;
       baseX = Math.sin(arc) * 19.5;
       baseZ = Math.cos(arc) * 19.5;
     } else {
       baseX = Math.sin(t * 0.14) * (2.2 + effHype * 0.8);
-      baseZ = 21 - Math.sin(t * 0.055) * 1.6; // thở tiến-lùi chậm
+      baseZ = 21 - Math.sin(t * 0.055) * 1.6;
     }
     if (this.focusPlayer && this.focusBlend > 0.01) {
       const target = this.focusPlayer.group.position;
       const b = this.focusBlend;
-      // Bám theo độ cao THẬT của nhân vật — VIP đứng trên bục DJ cao ~3m
-      // vẫn lọt trọn khung hình, không bị cắt mất đầu
       const focusCamY = target.y + 2.6;
       const focusLookY = target.y + 1.2;
       this.camera.position.set(
@@ -1253,4 +1710,3 @@ export class MemeDanceGame {
     this.renderer.dispose();
   }
 }
-

@@ -16,15 +16,12 @@ load_dotenv()
 import audio_service  # noqa: E402 - can load .env truoc
 import tiktok_service as tk  # noqa: E402
 
-
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     await tk.close_api()
 
-
 app = FastAPI(title="TikTok Data Sidecar", lifespan=lifespan)
-
 
 async def _guard(coro: Awaitable[Any]) -> Any:
     """Chay service call; moi loi upstream tra ve JSON 502, khong bao gio crash."""
@@ -47,21 +44,17 @@ async def _guard(coro: Awaitable[Any]) -> Any:
             content={"error": f"{type(exc).__name__}: {exc}", "hint": tk.BOT_HINT},
         )
 
-
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {"ok": True, "msToken": tk.ms_token() is not None}
-
 
 @app.get("/video/meta")
 async def video_meta(url: str = Query(..., description="URL video TikTok")) -> Any:
     return await _guard(tk.video_meta(url))
 
-
 @app.get("/user/profile")
 async def user_profile(username: str = Query(..., description="uniqueId")) -> Any:
     return await _guard(tk.user_profile(username))
-
 
 @app.get("/user/posts")
 async def user_posts(
@@ -70,14 +63,12 @@ async def user_posts(
 ) -> Any:
     return await _guard(tk.user_posts(username, count))
 
-
 @app.get("/comments")
 async def comments(
     url: str = Query(..., description="URL video TikTok"),
     count: int = Query(20, ge=1, le=100),
 ) -> Any:
     return await _guard(tk.video_comments(url, count))
-
 
 @app.get("/comments/replies")
 async def comment_replies(
@@ -87,18 +78,15 @@ async def comment_replies(
 ) -> Any:
     return await _guard(tk.comment_replies(url, comment_id, count))
 
-
 @app.get("/trending")
 async def trending(count: int = Query(10, ge=1, le=50)) -> Any:
     return await _guard(tk.trending(count))
-
 
 @app.get("/audio/resolve")
 async def audio_resolve(
     url: str = Query(..., description="Link YouTube/SoundCloud/… can lay audio"),
 ) -> Any:
     return await _guard(audio_service.resolve_audio(url))
-
 
 @app.get("/search")
 async def search(
@@ -107,12 +95,10 @@ async def search(
 ) -> Any:
     return await _guard(tk.search_videos(q, count))
 
-
 if __name__ == "__main__":
     import uvicorn
 
     if sys.platform == "win32":
-        # Playwright can subprocess -> phai dung ProactorEventLoop tren Windows.
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
     port = int(os.getenv("SIDECAR_PORT", "8500"))

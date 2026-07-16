@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-/** Lists PNG/WebP files in public/characters — drop images there to replace the drawn skins. */
 export async function GET() {
   try {
     const dir = join(process.cwd(), "public", "characters");

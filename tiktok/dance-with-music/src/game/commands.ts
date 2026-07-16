@@ -5,7 +5,6 @@ export type GameCommand =
   | "grow"
   | "shrink";
 
-/** Lowercase + strip Vietnamese diacritics so "NHẢY" and "nhay" both match. */
 export function normalizeComment(input: string): string {
   return input
     .normalize("NFD")
@@ -26,7 +25,6 @@ const MATCHERS: Array<{ command: GameCommand; patterns: RegExp[] }> = [
   { command: "shrink", patterns: [/\bnho lai\b/, /\bthu nho\b/] },
 ];
 
-/** Lệnh chat thường; lệnh "lên sàn" (start-dance) do game so với GameRules. */
 export function parseCommand(comment: string): GameCommand | null {
   const text = normalizeComment(comment);
   for (const { command, patterns } of MATCHERS) {

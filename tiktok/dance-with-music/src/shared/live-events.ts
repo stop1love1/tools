@@ -1,5 +1,3 @@
-// DTO types matching the Go backend (tiktok/server) wire format.
-// Every WebSocket message is an Envelope: {"type": "...", "data": {...}}
 
 export type LiveUser = {
   userId: string;
@@ -16,7 +14,6 @@ export type ChatEvent = {
 };
 
 export type GiftEvent = {
-  /** Stable id per gift streak — one combo keeps one id. */
   id: string;
   user: LiveUser;
   giftId: string;
@@ -24,7 +21,6 @@ export type GiftEvent = {
   giftImageUrl: string | null;
   diamondCount: number;
   repeatCount: number;
-  /** True while a combo (giftType 1) is still in progress. */
   streaking: boolean;
   totalDiamonds: number;
   ts: number;
