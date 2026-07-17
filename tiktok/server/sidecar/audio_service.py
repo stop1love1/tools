@@ -2,20 +2,37 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from yt_dlp import YoutubeDL
 
 from tiktok_service import UpstreamError
 
-_YDL_OPTS = {
+_YDL_OPTS: dict[str, Any] = {
     "format": "bestaudio/best",
     "quiet": True,
     "no_warnings": True,
     "noplaylist": True,
     "skip_download": True,
     "socket_timeout": 15,
+    # YouTube chan request server nhu bot ("Sign in to confirm you're not a
+    # bot"). Uu tien player client di dong/TV — thuong khong dinh check nay
+    # va khong can dang nhap. Web de fallback cuoi.
+    "extractor_args": {
+        "youtube": {"player_client": ["tv", "ios", "android", "web"]}
+    },
 }
+
+# Neu van bi chan: tro toi cookies (trinh duyet dang dang nhap YouTube tren
+# may) qua bien moi truong — YTDLP_COOKIES_FROM_BROWSER=chrome|edge|firefox
+# hoac YTDLP_COOKIES_FILE=/duong/dan/cookies.txt
+_cookie_browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+if _cookie_browser:
+    _YDL_OPTS["cookiesfrombrowser"] = (_cookie_browser,)
+_cookie_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+if _cookie_file:
+    _YDL_OPTS["cookiefile"] = _cookie_file
 
 def _extract(url: str) -> dict[str, Any]:
     with YoutubeDL(_YDL_OPTS) as ydl:

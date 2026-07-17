@@ -404,6 +404,8 @@ export class MemeDanceGame {
 
   private onPointerMove = (e: PointerEvent) => {
     if (!this.dragging) return;
+    // Chỉ chế độ Thủ công mới cho kéo chuột xoay camera
+    if (this.rules.cameraMode !== "manual") return;
     const dx = e.clientX - this.dragX;
     const dy = e.clientY - this.dragY;
     if (!this.dragMoved && Math.hypot(dx, dy) < 4) return;
@@ -431,12 +433,19 @@ export class MemeDanceGame {
   };
 
   private onWheel = (e: WheelEvent) => {
+    // Lăn chuột zoom chỉ trong chế độ Thủ công
+    if (this.rules.cameraMode !== "manual") return;
     e.preventDefault();
     this.zoomCamera(Math.sign(e.deltaY) * 2);
   };
 
   private onDblClick = () => {
-    this.unlockCamera();
+    // Nháy đúp trong chế độ Thủ công: đưa camera về khung mặc định
+    if (this.rules.cameraMode !== "manual") return;
+    this.fcTarget.set(0, 2, -2);
+    this.fcYaw = 0;
+    this.fcPitch = 0.4;
+    this.fcRadius = 24;
   };
 
   private preuploadSkins(skins: Skin[]) {
@@ -2785,8 +2794,15 @@ export class MemeDanceGame {
     //   ngang như chạy trên ray
     const shots =
       this.rules.cameraMode === "orbit" ? ORBIT_SHOTS : FRONT_SHOTS;
-    // Chế độ toàn cảnh cố định: khóa vào một góc bao trọn venue, không cắt.
-    // Admin khóa góc (cameraLocked): giữ nguyên góc đang chọn, ngưng đạo diễn.
+    // Chế độ Thủ công: bật camera tự do (chuột điều khiển); rời chế độ thì
+    // trả về đạo diễn tự động
+    const manual = this.rules.cameraMode === "manual";
+    if (manual) {
+      if (!this.freeCam) this.enterFreeCam();
+    } else if (this.freeCam) {
+      this.unlockCamera();
+    }
+    // Toàn cảnh cố định hoặc thủ công (cameraLocked): ngưng tự cắt góc
     const fixedView =
       this.rules.cameraMode === "overview" || this.cameraLocked;
     this.takeT += dt;

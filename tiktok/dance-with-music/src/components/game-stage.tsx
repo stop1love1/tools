@@ -1134,24 +1134,23 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               Camera
               <select
                 value={rules.cameraMode}
-                onChange={(e) => {
-                  gameRef.current?.unlockCamera();
-                  updateRules({ cameraMode: e.target.value as CameraMode });
-                }}
+                onChange={(e) =>
+                  updateRules({ cameraMode: e.target.value as CameraMode })
+                }
                 className={inputClass}
               >
-                <option value="sway">Điện ảnh (tự cắt góc)</option>
-                <option value="orbit">Điện ảnh + góc xoay quanh sàn</option>
-                <option value="overview">Toàn cảnh (cố định)</option>
+                <option value="sway">Điện ảnh</option>
+                <option value="overview">Toàn cảnh</option>
+                <option value="manual">Thủ công</option>
               </select>
             </label>
-            {rules.cameraMode !== "overview" && (
-              <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/2 px-3 py-2 text-[11px] leading-relaxed text-white/55">
+            {rules.cameraMode === "manual" && (
+              <div className="flex items-start gap-2 rounded-lg border border-cyan-300/25 bg-cyan-300/5 px-3 py-2 text-[11px] leading-relaxed text-white/60">
                 <span className="text-sm leading-none">🖱️</span>
                 <span>
-                  <b className="text-white/75">Kéo chuột</b> để xoay mọi hướng ·{" "}
-                  <b className="text-white/75">lăn chuột</b> để phóng/thu ·{" "}
-                  <b className="text-white/75">nháy đúp</b> để trở lại tự cắt góc
+                  <b className="text-cyan-300/90">Kéo chuột</b> để xoay mọi hướng ·{" "}
+                  <b className="text-cyan-300/90">lăn chuột</b> để phóng/thu ·{" "}
+                  <b className="text-cyan-300/90">nháy đúp</b> để về khung mặc định
                 </span>
               </div>
             )}

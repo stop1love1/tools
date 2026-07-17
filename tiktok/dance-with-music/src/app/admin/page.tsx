@@ -470,8 +470,9 @@ export default function AdminPage() {
                     }
                     className={inputClass}
                   >
-                    <option value="sway">Đứng yên, lắc nhẹ</option>
-                    <option value="orbit">Xoay vòng quanh sàn</option>
+                    <option value="sway">Điện ảnh</option>
+                    <option value="overview">Toàn cảnh</option>
+                    <option value="manual">Thủ công</option>
                   </select>
                 </label>
                 <label className="text-xs text-white/70">
