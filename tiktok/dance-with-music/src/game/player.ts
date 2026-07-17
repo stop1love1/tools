@@ -137,7 +137,65 @@ export type MusicVibe = {
   genre: MusicGenre;
   melodyTrend: number;
   melodyHeight: number;
+  /**
+   * Cường độ đoạn nhạc 0..1 (từ section): verse ~0.3 lắng, điệp khúc/drop ~0.9
+   * bùng. Quyết định biên độ nhún VÀ độ "dữ" của điệu được bốc ra.
+   */
+  intensity: number;
 };
+
+/**
+ * "Độ dữ" của mỗi điệu 0 (êm, lắc lư) .. 1 (bốc, bật nhảy). Dùng để bốc điệu
+ * khớp năng lượng đoạn nhạc — verse ra điệu dịu, điệp khúc ra điệu quẩy.
+ */
+const MOVE_ENERGY: Record<DanceMove, number> = {
+  sway: 0.12,
+  wave: 0.18,
+  dip: 0.2,
+  "lean-back": 0.24,
+  fan: 0.28,
+  freeze: 0.3,
+  roll: 0.34,
+  slide: 0.36,
+  "two-step": 0.4,
+  robot: 0.4,
+  "cross-step": 0.42,
+  moonwalk: 0.44,
+  shoulder: 0.46,
+  bounce: 0.5,
+  grapevine: 0.5,
+  squat: 0.5,
+  twist: 0.52,
+  charleston: 0.55,
+  clap: 0.55,
+  spin: 0.58,
+  kick: 0.6,
+  "double-bounce": 0.66,
+  hop: 0.72,
+  shuffle: 0.72,
+  stomp: 0.76,
+  headbang: 0.82,
+  windmill: 0.84,
+  pogo: 0.92,
+};
+
+/**
+ * Bốc một điệu trong pool sao cho "độ dữ" khớp năng lượng đoạn nhạc `target`.
+ * Lấy vài ứng viên rồi chọn cái gần target nhất (có nhiễu để vẫn đa dạng).
+ */
+export function pickEnergyMove(pool: DanceMove[], target: number): DanceMove {
+  let best = pool[0];
+  let bestScore = Infinity;
+  for (let k = 0; k < 3; k++) {
+    const c = pool[Math.floor(Math.random() * pool.length)];
+    const d = Math.abs((MOVE_ENERGY[c] ?? 0.5) - target) + Math.random() * 0.35;
+    if (d < bestScore) {
+      bestScore = d;
+      best = c;
+    }
+  }
+  return best;
+}
 
 const MOVE_BEATS: Record<DanceMove, number> = {
   bounce: 2,
@@ -200,6 +258,11 @@ export class Player {
   forcedMove: DanceMove | null = null;
   /** Điệu đồng diễn cả sàn — game đặt/xóa theo chu kỳ 32 beat. */
   choreoMove: DanceMove | null = null;
+  /**
+   * Nhịp bắt đầu áp điệu đồng diễn cho RIÊNG người này. Đội hình sóng/canon
+   * đặt lệch theo vị trí để tạo hiệu ứng lan; trước mốc này vẫn nhảy tự do.
+   */
+  choreoFromBeat = 0;
 
   private sprite: THREE.Sprite;
   private label: THREE.Sprite;
@@ -522,7 +585,9 @@ export class Player {
         const prevMove = this.move;
         if (this.forcedMove) {
           this.move = this.forcedMove;
-        } else if (this.choreoMove) {
+        } else if (this.choreoMove && beat.index >= this.choreoFromBeat) {
+          // Đồng diễn: chỉ vào điệu khi tới nhịp kích hoạt của RIÊNG mình —
+          // đội hình sóng/canon lệch nhau vài nhịp tạo hiệu ứng lan khắp sàn
           this.move = this.choreoMove;
           this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
         } else if (
@@ -531,12 +596,12 @@ export class Player {
         ) {
           // Chỉ đổi điệu ở ranh giới ô nhịp (lệch pha riêng từng người) —
           // người thật đổi động tác theo câu nhạc chứ không giữa chừng.
-          // Chọn điệu trong pool của thể loại đang phát — ballad lắc lư,
-          // EDM bật nhảy... mỗi loại nhạc ra một chất nhảy khác nhau
+          // Chọn điệu trong pool của thể loại đang phát, ưu tiên điệu khớp
+          // năng lượng đoạn nhạc: verse ra điệu dịu, điệp khúc ra điệu quẩy.
           const pool = vibe ? GENRE_MOVES[vibe.genre] : DANCE_MOVES;
-          let next = pool[Math.floor(Math.random() * pool.length)];
-          if (next === this.move)
-            next = pool[Math.floor(Math.random() * pool.length)];
+          const target = vibe?.intensity ?? 0.5;
+          let next = pickEnergyMove(pool, target);
+          if (next === this.move) next = pickEnergyMove(pool, target);
           this.move = next;
           this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
         }
@@ -630,6 +695,8 @@ export class Player {
         this.ampScale *
         accent *
         (0.72 + moodEnergy * 0.5) *
+        // Tương phản verse↔điệp khúc: đoạn trầm nhún dịu, đoạn bùng quẩy hết cỡ
+        (0.62 + (vibe?.intensity ?? 0.5) * 0.72) *
         (1 + (vibe?.melodyTrend ?? 0) * 0.18);
       const hopPhase =
         this.move === "double-bounce" ||

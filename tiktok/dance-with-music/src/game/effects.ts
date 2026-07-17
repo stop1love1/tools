@@ -35,20 +35,61 @@ export function makeGlowTexture(): THREE.Texture {
   return glowTexture;
 }
 
+/** Kiểu hoạ tiết sàn nhảy — director đổi luân phiên theo câu nhạc cho đỡ chán. */
+export type FloorPattern =
+  | "ring" // vòng tròn lan từ tâm ra mép (cổ điển)
+  | "ripple" // vòng lan từ một ô ngẫu nhiên (tâm lệch)
+  | "sweep" // dải sáng quét ngang qua sàn, đảo chiều mỗi ô nhịp
+  | "checker" // hai nhóm ô cờ vua chớp so le mỗi phách (disco kinh điển)
+  | "spiral" // chong chóng xoay quanh tâm
+  | "rows" // sáng đuổi theo hàng từ trước ra sau
+  | "sparkle"; // lấp lánh ngẫu nhiên (hợp đoạn nhạc lắng)
+
+const FLOOR_PATTERNS: FloorPattern[] = [
+  "ring",
+  "ripple",
+  "sweep",
+  "checker",
+  "spiral",
+  "rows",
+  "sparkle",
+];
+
 export class DiscoFloor {
   readonly mesh: THREE.InstancedMesh;
   private readonly tileChecker: Uint8Array;
   private readonly tileDist: Float32Array;
+  private readonly tileRow: Uint8Array;
+  private readonly tileNX: Float32Array; // toạ độ X chuẩn hoá -1..1
+  private readonly tileNZ: Float32Array; // toạ độ Z chuẩn hoá -1..1
+  private readonly tileAng: Float32Array; // góc quanh tâm (cho chong chóng)
+  private readonly twinkle: Float32Array; // pha lấp lánh riêng từng ô
+  private readonly rows: number;
+  private readonly maxDist: number;
   private readonly count: number;
   private readonly color = new THREE.Color();
   private acc = 0;
 
+  private pattern: FloorPattern = "ring";
+  private dir = 1;
+  private originX = 0; // tâm vòng "ripple" (chuẩn hoá)
+  private originZ = 0;
+  private flash = 0; // loé toàn sàn khi drop, tự tắt dần
+  private flashHue = 0;
+
   constructor(width: number, depth: number, cols = 16, rows = 12) {
     const tileW = width / cols;
     const tileD = depth / rows;
+    this.rows = rows;
     this.count = cols * rows;
+    this.maxDist = Math.hypot(width / 2, depth / 2);
     this.tileChecker = new Uint8Array(this.count);
     this.tileDist = new Float32Array(this.count);
+    this.tileRow = new Uint8Array(this.count);
+    this.tileNX = new Float32Array(this.count);
+    this.tileNZ = new Float32Array(this.count);
+    this.tileAng = new Float32Array(this.count);
+    this.twinkle = new Float32Array(this.count);
     const geometry = new THREE.BoxGeometry(tileW * 0.92, 0.1, tileD * 0.92);
     // Mặt gạch phải NHÁM — bóng quá sẽ phản xạ dàn đèn thành vũng lóa giữa sàn
     const material = new THREE.MeshStandardMaterial({
@@ -71,9 +112,36 @@ export class DiscoFloor {
         this.mesh.setColorAt(i, color);
         this.tileChecker[i] = (c + r) % 2;
         this.tileDist[i] = Math.hypot(x, z);
+        this.tileRow[i] = r;
+        this.tileNX[i] = x / (width / 2);
+        this.tileNZ[i] = z / (depth / 2);
+        this.tileAng[i] = Math.atan2(z, x);
+        this.twinkle[i] = Math.random() * Math.PI * 2;
         i++;
       }
     }
+  }
+
+  /** Director đổi hoạ tiết; đảo chiều quét/xoay + chọn tâm ripple ngẫu nhiên. */
+  setPattern(p: FloorPattern) {
+    this.pattern = p;
+    this.dir = Math.random() < 0.5 ? 1 : -1;
+    this.originX = (Math.random() - 0.5) * 1.6;
+    this.originZ = (Math.random() - 0.5) * 1.6;
+  }
+
+  get currentPattern(): FloorPattern {
+    return this.pattern;
+  }
+
+  static randomPattern(): FloorPattern {
+    return FLOOR_PATTERNS[Math.floor(Math.random() * FLOOR_PATTERNS.length)];
+  }
+
+  /** Loé sáng cả sàn một phát (drop) — phủ lên hoạ tiết đang chạy rồi tắt dần. */
+  burst(strength = 1, hue?: number) {
+    this.flash = Math.max(this.flash, strength);
+    if (hue !== undefined) this.flashHue = hue;
   }
 
   update(
@@ -86,28 +154,79 @@ export class DiscoFloor {
   ) {
     this.acc += dt;
     if (this.acc < 0.04) return;
+    const step = this.acc;
     this.acc = 0;
+    this.flash = Math.max(0, this.flash - step * 2.4);
     const hue = mood?.hue ?? 0.6;
     const energy = mood?.energy ?? 0.5;
-    // Nhịp sáng nhẹ theo kick + một vòng tỏa mảnh lan từ tâm ra mép mỗi beat
+    const valence = mood?.valence ?? 0.4;
+    const t = performance.now() / 1000;
+    // Nhịp sáng nhẹ toàn sàn theo kick — nền chung cho mọi hoạ tiết
     const kick = Math.max(0, 1 - beat.pulse * 2.5);
     const glow = musicOn ? kick * level * 0.1 + level * 0.02 : 0;
-    const ringR = beat.pulse * 17;
-    // Vòng ở phách 1 sáng rõ hơn hẳn — nhịp 4/4 hiện rõ trên sàn;
-    // nhạc êm thì vòng lan dịu lại cho hợp không khí
-    const ringAmp =
+    // Biên độ hoạ tiết: phách 1 rõ hơn, nhạc mạnh thì rực hơn
+    const amp =
       (0.04 + level * 0.14) *
       (beat.index % 4 === 0 ? 1.7 : 1) *
       (0.5 + energy * 0.9);
+    const p = musicOn ? this.pattern : "ring";
+    // Tham số dùng chung tính trước ngoài vòng lặp cho nhẹ
+    const ringR = beat.pulse * this.maxDist; // ring: bán kính theo pulse
+    const ringRN = beat.pulse * 1.35; // ripple: bán kính chuẩn hoá
+    const sweepPos = (-1.2 + beat.pulse * 2.4) * this.dir; // sweep: vị trí dải
+    const checkerOn = beat.index % 2; // checker: nhóm nào sáng phách này
+    const checkerK = Math.max(0, 1 - beat.pulse * 2.5);
+    const rowsHead = ((beat.index & 3) + beat.pulse) / 4; // rows: đầu sóng 0..1
+    const flashHue = this.flashHue;
+    const flash = this.flash;
+
     for (let i = 0; i < this.count; i++) {
-      const ringGlow = musicOn
-        ? Math.max(0, 1 - Math.abs(this.tileDist[i] - ringR) / 2) * ringAmp
-        : 0;
+      let g = 0;
+      if (musicOn) {
+        switch (p) {
+          case "ring":
+            g = Math.max(0, 1 - Math.abs(this.tileDist[i] - ringR) / 2) * amp;
+            break;
+          case "ripple": {
+            const d = Math.hypot(
+              this.tileNX[i] - this.originX,
+              this.tileNZ[i] - this.originZ,
+            );
+            g = Math.max(0, 1 - Math.abs(d - ringRN) / 0.28) * amp;
+            break;
+          }
+          case "sweep":
+            g = Math.max(0, 1 - Math.abs(this.tileNX[i] - sweepPos) / 0.3) * amp;
+            break;
+          case "checker":
+            g = this.tileChecker[i] === checkerOn ? checkerK * amp * 1.1 : 0;
+            break;
+          case "spiral": {
+            const s =
+              Math.sin(this.tileAng[i] * 3 - t * (1.4 + energy * 2) * this.dir);
+            g = Math.max(0, s) * amp * (0.6 + kick * 0.8);
+            break;
+          }
+          case "rows": {
+            const rN = this.dir > 0 ? this.tileRow[i] / (this.rows - 1)
+                                    : 1 - this.tileRow[i] / (this.rows - 1);
+            g = Math.max(0, 1 - Math.abs(rN - rowsHead) / 0.16) * amp * 1.2;
+            break;
+          }
+          case "sparkle": {
+            const tw = Math.sin(t * 3 + this.twinkle[i]);
+            g = Math.max(0, tw - 0.55) * amp * (0.8 + kick * 0.6) * 2;
+            break;
+          }
+        }
+      }
       const base = this.tileChecker[i] === 0 ? 0.058 : 0.038;
+      // Loé drop phủ lên trên: cả sàn bừng theo màu flash
+      const useHue = flash > 0.02 ? flashHue : hue;
       this.color.setHSL(
-        hue,
-        0.3 + (mood?.valence ?? 0.4) * 0.25 + ringGlow * 0.5,
-        base + glow + ringGlow,
+        useHue,
+        0.3 + valence * 0.25 + g * 0.5,
+        base + glow + g + flash * 0.5,
       );
       this.mesh.setColorAt(i, this.color);
     }

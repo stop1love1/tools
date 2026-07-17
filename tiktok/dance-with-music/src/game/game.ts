@@ -17,6 +17,7 @@ import {
   Confetti,
   DiscoBall,
   DiscoFloor,
+  type FloorPattern,
   Fireworks,
   FlameJets,
   LedWall,
@@ -31,6 +32,7 @@ import { MusicPlayer } from "./music";
 import {
   ALL_DANCE_MOVES,
   GENRE_MOVES,
+  pickEnergyMove,
   Player,
   type Beat,
   type DanceMove,
@@ -212,10 +214,21 @@ export class MemeDanceGame {
   private clubAct = 0.7;
   private lookMode = 0;
   // Object dùng chung truyền xuống mọi Player mỗi frame (tránh cấp phát mới)
-  private vibe: MusicVibe = { genre: "pop", melodyTrend: 0, melodyHeight: 0.5 };
-  // Đồng diễn: cứ 32 beat cả sàn cùng nhảy một điệu trong 8 beat
+  private vibe: MusicVibe = {
+    genre: "pop",
+    melodyTrend: 0,
+    melodyHeight: 0.5,
+    intensity: 0.5,
+  };
+  // Đồng diễn: cả sàn cùng nhảy theo đội hình (đồng loạt / sóng lan /
+  // gọi-đáp 2 nửa / canon so le hàng); kích hoạt khi vào điệp khúc, khi drop,
+  // hoặc theo chu kỳ có jitter — không còn vòng lặp mù 32 nhịp.
   private choreoMove: DanceMove | null = null;
   private choreoEndBeat = 0;
+  private nextChoreoBeat = 32;
+  // Floor director: đổi hoạ tiết sàn theo câu nhạc cho đỡ đơn điệu — verse
+  // ưu tiên hoạ tiết dịu, điệp khúc/drop ưu tiên hoạ tiết động
+  private nextFloorBeat = 16;
   private lastLoopBeat = -1;
   private lastDropLevel = 0;
   private podium: PodiumSlot[] = [];
@@ -1641,6 +1654,109 @@ export class MemeDanceGame {
     });
   }
 
+  /**
+   * Khởi động một màn đồng diễn: bốc điệu hợp thể loại + năng lượng đoạn nhạc,
+   * rồi dàn cả sàn theo MỘT đội hình để có "hình khối" bắt mắt thay vì ai nấy
+   * nhảy rời rạc:
+   * - unison: cả sàn vào cùng điệu, cùng nhịp — cú đồng loạt đanh (dùng khi drop).
+   * - wave:   kích hoạt so le theo trục X → điệu lan như sóng từ trái sang phải.
+   * - split:  hai nửa sàn nhảy hai điệu → gọi-đáp qua lại.
+   * - canon:  so le theo trục Z (hàng gần → xa) → điệu đuổi nhau theo hàng.
+   * Đội hình động (wave/split) hợp đoạn bốc; đội hình dịu (unison/canon) khi lắng.
+   */
+  private startChoreo(
+    baseBeat: number,
+    intensity: number,
+    force?: "unison" | "wave" | "split" | "canon",
+  ) {
+    const floor = [...this.players.values()].filter(
+      (p) => p.onFloor && !p.forcedMove,
+    );
+    if (floor.length < 3) return;
+
+    const pool = GENRE_MOVES[this.music.genre];
+    const moveA = pickEnergyMove(pool, intensity);
+    let moveB = pickEnergyMove(pool, intensity);
+    if (moveB === moveA) moveB = pickEnergyMove(pool, intensity);
+
+    // Chọn đội hình: năng lượng cao thiên về sóng/gọi-đáp (động), lắng thì
+    // đồng loạt/canon (gọn). Có ngẫu nhiên để không đoán trước được.
+    const r = Math.random();
+    const formation: "unison" | "wave" | "split" | "canon" =
+      force ??
+      (intensity > 0.66
+        ? r < 0.4
+          ? "wave"
+          : r < 0.72
+            ? "split"
+            : "unison"
+        : r < 0.4
+          ? "canon"
+          : r < 0.7
+            ? "unison"
+            : "wave");
+    this.choreoMove = moveA;
+
+    // Biên vị trí sàn để chuẩn hóa 0..1 cho sóng/canon
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const p of floor) {
+      const pos = this.playerSlots.get(p.user.userId)?.pos;
+      if (!pos) continue;
+      if (pos.x < minX) minX = pos.x;
+      if (pos.x > maxX) maxX = pos.x;
+      if (pos.z < minZ) minZ = pos.z;
+      if (pos.z > maxZ) maxZ = pos.z;
+    }
+    const spanX = Math.max(0.001, maxX - minX);
+    const spanZ = Math.max(0.001, maxZ - minZ);
+    // Sóng/canon lan trong ~6 nhịp; đủ chậm để mắt thấy rõ, đủ nhanh để không lê
+    const spread = formation === "wave" ? 6 : formation === "canon" ? 5 : 0;
+
+    for (const p of floor) {
+      const pos = this.playerSlots.get(p.user.userId)?.pos;
+      let move = moveA;
+      let delay = 0;
+      if (formation === "split") {
+        move = (pos?.x ?? 0) < 0 ? moveA : moveB;
+      } else if (formation === "wave" && pos) {
+        delay = Math.round(((pos.x - minX) / spanX) * spread);
+      } else if (formation === "canon" && pos) {
+        delay = Math.round(((pos.z - minZ) / spanZ) * spread);
+      }
+      p.choreoMove = move;
+      p.choreoFromBeat = baseBeat + delay;
+    }
+
+    const durBars = intensity > 0.66 ? 4 : 2; // 16 hay 8 nhịp giữ điệu
+    this.choreoEndBeat = baseBeat + spread + durBars * 4;
+    this.nextChoreoBeat = this.choreoEndBeat + 4;
+  }
+
+  /**
+   * Chọn hoạ tiết sàn hợp năng lượng đoạn nhạc: đoạn lắng ra hoạ tiết dịu
+   * (lấp lánh / vòng lan), điệp khúc ra hoạ tiết động (ô cờ chớp / chong chóng
+   * / quét / đuổi hàng). Có ngẫu nhiên để không lặp lại đoán trước được.
+   */
+  private pickFloorPattern(intensity: number): FloorPattern {
+    const calm: FloorPattern[] = ["sparkle", "ring", "ripple", "ring"];
+    const mid: FloorPattern[] = ["ring", "ripple", "sweep", "rows", "spiral"];
+    const hot: FloorPattern[] = [
+      "checker",
+      "spiral",
+      "sweep",
+      "rows",
+      "checker",
+    ];
+    const pool = intensity > 0.66 ? hot : intensity < 0.4 ? calm : mid;
+    let next = pool[Math.floor(Math.random() * pool.length)];
+    if (next === this.floor.currentPattern)
+      next = pool[Math.floor(Math.random() * pool.length)];
+    return next;
+  }
+
   private promoteToFloor(player: Player) {
     const pos = this.takeSlot("floor");
     this.releaseSlot(player.user.userId);
@@ -1649,7 +1765,11 @@ export class MemeDanceGame {
     player.floorEligible = true;
     player.setZone("floor");
     player.setHome(pos);
-    if (!player.forcedMove) player.choreoMove = this.choreoMove;
+    if (!player.forcedMove) {
+      player.choreoMove = this.choreoMove;
+      // Người mới lên sàn vào điệu đồng diễn ngay (không lệch nhịp)
+      player.choreoFromBeat = this.beatIndex;
+    }
   }
 
   private demoteToAudience(player: Player) {
@@ -2091,6 +2211,8 @@ export class MemeDanceGame {
     this.hype = 0;
     this.choreoMove = null;
     this.choreoEndBeat = 0;
+    this.nextChoreoBeat = this.beatIndex + 32;
+    this.nextFloorBeat = this.beatIndex + 16;
     this.banners.forEach((b) => this.scene.remove(b.sprite));
     this.banners = [];
     this.podium.forEach((slot) => {
@@ -2356,6 +2478,11 @@ export class MemeDanceGame {
     this.vibe.genre = genre;
     this.vibe.melodyTrend = this.music.playing ? this.music.melodyTrend : 0;
     this.vibe.melodyHeight = this.music.melodyHeight;
+    // Năng lượng đám đông = độ mạnh đoạn nhạc, cộng hype tương tác. Điều tiết
+    // biên độ nhún + độ dữ của điệu: verse lắng, điệp khúc/drop bùng.
+    this.vibe.intensity = this.music.playing
+      ? Math.min(1, Math.max(this.music.section, effHype * 0.7) + drop * 0.3)
+      : 0.35;
 
     // Mỗi beat mới: đèn moving head quét sang mốc mới + đồng diễn 32-beat
     if (this.music.playing && beat.index !== this.lastLoopBeat) {
@@ -2379,9 +2506,15 @@ export class MemeDanceGame {
         this.smokeJets.blast(1.2);
         this.frontSparks.fire(1.2);
         // Vào điệp khúc: cameraman cắt thẳng sang toàn cảnh đón cú bung,
-        // DJ bật nhảy ăn mừng
+        // DJ bật nhảy ăn mừng, cả sàn vào đồng diễn năng lượng cao ngay
+        // (không chờ hẹn giờ) — khoảnh khắc bùng khớp đúng câu nhạc
         this.cutToWide();
         this.djJumpT = 0;
+        this.startChoreo(beat.index + 1, Math.max(0.75, section));
+        // Vào điệp khúc: sàn nhảy sang hoạ tiết động + loé một phát đón cú bung
+        this.floor.setPattern(this.pickFloorPattern(0.9));
+        this.nextFloorBeat = beat.index + 16;
+        this.floor.burst(0.7, moodHue);
       } else if (section < 0.6) {
         this.inClimax = false;
       }
@@ -2429,18 +2562,28 @@ export class MemeDanceGame {
       }
       // Mỗi câu 8 beat đổi "look" — verse luân phiên moving head ↔ beam
       if (beat.index % 8 === 0) this.lookMode = (this.lookMode + 1) % 2;
+      // Floor director: đổi hoạ tiết sàn mỗi ~4 ô nhịp (có jitter) theo năng lượng
+      if (beat.index >= this.nextFloorBeat) {
+        this.floor.setPattern(this.pickFloorPattern(this.vibe.intensity));
+        this.nextFloorBeat = beat.index + 16 + Math.floor(Math.random() * 8);
+      }
       if (this.choreoMove && beat.index >= this.choreoEndBeat) {
         this.choreoMove = null;
         this.players.forEach((p) => (p.choreoMove = null));
+        // Nghỉ tự do một quãng rồi mới đồng diễn tiếp — jitter độ dài quãng
+        // nghỉ theo năng lượng để nhịp đồng diễn không lặp máy móc
+        const gap = section > 0.6 ? 16 : 28;
+        this.nextChoreoBeat =
+          beat.index + gap + Math.floor(Math.random() * 12);
       }
-      if (!this.choreoMove && beat.index % 32 === 0 && this.players.size >= 3) {
-        // Đồng diễn cũng chọn điệu hợp thể loại đang phát
-        const pool = GENRE_MOVES[genre];
-        this.choreoMove = pool[Math.floor(Math.random() * pool.length)];
-        this.choreoEndBeat = beat.index + 8;
-        this.players.forEach((p) => {
-          if (p.onFloor && !p.forcedMove) p.choreoMove = this.choreoMove;
-        });
+      // Tới hạn đồng diễn theo chu kỳ (đã jitter) — bốc điệu hợp thể loại +
+      // năng lượng, dàn theo một đội hình ngẫu nhiên
+      if (
+        !this.choreoMove &&
+        beat.index >= this.nextChoreoBeat &&
+        this.players.size >= 3
+      ) {
+        this.startChoreo(beat.index, this.vibe.intensity);
       }
     }
 
@@ -2456,6 +2599,13 @@ export class MemeDanceGame {
       this.players.forEach((p) => {
         if (p.onFloor) p.jump();
       });
+      // Drop = cả sàn bật nhảy ĐỒNG LOẠT một điệu cực bốc — cú "unison" đanh
+      // đúng khoảnh khắc bass bùng, tương phản hẳn với đoạn buildup vừa lắng
+      this.startChoreo(this.beatIndex, 1, "unison");
+      // Sàn loé trắng cả mặt rồi vào ô cờ chớp mạnh cho cú drop
+      this.floor.burst(1, moodHue);
+      this.floor.setPattern("checker");
+      this.nextFloorBeat = this.beatIndex + 16;
       this.hype = Math.min(1, this.hype + 0.25);
     }
     this.lastDropLevel = drop;
