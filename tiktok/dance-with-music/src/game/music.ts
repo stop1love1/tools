@@ -20,6 +20,22 @@ export class MusicPlayer {
   private interval = 60 / 128;
   private history: number[] = [];
 
+  /** Mức năng lượng dải trung (giọng hát/synth) và cao (hi-hat) 0..1. */
+  mid = 0;
+  high = 0;
+  /** Cường độ "drop" (1 → tắt dần): nhạc lặng >1s rồi bass bùng nổ. */
+  dropLevel = 0;
+
+  private midLo = 8;
+  private midHi = 60;
+  private highLo = 120;
+  private highHi = 400;
+  private prevBass: Float32Array | null = null;
+  private fluxAvg = 0;
+  private energyAvg = 0;
+  private quietTime = 0;
+  private lastUpdateT = 0;
+
   get playing(): boolean {
     return !!this.audio && !this.audio.paused && !this.audio.ended;
   }
@@ -65,15 +81,29 @@ export class MusicPlayer {
       const hzPerBin = this.ctx.sampleRate / this.analyser.fftSize;
       this.loBin = Math.max(1, Math.floor(20 / hzPerBin));
       this.hiBin = Math.ceil(150 / hzPerBin);
+      this.midLo = Math.max(this.hiBin + 1, Math.floor(250 / hzPerBin));
+      this.midHi = Math.ceil(2000 / hzPerBin);
+      this.highLo = Math.floor(4000 / hzPerBin);
+      this.highHi = Math.min(
+        this.freq.length - 1,
+        Math.ceil(11000 / hzPerBin),
+      );
     }
     this.title = title;
     this.audio.src = url;
     this.audio.onended = () => this.onEndedCb?.();
-    await this.ctx!.resume();
+    // play() trước: nếu trình duyệt chặn autoplay sẽ ném NotAllowedError ngay
+    // (ctx.resume() khi bị chặn thì treo vô hạn — không được await trước)
     await this.audio.play();
+    void this.ctx!.resume();
     this.history = [];
     this.beatIndex = 0;
     this.lastOnset = performance.now() / 1000;
+    this.prevBass = null;
+    this.fluxAvg = 0;
+    this.energyAvg = 0;
+    this.quietTime = 0;
+    this.dropLevel = 0;
   }
 
   pause() {
@@ -81,8 +111,8 @@ export class MusicPlayer {
   }
 
   async resume() {
-    await this.ctx?.resume();
     await this.audio?.play();
+    void this.ctx?.resume();
   }
 
   async toggle() {
@@ -103,24 +133,60 @@ export class MusicPlayer {
   }
 
   update() {
+    const nowT = performance.now() / 1000;
+    const dtu = Math.min(0.1, Math.max(0.001, nowT - this.lastUpdateT));
+    this.lastUpdateT = nowT;
+    this.dropLevel = Math.max(0, this.dropLevel - dtu * 0.55);
     if (!this.playing || !this.analyser || !this.freq) {
       this.level = Math.max(0, this.level - 0.02);
+      this.mid = Math.max(0, this.mid - 0.02);
+      this.high = Math.max(0, this.high - 0.02);
       return;
     }
     this.analyser.getByteFrequencyData(this.freq);
     let sum = 0;
+    let flux = 0;
+    const nBass = this.hiBin - this.loBin + 1;
+    if (!this.prevBass || this.prevBass.length !== nBass) {
+      this.prevBass = new Float32Array(nBass);
+    }
     for (let i = this.loBin; i <= this.hiBin; i++) {
       sum += this.freq[i] * this.freq[i];
+      const k = i - this.loBin;
+      flux += Math.max(0, this.freq[i] - this.prevBass[k]);
+      this.prevBass[k] = this.freq[i];
     }
-    const bass = sum / ((this.hiBin - this.loBin + 1) * 255 * 255);
+    const bass = sum / (nBass * 255 * 255);
+    flux /= nBass * 255;
+    this.fluxAvg += (flux - this.fluxAvg) * 0.06;
     this.level += (bass - this.level) * 0.25;
+
+    let midSum = 0;
+    for (let i = this.midLo; i <= this.midHi; i++) midSum += this.freq[i];
+    this.mid +=
+      (midSum / ((this.midHi - this.midLo + 1) * 255) - this.mid) * 0.3;
+    let highSum = 0;
+    for (let i = this.highLo; i <= this.highHi; i++) highSum += this.freq[i];
+    this.high +=
+      (highSum / ((this.highHi - this.highLo + 1) * 255) - this.high) * 0.35;
+
+    // Drop: bass chìm dưới mức nền >1s (break/buildup) rồi bùng vượt hẳn nền
+    this.energyAvg += (bass - this.energyAvg) * 0.012;
+    if (bass < Math.max(0.015, this.energyAvg * 0.8)) {
+      this.quietTime += dtu;
+    } else {
+      if (this.quietTime > 1.0 && bass > this.energyAvg * 1.6 && bass > 0.06) {
+        this.dropLevel = 1;
+      }
+      this.quietTime = 0;
+    }
 
     this.history.push(bass);
     if (this.history.length > 43) this.history.shift();
     const avg =
       this.history.reduce((a, b) => a + b, 0) / (this.history.length || 1);
 
-    const now = performance.now() / 1000;
+    const now = nowT;
 
     while (now - this.lastOnset > this.interval) {
       this.lastOnset += this.interval;
@@ -128,7 +194,12 @@ export class MusicPlayer {
     }
 
     const gap = now - this.lastRealOnset;
-    if (bass > avg * this.sensitivity && bass > 0.02 && gap > 0.25) {
+    // Onset cần năng lượng vượt nền VÀ phổ biến thiên đột ngột (flux) —
+    // tránh bass ngân dài bị đếm nhầm thành beat mới
+    const energyHit = bass > avg * this.sensitivity && bass > 0.02;
+    const fluxHit =
+      flux > this.fluxAvg * 1.1 || bass > avg * this.sensitivity * 1.4;
+    if (energyHit && fluxHit && gap > 0.25) {
       if (gap > 0.33 && gap < 0.86) {
         this.interval = this.interval * 0.6 + gap * 0.4;
       } else if (gap / 2 > 0.33 && gap / 2 < 0.86) {

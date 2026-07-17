@@ -405,15 +405,31 @@ export default function AdminPage() {
                     <button
                       type="button"
                       onClick={() => send({ t: "pl-play", index: i })}
-                      className={`min-w-0 flex-1 truncate rounded px-2 py-1 text-left text-xs hover:bg-white/10 ${
+                      className={`flex min-w-0 flex-1 items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-white/10 ${
                         i === game?.playingIndex
                           ? "bg-cyan-300/10 text-cyan-300"
                           : "text-white/75"
                       }`}
                     >
-                      {i === game?.playingIndex ? "♪ " : `${i + 1}. `}
-                      {item.title}
-                      {item.kind === "file" ? " 📁" : ""}
+                      {item.thumb ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.thumb}
+                          alt=""
+                          className="h-6 w-10 shrink-0 rounded object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <span className="flex h-6 w-10 shrink-0 items-center justify-center rounded bg-white/5 text-white/40">
+                          {item.kind === "file" ? "📁" : "♪"}
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1 truncate">
+                        {i === game?.playingIndex ? "♪ " : `${i + 1}. `}
+                        {item.title}
+                      </span>
                     </button>
                     <button
                       type="button"

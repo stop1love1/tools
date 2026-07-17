@@ -37,6 +37,7 @@ def _extract(url: str) -> dict[str, Any]:
     return {
         "audioUrl": audio_url,
         "title": info.get("title") or "Audio",
+        "thumbnail": info.get("thumbnail") or "",
         "duration": info.get("duration"),
         "site": info.get("extractor_key", ""),
     }

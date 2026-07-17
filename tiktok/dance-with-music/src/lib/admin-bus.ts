@@ -25,7 +25,7 @@ export type GameState = {
   rules: GameRules;
   legend: boolean;
   statsShown: boolean;
-  playlist: { title: string; kind: "file" | "url" }[];
+  playlist: { title: string; kind: "file" | "url"; thumb?: string }[];
   playingIndex: number;
   musicError: string | null;
 };

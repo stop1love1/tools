@@ -32,7 +32,15 @@ export type DanceMove =
   | "kick"
   | "twist"
   | "headbang"
-  | "robot";
+  | "robot"
+  | "grapevine"
+  | "moonwalk"
+  | "shuffle"
+  | "pogo"
+  | "clap"
+  | "dip"
+  | "windmill"
+  | "stomp";
 export const ALL_DANCE_MOVES: DanceMove[] = [
   "bounce",
   "two-step",
@@ -53,6 +61,14 @@ export const ALL_DANCE_MOVES: DanceMove[] = [
   "twist",
   "headbang",
   "robot",
+  "grapevine",
+  "moonwalk",
+  "shuffle",
+  "pogo",
+  "clap",
+  "dip",
+  "windmill",
+  "stomp",
 ];
 const DANCE_MOVES: DanceMove[] = [
   "bounce",
@@ -77,6 +93,17 @@ const DANCE_MOVES: DanceMove[] = [
   "twist",
   "headbang",
   "robot",
+  "grapevine",
+  "grapevine",
+  "moonwalk",
+  "moonwalk",
+  "shuffle",
+  "shuffle",
+  "pogo",
+  "clap",
+  "dip",
+  "windmill",
+  "stomp",
 ];
 const MOVE_BEATS: Record<DanceMove, number> = {
   bounce: 2,
@@ -99,6 +126,14 @@ const MOVE_BEATS: Record<DanceMove, number> = {
   twist: 2,
   headbang: 2,
   robot: 2,
+  grapevine: 4,
+  moonwalk: 4,
+  shuffle: 2,
+  pogo: 2,
+  clap: 2,
+  dip: 2,
+  windmill: 2,
+  stomp: 2,
 };
 
 export type Beat = { index: number; pulse: number };
@@ -122,6 +157,8 @@ export class Player {
   onFloor = false;
   onPodium = false;
   forcedMove: DanceMove | null = null;
+  /** Điệu đồng diễn cả sàn — game đặt/xóa theo chu kỳ 32 beat. */
+  choreoMove: DanceMove | null = null;
 
   private sprite: THREE.Sprite;
   private label: THREE.Sprite;
@@ -140,9 +177,16 @@ export class Player {
   private hopBoost = 0;
   private move: DanceMove = "bounce";
   private moveBeatsLeft = 0;
+  /** Nhịp thứ mấy trong điệu hiện tại — cho các điệu có chuỗi bước (grapevine). */
+  private moveStep = 0;
+  /** Hướng di chuyển cố định suốt một điệu (khác sideDir đảo mỗi nhịp). */
+  private travelDir = 1;
   private sideOffset = 0;
   private sideTarget = 0;
   private sideDir = 1;
+  // Đi dạo quanh chỗ đứng: đang nhảy trên sàn thì thi thoảng dời vài bước
+  private roamOffset = new THREE.Vector3();
+  private roamTarget = new THREE.Vector3();
   private halfBeatSwapped = false;
   private danceY = 0;
   private smoothSX = 1;
@@ -193,7 +237,7 @@ export class Player {
     this.label = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: texture, transparent: true }),
     );
-    const labelH = 0.34;
+    const labelH = 0.42;
     this.label.scale.set(labelH * aspect, labelH, 1);
     this.label.position.y = BASE_H + 0.28;
 
@@ -291,7 +335,7 @@ export class Player {
     this.label.material.map?.dispose();
     this.label.material.map = texture;
     this.label.material.needsUpdate = true;
-    const labelH = 0.34;
+    const labelH = 0.42;
     this.label.scale.set(labelH * aspect, labelH, 1);
     this.frame = 0;
     this.applyFrame();
@@ -357,7 +401,7 @@ export class Player {
     this.bubbleUntil = performance.now() + BUBBLE_MS;
   }
 
-  update(dt: number, hype: number, beat: Beat, musicOn = true) {
+  update(dt: number, hype: number, beat: Beat, musicOn = true, level = 0) {
     const now = performance.now();
     const t = now / 1000;
     const dancing = musicOn && now < this.danceUntil;
@@ -383,8 +427,12 @@ export class Player {
         this.applyFrame();
         this.halfBeatSwapped = false;
         this.moveBeatsLeft -= 1;
+        const prevMove = this.move;
         if (this.forcedMove) {
           this.move = this.forcedMove;
+        } else if (this.choreoMove) {
+          this.move = this.choreoMove;
+          this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
         } else if (this.moveBeatsLeft <= 0) {
           let next =
             DANCE_MOVES[Math.floor(Math.random() * DANCE_MOVES.length)];
@@ -393,12 +441,28 @@ export class Player {
           this.move = next;
           this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
         }
+        if (this.move !== prevMove) {
+          this.moveStep = 0;
+          // Đồng diễn: cả sàn đi cùng hướng (suy từ beat), tự do thì ngẫu nhiên
+          this.travelDir = this.choreoMove
+            ? ((beat.index >> 2) & 1) === 0
+              ? 1
+              : -1
+            : Math.random() < 0.5
+              ? 1
+              : -1;
+          // Moonwalk: mặt quay ngược hướng trượt mới ra chất moonwalk
+          if (this.move === "moonwalk") this.facing = -this.travelDir;
+        } else {
+          this.moveStep++;
+        }
         this.sideDir = -this.sideDir;
         if (this.move === "spin") {
           this.facingFrom = this.facing;
           this.facing = -this.facing;
         }
-        this.hopBoost = this.move === "hop" ? 0.3 : 0;
+        this.hopBoost =
+          this.move === "hop" ? 0.3 : this.move === "pogo" ? 0.45 : 0;
         this.tiltTarget =
           this.move === "lean-back"
             ? -0.3
@@ -412,15 +476,44 @@ export class Player {
                     ? this.sideDir * 0.08
                     : this.move === "kick"
                       ? -0.1
-                      : 0;
+                      : this.move === "dip"
+                        ? -0.35
+                        : this.move === "shuffle"
+                          ? this.sideDir * 0.1
+                          : this.move === "stomp"
+                            ? this.sideDir * 0.06
+                            : 0;
         this.sideTarget =
           this.move === "two-step"
-            ? this.sideDir * 0.7
+            ? this.sideDir * 0.95
             : this.move === "sway"
-              ? this.sideDir * 0.5
+              ? this.sideDir * 0.6
               : this.move === "slide"
-                ? this.sideDir * 0.9
-                : 0;
+                ? this.sideDir * 1.25
+                : this.move === "stomp"
+                  ? this.sideDir * 0.3
+                  : 0;
+        if (this.move === "grapevine") {
+          // Chuỗi bước ngang 4 nhịp: bước - chụm - bước xa - lùi về
+          const seq = [0.5, 1.05, 1.6, 0.75];
+          this.sideTarget = this.travelDir * seq[this.moveStep % 4];
+          this.tiltTarget = this.travelDir * 0.08;
+        } else if (this.move === "moonwalk") {
+          this.sideTarget =
+            this.travelDir * (0.35 + (this.moveStep % 4) * 0.45);
+          this.tiltTarget = -0.16;
+        }
+        // Thi thoảng dời chỗ vài bước quanh slot — sàn có dòng người qua lại
+        if (
+          this.zone === "floor" &&
+          !this.onPodium &&
+          beat.index % 4 === 0 &&
+          Math.random() < 0.3
+        ) {
+          const a = Math.random() * Math.PI * 2;
+          const r = 0.5 + Math.random() * 1.1;
+          this.roamTarget.set(Math.cos(a) * r, 0, Math.sin(a) * r * 0.7);
+        }
       }
       if (!this.halfBeatSwapped && beat.pulse > 0.5) {
         this.halfBeatSwapped = true;
@@ -428,9 +521,17 @@ export class Player {
         this.applyFrame();
       }
 
-      const amp = (0.24 + hype * 0.26 + this.hopBoost) * this.ampScale;
+      // Phách 1 của ô nhịp 4 nhún mạnh nhất, phách 3 vừa — tạo groove rõ rệt
+      const accent =
+        beat.index % 4 === 0 ? 1.25 : beat.index % 2 === 0 ? 1.1 : 1;
+      const amp =
+        (0.2 + hype * 0.22 + level * 0.22 + this.hopBoost) *
+        this.ampScale *
+        accent;
       const hopPhase =
-        this.move === "double-bounce" || this.move === "charleston"
+        this.move === "double-bounce" ||
+        this.move === "charleston" ||
+        this.move === "pogo"
           ? Math.min(1, (beat.pulse % 0.5) * 3.4)
           : Math.min(1, beat.pulse * 1.7);
       y = Math.sin(hopPhase * Math.PI) * amp;
@@ -464,16 +565,43 @@ export class Player {
         scaleY = 0.97;
       } else if (this.move === "robot") {
         y = amp * 0.1;
+      } else if (this.move === "grapevine") {
+        y *= 0.75;
+      } else if (this.move === "moonwalk") {
+        y = amp * 0.08;
+        scaleY = 0.985;
+      } else if (this.move === "shuffle") {
+        y *= 0.45;
+      } else if (this.move === "pogo") {
+        // Bật cao liên tục như lò xo — giãn người khi bay, nén khi chạm đất
+        scaleY = 1 + 0.09 * Math.sin(hopPhase * Math.PI);
+        scaleX = 1 - 0.06 * Math.sin(hopPhase * Math.PI);
+      } else if (this.move === "clap") {
+        y *= 0.8;
+        scaleX = 1 - 0.16 * Math.max(0, Math.sin(beat.pulse * Math.PI * 2));
+      } else if (this.move === "dip") {
+        y = amp * 0.15;
+      } else if (this.move === "windmill") {
+        y *= 0.5;
+      } else if (this.move === "stomp") {
+        // Dậm mạnh phách xuống — chạm đất là nén người rồi nảy tắt dần
+        y = amp * Math.max(0, 1 - beat.pulse * 2.2) * 0.9;
+        scaleY = 1 - 0.1 * Math.max(0, 1 - beat.pulse * 3);
+        scaleX = 1 + 0.07 * Math.max(0, 1 - beat.pulse * 3);
       }
       if (this.move === "cross-step") {
         this.sideTarget =
-          Math.sin(beat.pulse * Math.PI * 3) * 0.4 * this.sideDir;
+          Math.sin(beat.pulse * Math.PI * 3) * 0.55 * this.sideDir;
+      } else if (this.move === "shuffle") {
+        // Bước lết nhanh kiểu shuffle TikTok — đảo chân gấp đôi nhịp thường
+        this.sideTarget =
+          Math.sin(beat.pulse * Math.PI * 4) * 0.42 * this.sideDir;
       } else if (this.move === "roll") {
         this.sideTarget =
-          Math.sin(beat.pulse * Math.PI * 2) * 0.3 * this.sideDir;
+          Math.sin(beat.pulse * Math.PI * 2) * 0.4 * this.sideDir;
       } else if (this.move === "fan") {
         this.sideTarget =
-          Math.sin(beat.pulse * Math.PI) * 0.5 * this.sideDir;
+          Math.sin(beat.pulse * Math.PI) * 0.6 * this.sideDir;
       } else if (this.move === "twist") {
         this.sideTarget =
           Math.sin(beat.pulse * Math.PI * 2) * 0.15 * this.sideDir;
@@ -511,6 +639,18 @@ export class Player {
       } else if (this.move === "robot") {
         const step = Math.floor(beat.pulse * 4) % 4;
         rot = this.tilt + [0, 0.14, 0, -0.14][step] * this.sideDir;
+      } else if (this.move === "shuffle") {
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 4) * 0.1;
+      } else if (this.move === "clap") {
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 2) * 0.08 * this.sideDir;
+      } else if (this.move === "dip") {
+        // Gập người sâu xuống rồi ngửa lên — như cúi chào điệu nghệ
+        rot = this.tilt - Math.sin(beat.pulse * Math.PI) * 0.22;
+      } else if (this.move === "windmill") {
+        // Vung tay quay vòng lớn — lắc thân biên độ rộng hai bên
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 2) * 0.34 * this.sideDir;
+      } else if (this.move === "stomp") {
+        rot = this.tilt + Math.max(0, 1 - beat.pulse * 3) * 0.08 * this.sideDir;
       } else {
         rot = this.tilt + Math.sin(Math.PI * 2 * beat.pulse + this.phase) * 0.06;
       }
@@ -526,6 +666,12 @@ export class Player {
       y = (Math.sin(t * 1.6 + this.phase) * 0.5 + 0.5) * 0.04;
       this.tilt += (0 - this.tilt) * Math.min(1, dt * 6);
       rot = this.tilt + Math.sin(t * 1.1 + this.phase) * 0.03;
+      if (musicOn) {
+        // Khán giả không nhảy vẫn gật gù nhẹ theo kick của nhạc
+        const nod = Math.max(0, 1 - beat.pulse * 3);
+        y += nod * (0.035 + level * 0.05) * this.ampScale;
+        rot += nod * 0.02 * (this.phase > Math.PI ? 1 : -1);
+      }
       this.sideOffset += (0 - this.sideOffset) * Math.min(1, dt * 6);
     }
     const spinActive = dancing && this.move === "spin";
@@ -611,13 +757,21 @@ export class Player {
       }
     }
 
+    // Đi dạo quanh slot: lướt chậm tới điểm mới trong lúc vẫn giữ nhịp nhảy
+    if (dancing && this.zone === "floor" && !this.onPodium) {
+      this.roamOffset.lerp(this.roamTarget, Math.min(1, dt * 1.6));
+    } else {
+      this.roamTarget.set(0, 0, 0);
+      this.roamOffset.lerp(this.roamTarget, Math.min(1, dt * 2.5));
+    }
+
     const swayX = dancing
-      ? Math.sin(t * 2.2 + this.phase) * (0.05 + hype * 0.05)
+      ? Math.sin(t * 2.2 + this.phase) * (0.06 + hype * 0.06)
       : 0;
     this.group.position.set(
-      this.home.x + swayX + this.sideOffset + offsetX,
+      this.home.x + swayX + this.sideOffset + offsetX + this.roamOffset.x,
       this.home.y + y,
-      this.home.z + offsetZ,
+      this.home.z + offsetZ + this.roamOffset.z,
     );
   }
 

@@ -6,5 +6,32 @@ body {
   background: #05060a;
   color: #e9ebf2;
   font-family: var(--font-geist-sans), system-ui, sans-serif;
-  overflow: hidden;
+}
+
+/* Thanh cuộn mảnh cho panel Cài đặt — thumb gradient cyan→hồng theo brand */
+.nice-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.nice-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.nice-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: 6px;
+}
+.nice-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: linear-gradient(
+    180deg,
+    rgba(37, 244, 238, 0.45),
+    rgba(254, 44, 85, 0.45)
+  );
+}
+.nice-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(37, 244, 238, 0.75),
+    rgba(254, 44, 85, 0.75)
+  );
 }

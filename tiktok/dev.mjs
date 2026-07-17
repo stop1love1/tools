@@ -17,6 +17,24 @@ const portFree = (port) =>
       .listen(port, "127.0.0.1");
   });
 
+// Port bận chưa chắc là backend của mình (Apache/XAMPP hay chiếm 8080) —
+// phải hỏi /api/health để chắc chắn trước khi bỏ qua việc spawn
+const isOurBackend = async (port) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+};
+
+const findFreePort = async (from, to) => {
+  for (let p = from; p <= to; p++) if (await portFree(p)) return p;
+  return null;
+};
+
 const root = path.dirname(fileURLToPath(import.meta.url));
 const isWin = process.platform === "win32";
 
@@ -53,10 +71,11 @@ if (!feApps.includes(fe)) {
 }
 
 const children = [];
-function run(cmd, cmdArgs, cwd, prefix, color) {
+function run(cmd, cmdArgs, cwd, prefix, color, env) {
+  const opts = { cwd, env: env ? { ...process.env, ...env } : process.env };
   const child = isWin
-    ? spawn([cmd, ...cmdArgs].join(" "), { cwd, shell: true })
-    : spawn(cmd, cmdArgs, { cwd });
+    ? spawn([cmd, ...cmdArgs].join(" "), { ...opts, shell: true })
+    : spawn(cmd, cmdArgs, opts);
   const tag = `\x1b[${color}m[${prefix}]\x1b[0m`;
   const pipe = (stream, out) => {
     let buf = "";
@@ -79,15 +98,43 @@ function shutdown() {
 process.on("SIGINT", () => { shutdown(); process.exit(0); });
 process.on("SIGTERM", () => { shutdown(); process.exit(0); });
 
+let apiPort = 8080;
 if (!noServer) {
-  if (await portFree(8080)) {
-    console.log("==> Starting Go backend (port 8080)...");
-    const server = run("go", ["run", "."], path.join(root, "server"), "server", "36");
+  let startBackend = true;
+  if (!(await portFree(8080))) {
+    if (await isOurBackend(8080)) {
+      console.log("==> Port 8080: backend đã chạy sẵn, bỏ qua.");
+      startBackend = false;
+    } else {
+      // Backend có thể đã chạy sẵn ở port dự phòng từ lần trước
+      let existing = null;
+      for (let p = 8081; p <= 8099 && existing === null; p++) {
+        if (!(await portFree(p)) && (await isOurBackend(p))) existing = p;
+      }
+      if (existing !== null) {
+        apiPort = existing;
+        startBackend = false;
+        console.log(`==> Backend đã chạy sẵn ở port ${existing}, bỏ qua.`);
+      } else {
+        apiPort = await findFreePort(8081, 8099);
+        if (apiPort === null) {
+          console.error("==> Không tìm được port trống 8081–8099 cho backend.");
+          process.exit(1);
+        }
+        console.warn(
+          `==> Port 8080 bị process khác chiếm (không phải backend của tools) — chuyển backend sang port ${apiPort}.`
+        );
+      }
+    }
+  }
+  if (startBackend) {
+    console.log(`==> Starting Go backend (port ${apiPort})...`);
+    const server = run("go", ["run", "."], path.join(root, "server"), "server", "36", {
+      PORT: String(apiPort),
+    });
     server.on("exit", (code) => {
       if (code !== 0 && code !== null) console.error(`[server] exited with code ${code}`);
     });
-  } else {
-    console.log("==> Port 8080 đang bận — backend đã chạy sẵn, bỏ qua.");
   }
 
   if (await portFree(8500)) {
@@ -110,9 +157,16 @@ if (!noServer) {
 }
 
 const feDir = path.join(root, fe);
+// Frontend đọc NEXT_PUBLIC_* lúc dev-server khởi động — phải trỏ đúng port backend
+const feEnv = {
+  NEXT_PUBLIC_API_URL:
+    process.env.NEXT_PUBLIC_API_URL ?? `http://localhost:${apiPort}`,
+  NEXT_PUBLIC_LIVE_WS_URL:
+    process.env.NEXT_PUBLIC_LIVE_WS_URL ?? `ws://localhost:${apiPort}/ws`,
+};
 const startFe = () => {
   console.log(`==> Starting frontend '${fe}'...`);
-  const feProc = run("npm", ["run", "dev"], feDir, fe, "35");
+  const feProc = run("npm", ["run", "dev"], feDir, fe, "35", feEnv);
   feProc.on("exit", (code) => { shutdown(); process.exit(code ?? 0); });
 };
 

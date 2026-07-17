@@ -5,10 +5,18 @@ const NEON = [0xfe2c55, 0x25f4ee, 0x8a2be2, 0xffc94d, 0x2ecc71, 0x3498db];
 
 export class DiscoFloor {
   readonly mesh: THREE.InstancedMesh;
+  private readonly tileChecker: Uint8Array;
+  private readonly tileDist: Float32Array;
+  private readonly count: number;
+  private readonly color = new THREE.Color();
+  private acc = 0;
 
   constructor(width: number, depth: number, cols = 16, rows = 12) {
     const tileW = width / cols;
     const tileD = depth / rows;
+    this.count = cols * rows;
+    this.tileChecker = new Uint8Array(this.count);
+    this.tileDist = new Float32Array(this.count);
     const geometry = new THREE.BoxGeometry(tileW * 0.92, 0.1, tileD * 0.92);
     const material = new THREE.MeshStandardMaterial({
       metalness: 0.55,
@@ -21,21 +29,42 @@ export class DiscoFloor {
     let i = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        dummy.position.set(
-          (c + 0.5 - cols / 2) * tileW,
-          0.05,
-          (r + 0.5 - rows / 2) * tileD,
-        );
+        const x = (c + 0.5 - cols / 2) * tileW;
+        const z = (r + 0.5 - rows / 2) * tileD;
+        dummy.position.set(x, 0.05, z);
         dummy.updateMatrix();
         this.mesh.setMatrixAt(i, dummy.matrix);
         color.setHex((c + r) % 2 === 0 ? 0x262b3d : 0x171a28);
         this.mesh.setColorAt(i, color);
+        this.tileChecker[i] = (c + r) % 2;
+        this.tileDist[i] = Math.hypot(x, z);
         i++;
       }
     }
   }
 
-  update(_dt: number, _hype: number, _beat: Beat) {
+  update(dt: number, _hype: number, beat: Beat, level = 0, musicOn = true) {
+    this.acc += dt;
+    if (this.acc < 0.04) return;
+    this.acc = 0;
+    // Nhịp sáng nhẹ theo kick + một vòng tỏa mảnh lan từ tâm ra mép mỗi beat
+    const kick = Math.max(0, 1 - beat.pulse * 2.5);
+    const glow = musicOn ? kick * level * 0.1 + level * 0.02 : 0;
+    const ringR = beat.pulse * 17;
+    for (let i = 0; i < this.count; i++) {
+      const ringGlow = musicOn
+        ? Math.max(0, 1 - Math.abs(this.tileDist[i] - ringR) / 2) *
+          (0.04 + level * 0.14)
+        : 0;
+      const base = this.tileChecker[i] === 0 ? 0.058 : 0.038;
+      this.color.setHSL(
+        0.6,
+        0.28 + ringGlow * 0.6,
+        base + glow + ringGlow,
+      );
+      this.mesh.setColorAt(i, this.color);
+    }
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 }
 
@@ -45,6 +74,9 @@ export class LedWall {
   private readonly rows: number;
   private readonly color = new THREE.Color();
   private acc = 0;
+  private lastBeat = -1;
+  private flashCol = -1;
+  private flashHue = 0;
 
   constructor(width: number, height: number, z: number, cols = 26, rows = 9) {
     this.cols = cols;
@@ -67,14 +99,28 @@ export class LedWall {
     }
   }
 
-  update(dt: number, hype: number, beat: Beat, level = 0, musicOn = true) {
+  update(
+    dt: number,
+    hype: number,
+    beat: Beat,
+    level = 0,
+    musicOn = true,
+    mid = 0,
+  ) {
     this.acc += dt;
     if (this.acc < 0.05) return;
     this.acc = 0;
+    // Mỗi beat chọn một dải cột ngẫu nhiên lóe sáng rồi tắt dần theo pulse
+    if (musicOn && beat.index !== this.lastBeat) {
+      this.lastBeat = beat.index;
+      this.flashCol = Math.floor(Math.random() * this.cols);
+      this.flashHue = Math.random();
+    }
     const t = performance.now() / 1000;
     const kick =
       Math.max(0, 1 - beat.pulse * 3) * (0.1 + hype * 0.15 + level * 0.25) +
       level * 0.08;
+    const flashK = musicOn ? Math.max(0, 1 - beat.pulse * 2.2) : 0;
     const dim = musicOn ? 1 : 0.22;
     let i = 0;
     for (let r = 0; r < this.rows; r++) {
@@ -83,11 +129,22 @@ export class LedWall {
           Math.sin(c * 0.55 - t * (musicOn ? 0.7 + hype * 1.4 : 0.25) + r * 0.35) *
             0.5 +
           0.5;
-        const hue = (0.9 + c * 0.012 + t * 0.03) % 1;
+        const flash =
+          this.flashCol >= 0
+            ? Math.max(0, 1 - Math.abs(c - this.flashCol) / 3.2) *
+              flashK *
+              (0.2 + level * 0.5 + mid * 0.4)
+            : 0;
+        const hue =
+          flash > 0.06 ? this.flashHue : (0.9 + c * 0.012 + t * 0.03) % 1;
         this.color.setHSL(
           hue,
           0.85,
-          Math.min(0.42, (0.07 + wave * (0.14 + hype * 0.2) + kick) * dim),
+          Math.min(
+            0.48,
+            (0.07 + wave * (0.14 + hype * 0.2 + mid * 0.12) + kick + flash) *
+              dim,
+          ),
         );
         this.mesh.setColorAt(i, this.color);
         i++;

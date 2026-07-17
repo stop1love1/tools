@@ -397,27 +397,39 @@ export function makeLabelTexture(
 ): { texture: THREE.Texture; aspect: number } {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
-  const font = "600 26px system-ui, sans-serif";
+  // Chữ 3D không khung: mặt trên trắng, khối đùn màu accent phía dưới
+  const font = "600 44px system-ui, sans-serif";
   ctx.font = font;
   const label = text.length > 16 ? `${text.slice(0, 15)}…` : text;
   const textW = ctx.measureText(label).width;
-  const padX = 18;
+  const padX = 14;
+  const depth = 6;
   canvas.width = Math.ceil(textW + padX * 2);
-  canvas.height = 48;
+  canvas.height = 72;
 
   const c = canvas.getContext("2d")!;
   c.font = font;
-  c.fillStyle = "rgba(8,9,13,0.72)";
-  c.beginPath();
-  c.roundRect(0, 0, canvas.width, canvas.height, 24);
-  c.fill();
-  c.strokeStyle = accent;
-  c.lineWidth = 3;
-  c.stroke();
-  c.fillStyle = "#ffffff";
   c.textAlign = "center";
   c.textBaseline = "middle";
-  c.fillText(label, canvas.width / 2, canvas.height / 2 + 1);
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2 - depth / 2;
+  // Lớp sâu nhất kèm bóng mờ để tách chữ khỏi nền sân khấu
+  c.shadowColor = "rgba(0,0,0,0.7)";
+  c.shadowBlur = 8;
+  c.shadowOffsetY = 3;
+  c.fillStyle = "rgba(0,0,0,0.65)";
+  c.fillText(label, cx, cy + depth);
+  c.shadowColor = "transparent";
+  c.shadowBlur = 0;
+  c.shadowOffsetY = 0;
+  // Khối đùn 3D màu accent
+  c.fillStyle = accent;
+  for (let i = depth - 1; i >= 1; i--) {
+    c.fillText(label, cx, cy + i);
+  }
+  // Mặt chữ trên cùng
+  c.fillStyle = "#ffffff";
+  c.fillText(label, cx, cy);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

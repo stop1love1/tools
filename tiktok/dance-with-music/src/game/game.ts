@@ -23,7 +23,12 @@ import {
   SpeakerStack,
 } from "./effects";
 import { MusicPlayer } from "./music";
-import { ALL_DANCE_MOVES, Player, type Beat } from "./player";
+import {
+  ALL_DANCE_MOVES,
+  Player,
+  type Beat,
+  type DanceMove,
+} from "./player";
 import { NowPlayingScreen } from "./screen";
 import {
   generateSkins,
@@ -56,7 +61,7 @@ export class MemeDanceGame {
   private bloom!: UnrealBloomPass;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
-  private clock = new THREE.Clock();
+  private lastFrameT = performance.now();
   private raf = 0;
   private disposed = false;
 
@@ -77,6 +82,11 @@ export class MemeDanceGame {
   private speakers: SpeakerStack[];
   private fireworks = new Fireworks();
   private confetti = new Confetti();
+  // Đồng diễn: cứ 32 beat cả sàn cùng nhảy một điệu trong 8 beat
+  private choreoMove: DanceMove | null = null;
+  private choreoEndBeat = 0;
+  private lastLoopBeat = -1;
+  private lastDropLevel = 0;
   private podium: PodiumSlot[] = [];
   private banners: Banner[] = [];
   private djSprite!: THREE.Sprite;
@@ -967,6 +977,7 @@ export class MemeDanceGame {
     player.onFloor = true;
     player.setZone("floor");
     player.setHome(pos);
+    if (!player.forcedMove) player.choreoMove = this.choreoMove;
   }
 
   private demoteToAudience(player: Player) {
@@ -976,6 +987,7 @@ export class MemeDanceGame {
     player.onFloor = false;
     player.setZone("audience");
     player.setHome(pos);
+    player.choreoMove = null;
   }
 
   async useCustomSkins(urls: string[]) {
@@ -1104,7 +1116,6 @@ export class MemeDanceGame {
       6,
       1 + Math.floor((event.diamondCount * event.repeatCount) / 100),
     );
-    this.fireworks.spawn(player.group.position, bursts);
     this.confetti.burst(30 + bursts * 20);
     this.showBanner(
       `🎁 ${event.user.nickname} tặng ${event.giftName} ×${event.repeatCount}` +
@@ -1128,11 +1139,9 @@ export class MemeDanceGame {
         player.giveBadge();
         player.grow();
         this.focusOn(player);
-        this.fireworks.spawn(player.group.position, 4);
         break;
       case "focus":
         this.focusOn(player);
-        this.fireworks.spawn(player.group.position, 2);
         break;
       case "fireworks":
         this.fireworks.spawn(player.group.position, 3);
@@ -1263,6 +1272,8 @@ export class MemeDanceGame {
     this.audienceSlotsFree = [];
     this.buildSlots();
     this.hype = 0;
+    this.choreoMove = null;
+    this.choreoEndBeat = 0;
     this.banners.forEach((b) => this.scene.remove(b.sprite));
     this.banners = [];
     this.podium.forEach((slot) => {
@@ -1483,8 +1494,10 @@ export class MemeDanceGame {
   private loop = () => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min(this.clock.getDelta(), 0.05);
-    const t = performance.now() / 1000;
+    const frameT = performance.now();
+    const dt = Math.min((frameT - this.lastFrameT) / 1000, 0.05);
+    this.lastFrameT = frameT;
+    const t = frameT / 1000;
 
     this.music.sensitivity = this.rules.beatSensitivity;
     this.music.update();
@@ -1498,6 +1511,36 @@ export class MemeDanceGame {
 
     this.hype = Math.max(0, this.hype - HYPE_DECAY_PER_S * dt);
     const effHype = Math.max(this.hype, this.music.level * 0.75);
+    const level = this.music.playing ? this.music.level : 0;
+    const drop = this.music.dropLevel;
+
+    // Mỗi beat mới: quản lý đồng diễn 32-beat
+    if (this.music.playing && beat.index !== this.lastLoopBeat) {
+      this.lastLoopBeat = beat.index;
+      if (this.choreoMove && beat.index >= this.choreoEndBeat) {
+        this.choreoMove = null;
+        this.players.forEach((p) => (p.choreoMove = null));
+      }
+      if (!this.choreoMove && beat.index % 32 === 0 && this.players.size >= 3) {
+        this.choreoMove =
+          ALL_DANCE_MOVES[Math.floor(Math.random() * ALL_DANCE_MOVES.length)];
+        this.choreoEndBeat = beat.index + 8;
+        this.players.forEach((p) => {
+          if (p.onFloor && !p.forcedMove) p.choreoMove = this.choreoMove;
+        });
+      }
+    }
+
+    // Drop vừa nổ: confetti + pháo hoa + cả sàn bật nhảy
+    if (drop > 0.9 && this.lastDropLevel <= 0.9) {
+      this.confetti.burst(150);
+      this.fireworks.spawn(new THREE.Vector3(0, 2.5, -4), 3);
+      this.players.forEach((p) => {
+        if (p.onFloor) p.jump();
+      });
+      this.hype = Math.min(1, this.hype + 0.25);
+    }
+    this.lastDropLevel = drop;
 
     const spotlighting =
       this.spotlightPlayer !== null && performance.now() < this.spotlightUntil;
@@ -1535,11 +1578,11 @@ export class MemeDanceGame {
             else if (!p.isDancing && p.onFloor) this.demoteToAudience(p);
         }
       }
-      p.update(dt, effHype, beat, this.music.playing);
+      p.update(dt, effHype, beat, this.music.playing, level);
     });
-    const level = this.music.playing ? this.music.level : 0;
-    this.floor.update(dt, effHype, beat);
-    this.ledWall.update(dt, effHype, beat, level, this.music.playing);
+    const mid = this.music.playing ? this.music.mid : 0;
+    this.floor.update(dt, effHype, beat, level, this.music.playing);
+    this.ledWall.update(dt, effHype, beat, level, this.music.playing, mid);
     this.beams.update(dt, effHype, beat, level, this.music.playing);
     this.ball.update(dt, effHype);
     this.clubLights.update(dt, effHype, beat, level, this.music.playing);
@@ -1604,8 +1647,11 @@ export class MemeDanceGame {
         : 0.1;
       mat.color.setHSL(hue, 0.9, bright);
     });
+    // Drop: strobe nhấp nháy nhanh vài giây cho cảm giác bùng nổ
+    const dropFlicker = drop > 0.05 ? (Math.sin(t * 42) > 0 ? 1 : 0.15) : 0;
     (this.strobe.material as THREE.MeshBasicMaterial).opacity =
-      kick * (0.06 + level * 0.45 + effHype * 0.18);
+      kick * (0.06 + level * 0.45 + effHype * 0.18) +
+      drop * 0.28 * dropFlicker;
     this.npScreen.paused = !this.music.playing;
     this.npScreen.update(dt, this.music.getSpectrum(), beat, this.music.progress);
 
@@ -1679,7 +1725,13 @@ export class MemeDanceGame {
       this.camera.lookAt(0, lookY, lookZ);
     }
 
-    this.bloom.strength = 0.4 + effHype * 0.4;
+    // Bloom "thở" theo kick của bass, bùng thêm khi drop
+    this.bloom.strength =
+      0.4 + effHype * 0.4 + kick * level * 0.35 + drop * 0.3;
+    // Camera punch-in nhẹ theo kick — cảm giác dồn nhịp như video ca nhạc
+    const targetFov = 58 - kick * level * 3.5 - drop * 2;
+    this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 10);
+    this.camera.updateProjectionMatrix();
     this.composer.render();
   };
 

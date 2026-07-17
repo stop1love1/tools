@@ -45,7 +45,7 @@ const TONE_CLASS = {
 } as const;
 
 const inputClass =
-  "w-full rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-cyan-300/60 disabled:opacity-50";
+  "w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/30 hover:border-white/25 focus:border-cyan-300/70 focus:bg-black/40 disabled:opacity-50";
 
 // Trạng thái khôi phục nhạc sau reload — biến module vì GameStage chỉ mount
 // một lần mỗi trang và React Compiler không cho gán ref dùng chéo giữa effect
@@ -53,16 +53,28 @@ let resumeAtSeconds = 0;
 let playItemLatest: (index: number) => void = () => {};
 let addOrderedLatest: (nickname: string, query: string) => void = () => {};
 
+// Suy thumbnail YouTube ngay từ URL/ID để hiện ảnh mà không cần chờ resolve
+function youtubeThumb(input: string): string | undefined {
+  const m =
+    input.match(
+      /(?:youtube\.com\/(?:watch\?[^#\s]*v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/i,
+    ) ?? input.trim().match(/^([\w-]{11})$/);
+  return m ? `https://i.ytimg.com/vi/${m[1]}/mqdefault.jpg` : undefined;
+}
+
 function Section({
   title,
+  icon,
   children,
 }: {
   title: string;
+  icon?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/50">
+    <section className="flex flex-col gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.035] p-3.5">
+      <h3 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-white/55">
+        {icon && <span className="text-sm leading-none">{icon}</span>}
         {title}
       </h3>
       {children}
@@ -85,6 +97,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     input: string;
     title: string;
     kind: "file" | "url";
+    /** Ảnh thumbnail của bài (YouTube/TikTok) — suy từ URL hoặc do resolver trả về. */
+    thumb?: string;
     /** Nickname người order — bài do khán giả yêu cầu qua quà tặng. */
     orderedBy?: string;
   };
@@ -149,7 +163,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       let saved: PlaylistItem[] = [];
       try {
         saved = (JSON.parse(localStorage.getItem("md:playlist") ?? "[]") as
-          PlaylistItem[]).filter((i) => i.kind === "url");
+          PlaylistItem[])
+          .filter((i) => i.kind === "url")
+          .map((i) => ({ ...i, thumb: i.thumb ?? youtubeThumb(i.input) }));
       } catch {
       }
       const list = [...files, ...saved];
@@ -240,6 +256,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       giftActions: rules.giftActions.filter((_, i) => i !== index),
     });
 
+  // Phát lệnh lên bus để các tab game khác (và trang admin) đồng bộ theo.
+  // BroadcastChannel không dội về tab gửi, tab nhận chỉ thực thi không phát
+  // tiếp — nên không tạo vòng lặp.
+  const busSendRef = useRef<(cmd: AdminCommand) => void>(() => {});
+  const broadcast = (cmd: AdminCommand) => busSendRef.current(cmd);
+
   const syncUrl = (user: string | null) => {
     const url = user
       ? `${window.location.pathname}?user=${encodeURIComponent(user)}`
@@ -261,6 +283,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     if (watching) {
       leave();
       syncUrl(null);
+      broadcast({ t: "leave" });
       return;
     }
     if (username.trim()) {
@@ -268,6 +291,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       setDemoRunning(false);
       join(username);
       syncUrl(username.trim().replace(/^@/, "").toLowerCase());
+      broadcast({ t: "join", username });
     }
   };
 
@@ -359,9 +383,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
 
   const resolveMedia = async (
     input: string,
-  ): Promise<{ media: string; title: string }> => {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+  ): Promise<{ media: string; title: string; thumb?: string }> => {
+    // Gọi same-origin — Next.js proxy /api/data/* sang Go gateway (tự dò port),
+    // tránh CORS và không phụ thuộc gateway nằm ở port nào
+    const apiBase = "";
     let media = input;
+    let thumb: string | undefined;
     let title =
       decodeURIComponent(input.split("/").pop() ?? "")
         .split("?")[0]
@@ -377,6 +404,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         throw new Error(meta?.error ?? "không lấy được audio từ video");
       }
       title = meta?.music?.title || meta?.author?.nickname || "TikTok audio";
+      thumb = meta?.video?.cover || undefined;
     } else if (!isDirectMedia) {
       // Không phải link → coi là tên bài, tìm trên YouTube qua yt-dlp
       const target = /^[a-z][a-z0-9+.-]*:/i.test(input)
@@ -391,8 +419,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       }
       media = resolved.audioUrl;
       title = resolved.title || title;
+      thumb = resolved.thumbnail || undefined;
     }
-    return { media: `/api/stream?url=${encodeURIComponent(media)}`, title };
+    return { media: `/api/stream?url=${encodeURIComponent(media)}`, title, thumb };
   };
 
   const playItem = async (index: number) => {
@@ -413,10 +442,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         await game.playMusic(item.input, item.title, item.orderedBy ?? null);
       } else {
         setNowPlaying("Đang phân tích link…");
-        const { media, title } = await resolveMedia(item.input);
+        const { media, title, thumb } = await resolveMedia(item.input);
         setNowPlaying(title);
         setPlaylist((prev) =>
-          prev.map((p, i) => (i === index ? { ...p, title } : p)),
+          prev.map((p, i) =>
+            i === index ? { ...p, title, thumb: thumb ?? p.thumb } : p,
+          ),
         );
         await game.playMusic(media, title, item.orderedBy ?? null);
       }
@@ -450,6 +481,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       input: query,
       title: `🎧 ${query}`,
       kind: "url",
+      thumb: youtubeThumb(query),
       orderedBy: nickname,
     });
     setPlaylist(list);
@@ -492,7 +524,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         .replace(/\.[a-z0-9]+$/i, "") || input.slice(0, 40);
     const next = [
       ...playlistRef.current,
-      { input, title, kind: "url" as const },
+      { input, title, kind: "url" as const, thumb: youtubeThumb(input) },
     ];
     setPlaylist(next);
     playlistRef.current = next;
@@ -533,6 +565,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     if (!game) return;
     if (action === "toggle") {
       toggleMusic();
+      broadcast({ t: "music-toggle" });
     } else if (action === "prev") {
       if (nowPlaying !== null) {
         game.music.restart();
@@ -541,7 +574,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     } else if (action === "next") {
       const list = playlistRef.current;
       if (list.length) {
-        playItem((playingIndexRef.current + 1 + list.length) % list.length);
+        const idx = (playingIndexRef.current + 1 + list.length) % list.length;
+        playItem(idx);
+        broadcast({ t: "pl-play", index: idx });
       }
     }
   };
@@ -563,7 +598,11 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     rules,
     legend: showLegend,
     statsShown: showStats,
-    playlist: playlist.map((p) => ({ title: p.title, kind: p.kind })),
+    playlist: playlist.map((p) => ({
+      title: p.title,
+      kind: p.kind,
+      thumb: p.thumb,
+    })),
     playingIndex,
     musicError,
   };
@@ -629,6 +668,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         bus.send({ t: "state", ...stateRef.current } as never);
       }, 60);
     });
+    busSendRef.current = (cmd) => bus.send(cmd);
     const timer = setInterval(() => {
       bus.send({ t: "state", ...stateRef.current } as never);
     }, 800);
@@ -653,9 +693,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         </button>
       )}
 
-      {preview && (
-        <div className="absolute left-3 top-3 rounded-full border border-amber-300/40 bg-black/60 px-4 py-1.5 text-xs font-semibold text-amber-300 backdrop-blur">
-          🧪 PREVIEW — nhấn S mở Settings; phát nhạc để nhân vật nhảy theo beat
+      {preview && !showSettings && !showStats && (
+        <div className="absolute left-3 top-3 text-[11px] text-white/20">
+          Nhấn S để mở Setting
         </div>
       )}
 
@@ -736,21 +776,30 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       )}
 
       {showSettings && (
-        <div className="absolute right-3 top-14 flex max-h-[calc(100dvh-5rem)] w-80 flex-col gap-5 overflow-y-auto rounded-xl border border-white/10 bg-black/80 p-4 backdrop-blur-md">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-white">
-              Cài đặt
-            </h2>
+        <div className="absolute bottom-3 right-3 top-3 flex w-[26rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0d17]/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl">
+          <div className="relative flex items-center justify-between px-5 py-4">
+            <div className="flex flex-col">
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-white">
+                Cài đặt
+              </h2>
+              <p className="text-[11px] text-white/40">
+                Điều khiển sân khấu, nhạc và luật chơi
+              </p>
+            </div>
             <button
               type="button"
               onClick={() => setShowSettings(false)}
-              className="text-white/50 hover:text-white"
+              title="Đóng (Esc)"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 text-white/50 transition-colors hover:border-white/30 hover:text-white"
             >
               ✕
             </button>
+            <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#25f4ee]/70 to-[#fe2c55]/70" />
           </div>
 
-          <Section title="Kết nối TikTok LIVE">
+          <div className="nice-scroll flex flex-1 flex-col gap-3 overflow-y-auto p-3">
+
+          <Section title="Kết nối TikTok LIVE" icon="📡">
             <form onSubmit={handleConnect} className="flex flex-col gap-2">
               <input
                 value={username}
@@ -764,10 +813,10 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               <div className="flex gap-2">
                 <button
                   type="submit"
-                  className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                  className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-all ${
                     watching
                       ? "border border-white/15 text-white/70 hover:border-rose-400/60 hover:text-rose-300"
-                      : "bg-rose-500 text-white hover:bg-rose-400"
+                      : "bg-gradient-to-r from-[#fe2c55] to-[#ff5f7a] text-white shadow-[0_4px_20px_rgba(254,44,85,0.35)] hover:shadow-[0_4px_28px_rgba(254,44,85,0.55)]"
                   }`}
                 >
                   {watching ? "Ngắt kết nối" : "Kết nối"}
@@ -775,11 +824,15 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 {!watching && (
                   <button
                     type="button"
-                    onClick={toggleDemo}
-                    className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${
+                    onClick={() => {
+                      const turningOn = !demoRunning;
+                      toggleDemo();
+                      broadcast({ t: "demo", on: turningOn });
+                    }}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
                       demoRunning
-                        ? "border-amber-300/60 text-amber-300"
-                        : "border-cyan-300/40 text-cyan-300 hover:border-cyan-300/80"
+                        ? "border-amber-300/60 bg-amber-300/10 text-amber-300"
+                        : "border-cyan-300/40 text-cyan-300 hover:border-cyan-300/80 hover:bg-cyan-300/10"
                     }`}
                   >
                     {demoRunning ? "⏹ Dừng demo" : "🎬 Xem demo"}
@@ -790,11 +843,15 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
             </form>
           </Section>
 
-          <Section title="Nhạc (playlist)">
+          <Section title="Nhạc (playlist)" icon="🎵">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                addToPlaylist(musicUrl, playlist.length === 0);
+                const url = musicUrl.trim();
+                if (!url) return;
+                const playNow = playlist.length === 0;
+                addToPlaylist(url, playNow);
+                broadcast({ t: "pl-add", url, play: playNow });
                 setMusicUrl("");
               }}
               className="flex flex-col gap-2"
@@ -810,24 +867,31 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               <div className="flex items-center gap-2">
                 <button
                   type="submit"
-                  className="rounded-lg border border-cyan-300/40 px-3 py-2 text-sm font-semibold text-cyan-300 hover:border-cyan-300/80"
+                  className="flex-1 rounded-lg border border-cyan-300/40 px-3 py-2 text-sm font-semibold text-cyan-300 transition-colors hover:border-cyan-300/80 hover:bg-cyan-300/10"
                 >
                   ➕ Thêm
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    addToPlaylist(musicUrl, true);
+                    const url = musicUrl.trim();
+                    if (!url) return;
+                    addToPlaylist(url, true);
+                    broadcast({ t: "pl-add", url, play: true });
                     setMusicUrl("");
                   }}
-                  className="rounded-lg border border-cyan-300/40 px-3 py-2 text-sm font-semibold text-cyan-300 hover:border-cyan-300/80"
+                  className="flex-1 rounded-lg border border-cyan-300/40 px-3 py-2 text-sm font-semibold text-cyan-300 transition-colors hover:border-cyan-300/80 hover:bg-cyan-300/10"
                 >
                   ▶ Phát ngay
                 </button>
                 <button
                   type="button"
-                  onClick={toggleMusic}
-                  className="rounded-lg border border-white/15 px-3 py-2 text-sm text-white/85 hover:text-white"
+                  onClick={() => {
+                    toggleMusic();
+                    broadcast({ t: "music-toggle" });
+                  }}
+                  title={musicPaused || nowPlaying === null ? "Phát" : "Tạm dừng"}
+                  className="w-11 rounded-lg border border-white/15 px-3 py-2 text-sm text-white/85 transition-colors hover:border-white/35 hover:text-white"
                 >
                   {musicPaused || nowPlaying === null ? "▶" : "⏸"}
                 </button>
@@ -839,24 +903,53 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 <p className="text-xs text-rose-400">{musicError}</p>
               )}
               {playlist.length > 0 && (
-                <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                <ul className="nice-scroll flex max-h-52 flex-col gap-1 overflow-y-auto pr-0.5">
                   {playlist.map((item, i) => (
                     <li key={`${item.input}-${i}`} className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => playItem(i)}
-                        className={`min-w-0 flex-1 truncate rounded px-2 py-1 text-left text-xs hover:bg-white/10 ${
-                          i === playingIndex ? "text-cyan-300" : "text-white/75"
+                        onClick={() => {
+                          playItem(i);
+                          broadcast({ t: "pl-play", index: i });
+                        }}
+                        className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+                          i === playingIndex
+                            ? "bg-cyan-300/10 text-cyan-300"
+                            : "text-white/75 hover:bg-white/[0.07] hover:text-white"
                         }`}
                       >
-                        {i === playingIndex ? "♪ " : `${i + 1}. `}
-                        {item.title}
-                        {item.kind === "file" ? " 📁" : ""}
+                        {item.thumb ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={item.thumb}
+                            alt=""
+                            className="h-7 w-12 shrink-0 rounded-md object-cover"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <span className="flex h-7 w-12 shrink-0 items-center justify-center rounded-md bg-white/5 text-white/40">
+                            {item.kind === "file" ? "📁" : "♪"}
+                          </span>
+                        )}
+                        <span className="min-w-0 flex-1 truncate">
+                          {i === playingIndex ? "♪ " : `${i + 1}. `}
+                          {item.title}
+                        </span>
+                        {item.orderedBy && (
+                          <span className="shrink-0 rounded-full bg-amber-300/15 px-1.5 py-0.5 text-[10px] text-amber-300">
+                            order
+                          </span>
+                        )}
                       </button>
                       <button
                         type="button"
-                        onClick={() => removeFromPlaylist(i)}
-                        className="px-1 text-xs text-white/40 hover:text-rose-400"
+                        onClick={() => {
+                          removeFromPlaylist(i);
+                          broadcast({ t: "pl-remove", index: i });
+                        }}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-white/40 transition-colors hover:bg-rose-400/10 hover:text-rose-400"
                         title="Xóa khỏi playlist"
                       >
                         ✕
@@ -868,13 +961,20 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
             </form>
           </Section>
 
-          <Section title="Hiển thị">
+          <Section title="Hiển thị" icon="🖥️">
             <label className="flex cursor-pointer items-center gap-2 text-sm text-white/85">
               <input
                 type="checkbox"
                 checked={showLegend}
-                onChange={(e) => toggleLegend(e.target.checked)}
-                className="accent-rose-500"
+                onChange={(e) => {
+                  toggleLegend(e.target.checked);
+                  broadcast({
+                    t: "display",
+                    legend: e.target.checked,
+                    stats: showStats,
+                  });
+                }}
+                className="h-4 w-4 accent-[#fe2c55]"
               />
               Hiện bảng lệnh trên màn hình
             </label>
@@ -882,15 +982,22 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               <input
                 type="checkbox"
                 checked={showStats}
-                onChange={(e) => toggleStats(e.target.checked)}
-                className="accent-rose-500"
+                onChange={(e) => {
+                  toggleStats(e.target.checked);
+                  broadcast({
+                    t: "display",
+                    legend: showLegend,
+                    stats: e.target.checked,
+                  });
+                }}
+                className="h-4 w-4 accent-[#fe2c55]"
               />
               Hiện số liệu 👀❤️💎 trên màn hình
             </label>
           </Section>
 
-          <Section title="Luật chơi (admin)">
-            <label className="text-xs text-white/70">
+          <Section title="Luật chơi (admin)" icon="🎛️">
+            <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
               Camera
               <select
                 value={rules.cameraMode}
@@ -903,7 +1010,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 <option value="orbit">Xoay vòng quanh sàn</option>
               </select>
             </label>
-            <label className="text-xs text-white/70">
+            <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
               Bố trí khu vực
               <select
                 value={rules.zoneMode}
@@ -925,7 +1032,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 onChange={(e) =>
                   updateRules({ requireStartCommand: e.target.checked })
                 }
-                className="accent-rose-500"
+                className="h-4 w-4 accent-[#fe2c55]"
               />
               Phải chat lệnh mới được lên sàn
             </label>
@@ -942,7 +1049,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               </label>
             )}
             <div className="grid grid-cols-2 gap-2">
-              <label className="text-xs text-white/70">
+              <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
                 Nhảy ban đầu (giây)
                 <input
                   type="number"
@@ -956,7 +1063,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                   className={inputClass}
                 />
               </label>
-              <label className="text-xs text-white/70">
+              <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
                 Gia hạn / comment (giây)
                 <input
                   type="number"
@@ -970,7 +1077,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                   className={inputClass}
                 />
               </label>
-              <label className="text-xs text-white/70">
+              <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
                 Trần tích lũy (giây)
                 <input
                   type="number"
@@ -984,7 +1091,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                   className={inputClass}
                 />
               </label>
-              <label className="text-xs text-white/70">
+              <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
                 Lượt order DJ / bài
                 <input
                   type="number"
@@ -1002,7 +1109,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                   className={inputClass}
                 />
               </label>
-              <label className="text-xs text-white/70">
+              <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
                 Độ nhạy beat
                 <input
                   type="number"
@@ -1027,7 +1134,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 type="checkbox"
                 checked={rules.stayOnFloor}
                 onChange={(e) => updateRules({ stayOnFloor: e.target.checked })}
-                className="accent-rose-500"
+                className="h-4 w-4 accent-[#fe2c55]"
               />
               Đã lên sàn thì ở lại luôn
             </label>
@@ -1038,12 +1145,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 onChange={(e) =>
                   updateRules({ commandsEnabled: e.target.checked })
                 }
-                className="accent-rose-500"
+                className="h-4 w-4 accent-[#fe2c55]"
               />
               Cho phép lệnh chat (nhảy, đổi nv…)
             </label>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
-              Quà → hành động (tự soạn)
+            <p className="mt-1 border-t border-white/[0.07] pt-3 text-[11px] font-semibold uppercase tracking-wider text-white/40">
+              🎁 Quà → hành động (tự soạn)
             </p>
             <div className="flex flex-col gap-2">
               {rules.giftActions.map((rule, i) => (
@@ -1101,7 +1208,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                   <button
                     type="button"
                     onClick={() => removeGiftAction(i)}
-                    className="px-1 text-sm text-white/40 hover:text-rose-400"
+                    className="flex h-6 w-6 items-center justify-center rounded-full text-sm text-white/40 transition-colors hover:bg-rose-400/10 hover:text-rose-400"
                   >
                     ✕
                   </button>
@@ -1110,7 +1217,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               <button
                 type="button"
                 onClick={addGiftAction}
-                className="self-start rounded-lg border border-cyan-300/40 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:border-cyan-300/80"
+                className="self-start rounded-lg border border-cyan-300/40 px-3 py-1.5 text-xs font-semibold text-cyan-300 transition-colors hover:border-cyan-300/80 hover:bg-cyan-300/10"
               >
                 ➕ Thêm dòng
               </button>
@@ -1122,13 +1229,13 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 saveRules(DEFAULT_RULES);
                 if (gameRef.current) gameRef.current.rules = DEFAULT_RULES;
               }}
-              className="self-start rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/70 hover:text-white"
+              className="self-start rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/35 hover:text-white"
             >
               ↺ Khôi phục mặc định
             </button>
           </Section>
 
-          <Section title="Xem trước bảng lệnh (chỉ hiện quà donate)">
+          <Section title="Bảng lệnh sẽ hiện trên màn hình" icon="🎁">
             <ul className="flex flex-col gap-1">
               {buildLegend(rules).map((item) => (
                 <li
@@ -1150,6 +1257,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               ))}
             </ul>
           </Section>
+          </div>
         </div>
       )}
     </main>
