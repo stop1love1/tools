@@ -101,6 +101,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     thumb?: string;
     /** Nickname người order — bài do khán giả yêu cầu qua quà tặng. */
     orderedBy?: string;
+    /** Link audio đã phân giải (cache trong phiên) — bấm phát là chạy ngay. */
+    media?: string;
   };
   const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
   const playlistRef = useRef<PlaylistItem[]>([]);
@@ -190,10 +192,15 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   }, []);
 
   const persistPlaylist = (list: PlaylistItem[]) => {
-    // Bài order của khán giả là tạm thời — không lưu vào playlist cố định
+    // Bài order của khán giả là tạm thời — không lưu vào playlist cố định.
+    // Bỏ link media đã phân giải vì nó hết hạn sau vài giờ.
     localStorage.setItem(
       "md:playlist",
-      JSON.stringify(list.filter((i) => i.kind === "url" && !i.orderedBy)),
+      JSON.stringify(
+        list
+          .filter((i) => i.kind === "url" && !i.orderedBy)
+          .map(({ media: _media, ...rest }) => rest),
+      ),
     );
   };
 
@@ -424,6 +431,27 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     return { media: `/api/stream?url=${encodeURIComponent(media)}`, title, thumb };
   };
 
+  /** Cập nhật một bài trong playlist (cả state lẫn ref, đồng bộ ngay). */
+  const patchItem = (index: number, patch: Partial<PlaylistItem>) => {
+    const list = playlistRef.current.map((p, i) =>
+      i === index ? { ...p, ...patch } : p,
+    );
+    playlistRef.current = list;
+    setPlaylist(list);
+  };
+
+  /** Phân giải link nếu chưa có cache — trả về link audio phát được ngay. */
+  const ensureResolved = async (
+    index: number,
+  ): Promise<{ media: string; title: string }> => {
+    const item = playlistRef.current[index];
+    if (item.kind === "file") return { media: item.input, title: item.title };
+    if (item.media) return { media: item.media, title: item.title };
+    const { media, title, thumb } = await resolveMedia(item.input);
+    patchItem(index, { media, title, thumb: thumb ?? item.thumb });
+    return { media, title };
+  };
+
   const playItem = async (index: number) => {
     const game = gameRef.current;
     const item = playlistRef.current[index];
@@ -437,23 +465,35 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       if (list.length) playItemLatest((playingIndexRef.current + 1) % list.length);
     };
     try {
-      if (item.kind === "file") {
-        setNowPlaying(item.title);
-        await game.playMusic(item.input, item.title, item.orderedBy ?? null);
-      } else {
+      const cached = item.kind === "url" && !!item.media;
+      if (!cached && item.kind === "url") {
         setNowPlaying("Đang phân tích link…");
-        const { media, title, thumb } = await resolveMedia(item.input);
-        setNowPlaying(title);
-        setPlaylist((prev) =>
-          prev.map((p, i) =>
-            i === index ? { ...p, title, thumb: thumb ?? p.thumb } : p,
-          ),
-        );
+      }
+      const { media, title } = await ensureResolved(index);
+      setNowPlaying(title);
+      try {
         await game.playMusic(media, title, item.orderedBy ?? null);
+      } catch (err) {
+        // Link cache hết hạn → phân giải lại một lần rồi phát lại
+        const blocked = err instanceof DOMException && err.name === "NotAllowedError";
+        if (!cached || blocked) throw err;
+        patchItem(index, { media: undefined });
+        setNowPlaying("Đang phân tích link…");
+        const fresh = await ensureResolved(index);
+        setNowPlaying(fresh.title);
+        await game.playMusic(fresh.media, fresh.title, item.orderedBy ?? null);
       }
       if (resumeAtSeconds > 0) {
         game.music.seekTo(resumeAtSeconds);
         resumeAtSeconds = 0;
+      }
+      // Nạp sẵn link bài kế tiếp — bấm next/hết bài là chạy tức thì
+      const nextIdx = (index + 1) % playlistRef.current.length;
+      if (nextIdx !== index) {
+        const next = playlistRef.current[nextIdx];
+        if (next?.kind === "url" && !next.media) {
+          ensureResolved(nextIdx).catch(() => {});
+        }
       }
     } catch (err) {
       setNowPlaying(null);
