@@ -22,9 +22,11 @@ import {
   LedWall,
   LightBeams,
   lerpHue,
+  makeGlowTexture,
   SmokeJets,
   SpeakerStack,
 } from "./effects";
+import { InfoScreens, type InfoTrack } from "./info-screens";
 import { MusicPlayer } from "./music";
 import {
   ALL_DANCE_MOVES,
@@ -70,25 +72,34 @@ type CamShot = {
   pos: [number, number, number];
   look: [number, number, number];
   drift: number;
-  kind: "wide" | "medium" | "crowd" | "top" | "side" | "close";
+  kind: "wide" | "medium" | "crowd" | "top" | "side" | "close" | "dj";
+};
+// Góc toàn cảnh: máy đặt CAO và LÙI XA sau khán đài, nhìn bao trọn sân khấu
+// + sàn nhảy + khán đài bậc thang trong một khung (dùng cho chế độ "overview"
+// và khi cameraman cắt wide lúc drop). Cao đủ để vượt tường sau khán đài.
+const OVERVIEW_SHOT: CamShot = {
+  pos: [0, 12.5, 29],
+  look: [0, 1.8, -4],
+  drift: 0.5,
+  kind: "wide",
 };
 const FRONT_SHOTS: CamShot[] = [
+  OVERVIEW_SHOT,
   // Toàn cảnh chính diện — thấy cả khán giả lẫn sân khấu
-  { pos: [0, 6.2, 23.5], look: [0, 1.8, -2.5], drift: 1, kind: "wide" },
-  // Chếch trái/phải hạ thấp — có chiều sâu
-  { pos: [-6.5, 4.4, 20], look: [1.5, 1.9, -3], drift: 0.8, kind: "medium" },
-  { pos: [6.5, 4.4, 20], look: [-1.5, 1.9, -3], drift: 0.8, kind: "medium" },
-  // Giữa đám đông nhìn lên sân khấu
-  { pos: [0, 3.4, 18.5], look: [0, 2.4, -4], drift: 0.6, kind: "crowd" },
-  // Trên cao chếch xuống toàn sàn
-  { pos: [0, 10, 20], look: [0, 1, -3], drift: 0.7, kind: "top" },
-  // Crane chéo góc cao trái/phải — cảm giác từ trên xuống nhưng máy đặt
-  // LỆCH ra ngoài vòng giàn đèn nên không bị giàn đèn/cầu disco che khung
-  { pos: [-11, 13.5, 13.5], look: [2, 0.4, -1.5], drift: 0.5, kind: "top" },
-  { pos: [11, 13.5, 13.5], look: [-2, 0.4, -1.5], drift: 0.5, kind: "top" },
-  // Cánh trái/phải nhìn ngang qua sàn
-  { pos: [-15.5, 5.5, 12], look: [3, 1.8, -2.5], drift: 0.9, kind: "side" },
-  { pos: [15.5, 5.5, 12], look: [-3, 1.8, -2.5], drift: 0.9, kind: "side" },
+  { pos: [0, 7, 25], look: [0, 1.7, -3], drift: 0.9, kind: "wide" },
+  // Chếch trái/phải hạ thấp — có chiều sâu (đủ cao để vượt tường khán đài)
+  { pos: [-7, 5.6, 21.5], look: [1.5, 1.8, -3], drift: 0.8, kind: "medium" },
+  { pos: [7, 5.6, 21.5], look: [-1.5, 1.8, -3], drift: 0.8, kind: "medium" },
+  // POV giữa sàn nhảy (TRƯỚC khán đài) nhìn lên sân khấu — không vướng ghế
+  { pos: [0, 2.7, 7.5], look: [0, 2.4, -6], drift: 0.5, kind: "crowd" },
+  // Crane chéo góc cao trái/phải nhìn xuống toàn sàn
+  { pos: [-11, 13.5, 12], look: [1.5, 0.5, -2], drift: 0.5, kind: "top" },
+  { pos: [11, 13.5, 12], look: [-1.5, 0.5, -2], drift: 0.5, kind: "top" },
+  // Cánh trái/phải đặt NGOÀI mép sàn, TRƯỚC khán đài — nhìn ngang qua sàn
+  { pos: [-16.5, 5, 5], look: [3, 1.6, -4], drift: 0.8, kind: "side" },
+  { pos: [16.5, 5, 5], look: [-3, 1.6, -4], drift: 0.8, kind: "side" },
+  // POV của DJ: máy sau bàn DJ, trên cao, CHÚC XUỐNG bao quát đám đông
+  { pos: [0, 4.3, -11.2], look: [0, 0, 3], drift: 0.4, kind: "dj" },
 ];
 const ORBIT_SHOTS: CamShot[] = [
   ...FRONT_SHOTS,
@@ -99,6 +110,10 @@ const ORBIT_SHOTS: CamShot[] = [
 const STAGE_H = 0.9;
 const AUDIENCE_Y = -0.35;
 const AUDIENCE_Z0 = FLOOR_D / 2 + 0.5;
+// Khán đài dốc bậc thang: mỗi hàng lùi sau cao thêm STEP_H và lùi xa STEP_D
+const AUD_STEP_H = 0.42;
+const AUD_STEP_D = 1.25;
+const AUD_ROWS = 4;
 
 type PodiumSlot = {
   pedestal: THREE.Mesh;
@@ -170,6 +185,10 @@ export class MemeDanceGame {
     ],
     "spark",
   );
+  // Cột đèn rọi trời quanh venue — quét chậm trong loop
+  private beacons: THREE.Mesh[] = [];
+  // Hai màn hình FOH: trái = đang phát, phải = playlist (canvas texture)
+  private infoScreens = new InfoScreens(0);
   private ambient!: THREE.AmbientLight;
   private keyLight!: THREE.DirectionalLight;
   private moodColor = new THREE.Color();
@@ -257,8 +276,16 @@ export class MemeDanceGame {
   private camCut = false;
   private camGlide = 0.55;
   private camMoveMode: "push" | "slide" = "push";
-  private camPos = new THREE.Vector3(0, 6.2, 23.5);
-  private camLook = new THREE.Vector3(0, 1.8, -2.5);
+  // Admin khóa góc: đạo diễn tự động tạm ngưng, chỉ đổi khi admin bấm
+  private cameraLocked = false;
+  // Camera tự do (toạ độ cầu) khi admin điều khiển tay — xoay mọi hướng
+  private freeCam = false;
+  private fcYaw = 0;
+  private fcPitch = 0.4;
+  private fcRadius = 24;
+  private fcTarget = new THREE.Vector3(0, 2, -2);
+  private camPos = new THREE.Vector3(0, 12.5, 29);
+  private camLook = new THREE.Vector3(0, 1.8, -4);
   private camShotPos = new THREE.Vector3();
   private camShotLook = new THREE.Vector3();
 
@@ -344,13 +371,47 @@ export class MemeDanceGame {
       this.speakers[1].group,
     );
 
-    this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
+    const el = this.renderer.domElement;
+    el.addEventListener("pointerdown", this.onPointerDown);
+    el.addEventListener("pointermove", this.onPointerMove);
+    el.addEventListener("pointerup", this.onPointerUp);
+    el.addEventListener("wheel", this.onWheel, { passive: false });
+    el.addEventListener("dblclick", this.onDblClick);
 
     this.resize();
     this.loop();
   }
 
+  // Kéo chuột để xoay camera mọi hướng; lăn để zoom; nháy đúp về tự động.
+  // Click (không kéo) vẫn giữ chức năng bấm màn hình "now playing".
+  private dragging = false;
+  private dragMoved = false;
+  private dragX = 0;
+  private dragY = 0;
+
   private onPointerDown = (e: PointerEvent) => {
+    this.dragging = true;
+    this.dragMoved = false;
+    this.dragX = e.clientX;
+    this.dragY = e.clientY;
+  };
+
+  private onPointerMove = (e: PointerEvent) => {
+    if (!this.dragging) return;
+    const dx = e.clientX - this.dragX;
+    const dy = e.clientY - this.dragY;
+    if (!this.dragMoved && Math.hypot(dx, dy) < 4) return;
+    this.dragMoved = true;
+    this.dragX = e.clientX;
+    this.dragY = e.clientY;
+    this.orbitCamera(-dx * 0.005, dy * 0.005);
+  };
+
+  private onPointerUp = (e: PointerEvent) => {
+    const wasDrag = this.dragMoved;
+    this.dragging = false;
+    this.dragMoved = false;
+    if (wasDrag) return; // kéo để xoay — không tính là click
     const rect = this.renderer.domElement.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -361,6 +422,15 @@ export class MemeDanceGame {
     if (!action) return;
     if (typeof action === "string") this.onScreenControl?.(action);
     else this.music.seek(action.seek);
+  };
+
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    this.zoomCamera(Math.sign(e.deltaY) * 2);
+  };
+
+  private onDblClick = () => {
+    this.unlockCamera();
   };
 
   private preuploadSkins(skins: Skin[]) {
@@ -485,16 +555,7 @@ export class MemeDanceGame {
     lip.position.set(0, STAGE_H, -FLOOR_D / 2 + 2.52);
     this.stageGroup.add(lip);
 
-    const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(FLOOR_W + 8, 0.5, 3.4),
-      new THREE.MeshStandardMaterial({
-        color: 0x0d1020,
-        metalness: 0.4,
-        roughness: 0.7,
-      }),
-    );
-    deck.position.set(0, AUDIENCE_Y - 0.25, AUDIENCE_Z0 + 0.8);
-    this.scene.add(deck);
+    this.buildGrandstand();
 
     const rail = new THREE.Mesh(
       new THREE.BoxGeometry(FLOOR_W + 4, 0.05, 0.05),
@@ -514,21 +575,6 @@ export class MemeDanceGame {
       post.position.set(i * 2.4, 0.05, FLOOR_D / 2 + 0.15);
       this.scene.add(post);
     }
-
-    const starCount = 260;
-    const positions = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 60;
-      positions[i * 3 + 1] = 3 + Math.random() * 15;
-      positions[i * 3 + 2] = -6 - Math.random() * 28;
-    }
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    const stars = new THREE.Points(
-      starGeo,
-      new THREE.PointsMaterial({ color: 0x46507a, size: 0.08 }),
-    );
-    this.scene.add(stars);
 
     const boothZ = -FLOOR_D / 2 + 0.2;
     const booth = new THREE.Mesh(
@@ -923,6 +969,7 @@ export class MemeDanceGame {
     }
 
     this.loadStageModels();
+    this.buildEnvironment();
 
     const podiumColors = [0xffc94d, 0xc0c8d8, 0xcd7f52];
     const podiumHeights = [2.0, 1.5, 1.15];
@@ -963,6 +1010,419 @@ export class MemeDanceGame {
         ),
         userId: null,
       });
+    }
+  }
+
+  /**
+   * Cảnh quan quanh sân khấu: skyline thành phố sáng đèn bọc vòng phía xa,
+   * hành tinh có vành trên trời, cổng neon ôm tường LED, tháp LED cánh gà
+   * và viền neon dọc sàn — các dải LED đẩy vào boothLeds để đổi màu theo nhạc.
+   */
+  private buildEnvironment() {
+    // --- Skyline thành phố: silhouette nhà cao tầng + cửa sổ sáng ---
+    const city = document.createElement("canvas");
+    city.width = 2048;
+    city.height = 256;
+    const cctx = city.getContext("2d")!;
+    const glow = cctx.createLinearGradient(0, 110, 0, 256);
+    glow.addColorStop(0, "rgba(0,0,0,0)");
+    glow.addColorStop(1, "rgba(110,70,170,0.35)");
+    cctx.fillStyle = glow;
+    cctx.fillRect(0, 0, city.width, city.height);
+    let bx = 0;
+    while (bx < city.width) {
+      const bw = 30 + Math.random() * 70;
+      const bh = 50 + Math.random() * 150;
+      cctx.fillStyle = "#080a14";
+      cctx.fillRect(bx, city.height - bh, bw, bh);
+      cctx.fillStyle = Math.random() < 0.5 ? "#ffd9a0" : "#9fd8ff";
+      for (let wy = city.height - bh + 6; wy < city.height - 8; wy += 9) {
+        for (let wx = bx + 4; wx < bx + bw - 4; wx += 8) {
+          if (Math.random() < 0.16) cctx.fillRect(wx, wy, 2.5, 3.5);
+        }
+      }
+      bx += bw + 2 + Math.random() * 14;
+    }
+    const cityTexture = new THREE.CanvasTexture(city);
+    cityTexture.colorSpace = THREE.SRGBColorSpace;
+    const skyline = new THREE.Mesh(
+      new THREE.CylinderGeometry(66, 66, 15, 48, 1, true),
+      new THREE.MeshBasicMaterial({
+        map: cityTexture,
+        transparent: true,
+        side: THREE.BackSide,
+        fog: false,
+      }),
+    );
+    skyline.position.y = 6.5;
+    this.scene.add(skyline);
+
+    // --- Hành tinh có vành — điểm nhấn bầu trời ---
+    const pc = document.createElement("canvas");
+    pc.width = pc.height = 64;
+    const pctx = pc.getContext("2d")!;
+    const pGrad = pctx.createRadialGradient(24, 22, 4, 32, 32, 34);
+    pGrad.addColorStop(0, "#7d95d8");
+    pGrad.addColorStop(0.6, "#3a4f8e");
+    pGrad.addColorStop(1, "#1c2749");
+    pctx.fillStyle = pGrad;
+    pctx.fillRect(0, 0, 64, 64);
+    const planetTexture = new THREE.CanvasTexture(pc);
+    planetTexture.colorSpace = THREE.SRGBColorSpace;
+    const planet = new THREE.Mesh(
+      new THREE.SphereGeometry(5.5, 24, 16),
+      new THREE.MeshBasicMaterial({ map: planetTexture, fog: false }),
+    );
+    planet.position.set(-30, 27, -58);
+    const planetRing = new THREE.Mesh(
+      new THREE.RingGeometry(7, 10.5, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0x8a9cff,
+        transparent: true,
+        opacity: 0.2,
+        side: THREE.DoubleSide,
+        fog: false,
+      }),
+    );
+    planetRing.position.copy(planet.position);
+    planetRing.rotation.x = 1.25;
+    planetRing.rotation.y = 0.35;
+    this.scene.add(planet, planetRing);
+
+    // --- Cổng neon ôm quanh tường LED — đổi màu theo nhạc ---
+    const archMat = new THREE.MeshBasicMaterial({ color: 0x25f4ee });
+    const archW = FLOOR_W + 9.5;
+    const archZ = -FLOOR_D / 2 - 2.45;
+    for (const dx of [-archW / 2, archW / 2]) {
+      const post = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 9, 0.18),
+        archMat,
+      );
+      post.position.set(dx, 5.7, archZ);
+      this.stageGroup.add(post);
+    }
+    const archTop = new THREE.Mesh(
+      new THREE.BoxGeometry(archW + 0.2, 0.18, 0.18),
+      archMat,
+    );
+    archTop.position.set(0, 10.25, archZ);
+    this.stageGroup.add(archTop);
+    this.boothLeds.push(archMat);
+
+    // --- Hai tháp LED cánh gà đóng khung sân khấu ---
+    const towerDark = new THREE.MeshStandardMaterial({
+      color: 0x151928,
+      metalness: 0.6,
+      roughness: 0.5,
+    });
+    for (const sx of [-1, 1]) {
+      const x = sx * (FLOOR_W / 2 + 3.8);
+      const tower = new THREE.Mesh(
+        new THREE.BoxGeometry(1.7, 9.5, 1.7),
+        towerDark,
+      );
+      tower.position.set(x, 4.75, -7);
+      this.stageGroup.add(tower);
+      const stripMat = new THREE.MeshBasicMaterial({ color: 0x8a2be2 });
+      for (const off of [-0.55, 0, 0.55]) {
+        const strip = new THREE.Mesh(
+          new THREE.BoxGeometry(0.14, 8.8, 0.14),
+          stripMat,
+        );
+        strip.position.set(x + off, 4.75, -7 + 0.93);
+        this.stageGroup.add(strip);
+      }
+      this.boothLeds.push(stripMat);
+    }
+
+    // --- Viền neon chạy dọc hai mép sàn nhảy ---
+    const rimMat = new THREE.MeshBasicMaterial({ color: 0xfe2c55 });
+    for (const sx of [-1, 1]) {
+      const rim = new THREE.Mesh(
+        new THREE.BoxGeometry(0.09, 0.06, FLOOR_D + 0.4),
+        rimMat,
+      );
+      rim.position.set(sx * (FLOOR_W / 2 + 0.4), 0.05, 0);
+      this.scene.add(rim);
+    }
+    this.boothLeds.push(rimMat);
+
+    // --- Mặt đất bê tông trải tới chân skyline — venue không còn lơ lửng ---
+    const ground = document.createElement("canvas");
+    ground.width = ground.height = 256;
+    const gctx = ground.getContext("2d")!;
+    const gGrad = gctx.createRadialGradient(128, 128, 20, 128, 128, 128);
+    gGrad.addColorStop(0, "#0d0f16");
+    gGrad.addColorStop(0.55, "#090b12");
+    gGrad.addColorStop(1, "#04050a");
+    gctx.fillStyle = gGrad;
+    gctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 500; i++) {
+      gctx.fillStyle = `rgba(255,255,255,${0.015 + Math.random() * 0.03})`;
+      gctx.fillRect(Math.random() * 256, Math.random() * 256, 1.5, 1.5);
+    }
+    const groundTexture = new THREE.CanvasTexture(ground);
+    groundTexture.colorSpace = THREE.SRGBColorSpace;
+    const groundMesh = new THREE.Mesh(
+      new THREE.CircleGeometry(66, 48),
+      new THREE.MeshBasicMaterial({ map: groundTexture }),
+    );
+    groundMesh.rotateX(-Math.PI / 2);
+    groundMesh.position.y = -0.03;
+    this.scene.add(groundMesh);
+
+    // --- Dây rigging võng từ truss xuống tháp/tường LED như venue thật ---
+    const cableMat = new THREE.MeshBasicMaterial({ color: 0x272d42 });
+    const cableSpecs: Array<[THREE.Vector3, THREE.Vector3, THREE.Vector3]> = [
+      [
+        new THREE.Vector3(-8, 11.8, -8.3),
+        new THREE.Vector3(-13, 10, -10),
+        new THREE.Vector3(-17.5, 9.3, -11.7),
+      ],
+      [
+        new THREE.Vector3(8, 11.8, -8.3),
+        new THREE.Vector3(13, 10, -10),
+        new THREE.Vector3(17.5, 9.3, -11.7),
+      ],
+      [
+        new THREE.Vector3(-4, 11.8, 6.5),
+        new THREE.Vector3(-9, 10.2, -0.5),
+        new THREE.Vector3(-13.9, 9.6, -7),
+      ],
+      [
+        new THREE.Vector3(4, 11.8, 6.5),
+        new THREE.Vector3(9, 10.2, -0.5),
+        new THREE.Vector3(13.9, 9.6, -7),
+      ],
+    ];
+    for (const [a, b, c] of cableSpecs) {
+      const curve = new THREE.QuadraticBezierCurve3(a, b, c);
+      const tube = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 12, 0.035, 5),
+        cableMat,
+      );
+      this.stageGroup.add(tube);
+    }
+
+    // --- Tháp FOH (bàn điều khiển âm thanh/ánh sáng) sau khán đài ---
+    const fohMat = new THREE.MeshStandardMaterial({
+      color: 0x1a1f30,
+      metalness: 0.6,
+      roughness: 0.5,
+    });
+    const foh = new THREE.Group();
+    const fohBase = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.18, 2.6), fohMat);
+    fohBase.position.y = 1.1;
+    foh.add(fohBase);
+    const fohPostGeo = new THREE.CylinderGeometry(0.06, 0.06, 2.4);
+    for (const [px, pz] of [
+      [-1.6, -1.2],
+      [1.6, -1.2],
+      [-1.6, 1.2],
+      [1.6, 1.2],
+    ]) {
+      const post = new THREE.Mesh(fohPostGeo, fohMat);
+      post.position.set(px, 1.2, pz);
+      foh.add(post);
+    }
+    const desk = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.5, 0.9), fohMat);
+    desk.position.set(0, 1.45, -0.4);
+    foh.add(desk);
+    foh.position.set(0, 0, 16.8);
+    this.scene.add(foh);
+    // Hai màn hình đặt ngay trên bàn FOH (giữ nguyên vị trí quen thuộc)
+    this.infoScreens.group.position.set(0, 0, 18.0);
+    this.scene.add(this.infoScreens.group);
+
+    // --- Dây đèn bóng ấm giăng trên cột quanh venue — chất hội chợ đêm ---
+    const poleMat = new THREE.MeshStandardMaterial({
+      color: 0x232838,
+      metalness: 0.5,
+      roughness: 0.6,
+    });
+    const poleGeo = new THREE.CylinderGeometry(0.07, 0.09, 4.6);
+    const bulbPos: number[] = [];
+    const addString = (a: THREE.Vector3, b: THREE.Vector3) => {
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      mid.y -= 1.1;
+      const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+      for (let k = 0; k <= 16; k++) {
+        const p = curve.getPoint(k / 16);
+        bulbPos.push(p.x, p.y, p.z);
+      }
+    };
+    const poleTops: THREE.Vector3[] = [];
+    for (const sx of [-1, 1]) {
+      for (const [x, z] of [
+        [19, 12],
+        [21.5, 0],
+        [19, -12],
+      ]) {
+        const pole = new THREE.Mesh(poleGeo, poleMat);
+        pole.position.set(sx * x, 2.3, z);
+        this.scene.add(pole);
+        poleTops.push(new THREE.Vector3(sx * x, 4.55, z));
+      }
+    }
+    addString(poleTops[0], poleTops[1]);
+    addString(poleTops[1], poleTops[2]);
+    addString(poleTops[3], poleTops[4]);
+    addString(poleTops[4], poleTops[5]);
+    const bulbGeo = new THREE.BufferGeometry();
+    bulbGeo.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(bulbPos), 3),
+    );
+    const bulbs = new THREE.Points(
+      bulbGeo,
+      new THREE.PointsMaterial({
+        color: 0xffd9a0,
+        size: 0.22,
+        map: makeGlowTexture(),
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    this.scene.add(bulbs);
+
+    // --- Cột đèn rọi trời ở rìa venue — quét chậm như event ngoài trời ---
+    const beaconGeo = new THREE.ConeGeometry(0.9, 34, 12, 1, true);
+    beaconGeo.translate(0, 17, 0);
+    for (const [x, z] of [
+      [-34, 14],
+      [34, 14],
+      [-30, -26],
+      [30, -26],
+    ]) {
+      const beacon = new THREE.Mesh(
+        beaconGeo,
+        new THREE.MeshBasicMaterial({
+          color: 0xbfd4ff,
+          transparent: true,
+          opacity: 0.045,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          fog: false,
+        }),
+      );
+      beacon.position.set(x, 0, z);
+      this.scene.add(beacon);
+      this.beacons.push(beacon);
+    }
+
+    // --- Barricade kim loại trước sân khấu — tạo "pit" như concert thật ---
+    const barMat = new THREE.MeshStandardMaterial({
+      color: 0x2c3245,
+      metalness: 0.8,
+      roughness: 0.35,
+    });
+    const railGeo = new THREE.BoxGeometry(2.0, 0.055, 0.055);
+    const midGeo = new THREE.BoxGeometry(2.0, 0.04, 0.04);
+    const legGeo = new THREE.BoxGeometry(0.055, 1.02, 0.055);
+    for (let x = -10.5; x <= 10.5; x += 2.1) {
+      const rail = new THREE.Mesh(railGeo, barMat);
+      rail.position.set(x, 1.02, -6.35);
+      const mid = new THREE.Mesh(midGeo, barMat);
+      mid.position.set(x, 0.55, -6.35);
+      this.scene.add(rail, mid);
+      for (const dx of [-0.95, 0.95]) {
+        const leg = new THREE.Mesh(legGeo, barMat);
+        leg.position.set(x + dx, 0.51, -6.35);
+        this.scene.add(leg);
+      }
+    }
+  }
+
+  /**
+   * Khán đài bậc thang (grandstand) thay cho hộp phẳng: các bậc nâng dần ra
+   * sau để hàng sau nhìn qua đầu hàng trước, có thành hông, tường sau, chân
+   * giàn giáo và viền LED bậc (đổi màu theo nhạc qua boothLeds).
+   */
+  private buildGrandstand() {
+    const width = FLOOR_W + 8;
+    const bottomY = -1.6;
+    const zFront0 = AUDIENCE_Z0 - 0.7;
+    const zBack = zFront0 + AUD_ROWS * AUD_STEP_D + 1.6;
+    const yTopBack = AUDIENCE_Y + (AUD_ROWS - 1) * AUD_STEP_H;
+    const deckMat = new THREE.MeshStandardMaterial({
+      color: 0x0d1020,
+      metalness: 0.35,
+      roughness: 0.75,
+    });
+    const sideMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0c16,
+      metalness: 0.4,
+      roughness: 0.7,
+    });
+    const ledMat = new THREE.MeshBasicMaterial({ color: 0x25f4ee });
+
+    // Các bậc: bậc sau cao hơn và kéo dài về phía sau → nhìn từ trước ra
+    // các mặt bậc như khán đài sân vận động
+    for (let r = 0; r < AUD_ROWS; r++) {
+      const yTop = AUDIENCE_Y + r * AUD_STEP_H;
+      const zf = zFront0 + r * AUD_STEP_D;
+      const depth = zBack - zf;
+      const h = yTop - bottomY;
+      const step = new THREE.Mesh(
+        new THREE.BoxGeometry(width, h, depth),
+        deckMat,
+      );
+      step.position.set(0, (yTop + bottomY) / 2, zf + depth / 2);
+      this.scene.add(step);
+      // Viền LED sáng ở mũi bậc — vạch phản quang chạy dọc mép mỗi bậc
+      const nosing = new THREE.Mesh(
+        new THREE.BoxGeometry(width, 0.05, 0.05),
+        ledMat,
+      );
+      nosing.position.set(0, yTop + 0.03, zf);
+      this.scene.add(nosing);
+    }
+    this.boothLeds.push(ledMat);
+
+    // Thành hông hai bên khép kín khán đài (đóng khối bậc thang)
+    for (const sx of [-1, 1]) {
+      const cheek = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, yTopBack - bottomY + 1.2, zBack - zFront0),
+        sideMat,
+      );
+      cheek.position.set(
+        sx * (width / 2 - 0.2),
+        (yTopBack + 1.2 + bottomY) / 2,
+        (zFront0 + zBack) / 2,
+      );
+      this.scene.add(cheek);
+    }
+
+    // Tường sau + viền LED trên đỉnh — chắn hậu, khán đài không hở ra hư không
+    const backWall = new THREE.Mesh(
+      new THREE.BoxGeometry(width, yTopBack - bottomY + 2.4, 0.4),
+      sideMat,
+    );
+    backWall.position.set(0, (yTopBack + 2.4 + bottomY) / 2, zBack);
+    this.scene.add(backWall);
+    const backLedMat = new THREE.MeshBasicMaterial({ color: 0xfe2c55 });
+    const backLed = new THREE.Mesh(
+      new THREE.BoxGeometry(width, 0.07, 0.07),
+      backLedMat,
+    );
+    backLed.position.set(0, yTopBack + 2.4, zBack - 0.22);
+    this.scene.add(backLed);
+    this.boothLeds.push(backLedMat);
+
+    // Chân giàn giáo lộ ra ở mặt trước — khán đài đứng trên khung thật
+    const legMat = new THREE.MeshStandardMaterial({
+      color: 0x1a1f30,
+      metalness: 0.7,
+      roughness: 0.4,
+    });
+    const legGeo = new THREE.CylinderGeometry(0.09, 0.09, 1.5);
+    for (let i = -5; i <= 5; i++) {
+      const leg = new THREE.Mesh(legGeo, legMat);
+      leg.position.set(i * 2.6, bottomY + 0.75, zFront0 - 0.05);
+      this.scene.add(leg);
     }
   }
 
@@ -1048,13 +1508,14 @@ export class MemeDanceGame {
     this.frontSlots.sort((a, b) => Math.abs(a.x) - Math.abs(b.x));
     this.frontRow = this.frontSlots.map(() => null);
     this.frontSlots.forEach((p) => this.frontSlotSet.add(p));
-    for (let r = 0; r < 4; r++) {
+    // Đứng trên bậc thang khán đài: hàng sau cao dần + lùi xa dần
+    for (let r = 0; r < AUD_ROWS; r++) {
       for (let c = 0; c < 18; c++) {
         this.audienceSlotsFree.push(
           new THREE.Vector3(
             (c + 0.5 - 9) * 1.55 + (Math.random() - 0.5) * 0.4,
-            AUDIENCE_Y,
-            AUDIENCE_Z0 + r * 0.7 + (Math.random() - 0.5) * 0.25,
+            AUDIENCE_Y + r * AUD_STEP_H,
+            AUDIENCE_Z0 + r * AUD_STEP_D + (Math.random() - 0.5) * 0.2,
           ),
         );
       }
@@ -1140,6 +1601,7 @@ export class MemeDanceGame {
     this.releaseSlot(player.user.userId);
     this.playerSlots.set(player.user.userId, { zone: "floor", pos });
     player.onFloor = true;
+    player.floorEligible = true;
     player.setZone("floor");
     player.setHome(pos);
     if (!player.forcedMove) player.choreoMove = this.choreoMove;
@@ -1187,6 +1649,7 @@ export class MemeDanceGame {
       player.setZone(zone);
       if (zone === "floor") {
         player.onFloor = true;
+        player.floorEligible = true;
         player.startDancing(Number.POSITIVE_INFINITY);
       }
       this.players.set(user.userId, player);
@@ -1247,10 +1710,66 @@ export class MemeDanceGame {
 
   /** Cắt thẳng sang góc toàn cảnh — phản xạ của cameraman khi drop/vào điệp khúc. */
   private cutToWide() {
+    // Admin đang khóa góc hoặc chế độ toàn cảnh cố định thì không tự cắt
+    if (this.cameraLocked || this.rules.cameraMode === "overview") return;
     const shots =
       this.rules.cameraMode === "orbit" ? ORBIT_SHOTS : FRONT_SHOTS;
     this.switchShot(shots, { kinds: ["wide", "top"], cut: true, energy: 1 });
     this.takeLen = 8;
+  }
+
+  /**
+   * Vào chế độ camera tự do (admin điều khiển tay). Khởi tạo toạ độ cầu
+   * (yaw/pitch/bán kính) từ đúng vị trí camera hiện tại để không nhảy hình.
+   */
+  private enterFreeCam() {
+    this.cameraLocked = true;
+    if (this.freeCam) return;
+    this.freeCam = true;
+    const off = this.camPos.clone().sub(this.fcTarget);
+    this.fcRadius = Math.max(5, off.length());
+    this.fcYaw = Math.atan2(off.x, off.z);
+    this.fcPitch = Math.asin(
+      Math.max(-1, Math.min(1, off.y / this.fcRadius)),
+    );
+    this.camGlide = 1.6;
+  }
+
+  /** Admin xoay camera quanh sân khấu theo mọi hướng (yaw ngang, pitch dọc). */
+  orbitCamera(dYaw: number, dPitch: number) {
+    this.enterFreeCam();
+    this.fcYaw += dYaw;
+    // Cho ngóc gần thẳng đứng nhưng chặn lật qua đỉnh
+    this.fcPitch = Math.max(-0.35, Math.min(1.45, this.fcPitch + dPitch));
+  }
+
+  /** Admin phóng to / thu xa (dolly theo bán kính). */
+  zoomCamera(dRadius: number) {
+    this.enterFreeCam();
+    this.fcRadius = Math.max(5, Math.min(70, this.fcRadius + dRadius));
+  }
+
+  /** Admin dời điểm ngắm (pan ngang/dọc) — quan sát khu vực khác. */
+  panCamera(dx: number, dy: number) {
+    this.enterFreeCam();
+    this.fcTarget.x = Math.max(-24, Math.min(24, this.fcTarget.x + dx));
+    this.fcTarget.y = Math.max(-1, Math.min(10, this.fcTarget.y + dy));
+  }
+
+  /** Trả camera về chế độ đạo diễn tự động. */
+  unlockCamera() {
+    this.cameraLocked = false;
+    this.freeCam = false;
+  }
+
+  /** HUD gọi khi đổi bài — cập nhật màn hình "đang phát" trên bàn FOH. */
+  setNowPlayingScreen(title: string, thumb?: string) {
+    this.infoScreens.setNowPlaying(title, thumb);
+  }
+
+  /** HUD gọi khi playlist đổi — cập nhật màn hình playlist trên bàn FOH. */
+  setPlaylistScreen(items: InfoTrack[], current: number) {
+    this.infoScreens.setPlaylist(items, current);
   }
 
   /** Gỡ hẳn một người khỏi sàn: trả slot, xóa khỏi scene và mọi tham chiếu. */
@@ -1290,11 +1809,16 @@ export class MemeDanceGame {
 
     player.keepDancing(r.danceExtendSec * 1000, r.danceMaxSec * 1000);
     if (isStart || !r.requireStartCommand) {
+      // Chat đúng lệnh (hoặc setting không bắt buộc lệnh) mới cho lên sàn
+      player.floorEligible = true;
       player.startDancing(
         r.stayOnFloor ? Number.POSITIVE_INFINITY : r.danceStartSec * 1000,
       );
     }
 
+    // MỌI comment (trừ lệnh lên sàn) đều hiện bong bóng trên đầu nhân vật —
+    // kể cả comment trùng lệnh ("nhảy", "đổi nv"...) để ai chat cũng thấy mình
+    if (!isStart) player.say(event.comment);
     const command = r.commandsEnabled ? parseCommand(event.comment) : null;
     switch (command) {
       case "jump":
@@ -1313,7 +1837,6 @@ export class MemeDanceGame {
         player.shrink();
         break;
       default:
-        if (!isStart) player.say(event.comment);
         break;
     }
     player.score += 1;
@@ -1338,6 +1861,8 @@ export class MemeDanceGame {
       player.diamonds += event.totalDiamonds;
       // Donate tính điểm nặng nhất — 1💎 = 5 điểm tương tác
       player.score += event.totalDiamonds * 5;
+      // Đổi màu tên theo mốc donate mới (trắng → xanh/vàng/hồng/tím VIP)
+      player.refreshNameTag();
       this.updatePodium();
     }
 
@@ -1909,7 +2434,10 @@ export class MemeDanceGame {
             if (p.onFloor) this.demoteToAudience(p);
             break;
           default:
-            if (p.isDancing && !p.onFloor) this.promoteToFloor(p);
+            // Auto: chỉ người đã chat lệnh (floorEligible) mới được lên sàn —
+            // quà/follow không tự kéo người chưa chat lên
+            if (p.isDancing && p.floorEligible && !p.onFloor)
+              this.promoteToFloor(p);
             else if (!p.isDancing && p.onFloor) this.demoteToAudience(p);
         }
       }
@@ -2004,6 +2532,7 @@ export class MemeDanceGame {
     this.flames.update(dt);
     this.smokeJets.update(dt);
     this.frontSparks.update(dt);
+    this.infoScreens.update(dt, this.music.progress);
     this.updateBanners(dt);
 
     // Ánh sáng nền + bầu trời nhuộm theo tâm trạng — đổi từ từ như kéo dimmer
@@ -2126,6 +2655,11 @@ export class MemeDanceGame {
     // Blinder tắt nhanh sau mỗi cú chớp
     this.blinderFlash = Math.max(0, this.blinderFlash - dt * 4);
     this.blinderMat.opacity = this.blinderFlash * 0.75;
+    // Đèn rọi trời ở rìa venue quét qua lại chậm rãi
+    this.beacons.forEach((b, i) => {
+      b.rotation.z = Math.sin(t * 0.13 + i * 1.7) * 0.28;
+      b.rotation.x = Math.sin(t * 0.09 + i * 1.1) * 0.18;
+    });
     this.boothLeds.forEach((mat, i) => {
       const hue = (moodHue + i * 0.06 + this.beatIndex * 0.02) % 1;
       const bright = this.music.playing
@@ -2187,9 +2721,15 @@ export class MemeDanceGame {
     //   ngang như chạy trên ray
     const shots =
       this.rules.cameraMode === "orbit" ? ORBIT_SHOTS : FRONT_SHOTS;
+    // Chế độ toàn cảnh cố định: khóa vào một góc bao trọn venue, không cắt.
+    // Admin khóa góc (cameraLocked): giữ nguyên góc đang chọn, ngưng đạo diễn.
+    const fixedView =
+      this.rules.cameraMode === "overview" || this.cameraLocked;
     this.takeT += dt;
     const sectionNow = this.music.section;
-    if (this.music.playing) {
+    if (fixedView) {
+      // Không tự đổi góc
+    } else if (this.music.playing) {
       if (beat.index !== this.camLastBeat) {
         this.camLastBeat = beat.index;
         this.takeBeats++;
@@ -2201,7 +2741,7 @@ export class MemeDanceGame {
               ? undefined
               : calm
                 ? ["wide", "crowd", "medium"]
-                : ["wide", "medium", "side", "top", "crowd"],
+                : ["wide", "medium", "side", "top", "crowd", "dj"],
             cut: hot && Math.random() < 0.5,
             energy: mEnergy,
           });
@@ -2213,29 +2753,44 @@ export class MemeDanceGame {
       this.switchShot(shots, { energy: 0.4 });
       this.takeLen = 16;
     }
-    const shot = shots[this.shotIdx % shots.length];
-    // Dolly trong take: ease mượt suốt ~11s, kèm rung thở rất nhẹ
-    const takeProg = Math.min(1, this.takeT / 11);
-    const takeEase = takeProg * takeProg * (3 - 2 * takeProg);
-    this.camShotLook.set(shot.look[0], shot.look[1], shot.look[2]);
-    this.camShotPos.set(
-      shot.pos[0] + Math.sin(t * 0.13) * 0.5 * shot.drift,
-      shot.pos[1] +
-        Math.sin(t * 0.09) * 0.25 * shot.drift +
-        Math.sin(t * 5) * effHype * 0.04,
-      shot.pos[2] + Math.sin(t * 0.07) * 0.4 * shot.drift,
-    );
-    if (this.camMoveMode === "push") {
-      // Đẩy máy từ từ về phía điểm nhìn (~1/5 quãng đường mỗi take)
-      this.camShotPos.lerp(this.camShotLook, takeEase * 0.2);
+    if (this.freeCam) {
+      // Camera tự do: dựng vị trí từ toạ độ cầu quanh điểm ngắm (mọi hướng)
+      const cp = Math.cos(this.fcPitch);
+      const sp = Math.sin(this.fcPitch);
+      this.camShotPos.set(
+        this.fcTarget.x + this.fcRadius * cp * Math.sin(this.fcYaw),
+        this.fcTarget.y + this.fcRadius * sp,
+        this.fcTarget.z + this.fcRadius * cp * Math.cos(this.fcYaw),
+      );
+      this.camShotLook.copy(this.fcTarget);
     } else {
-      // Slide ngang vuông góc trục nhìn, từ mép này sang mép kia của take
-      const dx = this.camShotLook.x - this.camShotPos.x;
-      const dz = this.camShotLook.z - this.camShotPos.z;
-      const len = Math.hypot(dx, dz) || 1;
-      const amp = 2.4 * shot.drift * (takeEase * 2 - 1);
-      this.camShotPos.x += (-dz / len) * amp;
-      this.camShotPos.z += (dx / len) * amp;
+      const shot =
+        this.rules.cameraMode === "overview"
+          ? OVERVIEW_SHOT
+          : shots[this.shotIdx % shots.length];
+      // Dolly trong take: ease mượt suốt ~11s, kèm rung thở rất nhẹ
+      const takeProg = Math.min(1, this.takeT / 11);
+      const takeEase = takeProg * takeProg * (3 - 2 * takeProg);
+      this.camShotLook.set(shot.look[0], shot.look[1], shot.look[2]);
+      this.camShotPos.set(
+        shot.pos[0] + Math.sin(t * 0.13) * 0.5 * shot.drift,
+        shot.pos[1] +
+          Math.sin(t * 0.09) * 0.25 * shot.drift +
+          Math.sin(t * 5) * effHype * 0.04,
+        shot.pos[2] + Math.sin(t * 0.07) * 0.4 * shot.drift,
+      );
+      if (this.camMoveMode === "push") {
+        // Đẩy máy từ từ về phía điểm nhìn (~1/5 quãng đường mỗi take)
+        this.camShotPos.lerp(this.camShotLook, takeEase * 0.2);
+      } else {
+        // Slide ngang vuông góc trục nhìn, từ mép này sang mép kia của take
+        const dx = this.camShotLook.x - this.camShotPos.x;
+        const dz = this.camShotLook.z - this.camShotPos.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const amp = 2.4 * shot.drift * (takeEase * 2 - 1);
+        this.camShotPos.x += (-dz / len) * amp;
+        this.camShotPos.z += (dx / len) * amp;
+      }
     }
     if (this.camCut) {
       // Hard cut: nhảy thẳng sang góc mới trong một frame
@@ -2301,10 +2856,12 @@ export class MemeDanceGame {
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
-    this.renderer.domElement.removeEventListener(
-      "pointerdown",
-      this.onPointerDown,
-    );
+    const el = this.renderer.domElement;
+    el.removeEventListener("pointerdown", this.onPointerDown);
+    el.removeEventListener("pointermove", this.onPointerMove);
+    el.removeEventListener("pointerup", this.onPointerUp);
+    el.removeEventListener("wheel", this.onWheel);
+    el.removeEventListener("dblclick", this.onDblClick);
     this.reset();
     this.renderer.dispose();
   }

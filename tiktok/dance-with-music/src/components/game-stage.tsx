@@ -72,9 +72,13 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.035] p-3.5">
-      <h3 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-white/55">
-        {icon && <span className="text-sm leading-none">{icon}</span>}
+    <section className="flex flex-col gap-2.5 rounded-xl border border-white/10 bg-white/5 p-3.5">
+      <h3 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">
+        {icon && (
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-sm leading-none">
+            {icon}
+          </span>
+        )}
         {title}
       </h3>
       {children}
@@ -104,6 +108,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     /** Link audio đã phân giải (cache trong phiên) — bấm phát là chạy ngay. */
     media?: string;
   };
+  const [showChatTest, setShowChatTest] = useState(false);
+  const [chatTest, setChatTest] = useState("");
   const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
   const playlistRef = useRef<PlaylistItem[]>([]);
   playlistRef.current = playlist;
@@ -320,6 +326,17 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       repeatCount: 1,
       streaking: false,
       totalDiamonds: rule.min,
+      ts: Date.now(),
+    });
+  };
+
+  const fireTestChat = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    gameRef.current?.handleChat({
+      id: `pv-c-${Date.now()}`,
+      user: testUser.current,
+      comment: trimmed,
       ts: Date.now(),
     });
   };
@@ -611,6 +628,18 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     game.onSongRequest = (nickname, query) => addOrderedLatest(nickname, query);
   }, []);
 
+  // Đồng bộ 2 màn hình FOH trong game: trái "đang phát", phải "playlist"
+  useEffect(() => {
+    const game = gameRef.current;
+    if (!game) return;
+    game.setPlaylistScreen(
+      playlist.map((p) => ({ title: p.title, thumb: p.thumb })),
+      playingIndex,
+    );
+    const cur = playingIndex >= 0 ? playlist[playingIndex] : undefined;
+    game.setNowPlayingScreen(nowPlaying ?? cur?.title ?? "", cur?.thumb);
+  }, [playlist, playingIndex, nowPlaying]);
+
   const stateRef = useRef<Record<string, unknown>>({});
   stateRef.current = {
     status,
@@ -736,8 +765,48 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         </div>
       )}
 
+      {preview && showChatTest && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            fireTestChat(chatTest);
+            setChatTest("");
+          }}
+          className="absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-3 z-20 flex w-96 max-w-[calc(100vw-1.5rem)] gap-2"
+        >
+          <input
+            value={chatTest}
+            onChange={(e) => setChatTest(e.target.value)}
+            autoFocus
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={`Comment thử — "${rules.startCommand}" lên sàn, "nhảy", "đổi nv"…`}
+            className="min-w-0 flex-1 rounded-full border border-cyan-300/40 bg-black/75 px-4 py-2.5 text-sm text-white outline-none backdrop-blur placeholder:text-white/35 focus:border-cyan-300/80"
+          />
+          <button
+            type="submit"
+            className="shrink-0 rounded-full border border-cyan-300/40 bg-black/75 px-4 py-2.5 text-sm font-semibold text-cyan-300 backdrop-blur transition-colors hover:border-cyan-300/80 hover:bg-cyan-300/10 active:scale-95"
+          >
+            Gửi
+          </button>
+        </form>
+      )}
+
       {preview && (
         <aside className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 flex max-w-[80vw] flex-wrap items-end gap-2 max-sm:right-3 max-sm:max-w-none max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:pb-1 max-sm:[scrollbar-width:none]">
+          {/* Nút mở ô nhập comment thử — test lệnh lên sàn / tương tác chat */}
+          <button
+            type="button"
+            onClick={() => setShowChatTest((v) => !v)}
+            title="Nhập comment thử"
+            className={`relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full border bg-black/60 text-xl backdrop-blur transition-transform active:scale-90 ${
+              showChatTest
+                ? "border-cyan-300/90 text-cyan-300"
+                : "border-cyan-300/40 hover:border-cyan-300/80"
+            }`}
+          >
+            💬
+          </button>
           {/* Dàn icon quà theo đúng cấu hình settings — bấm để test donate */}
           {rules.giftActions.map((rule, i) => {
             const gift = TIKTOK_GIFTS.find((g) => g.name === rule.gift);
@@ -1032,15 +1101,27 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               Camera
               <select
                 value={rules.cameraMode}
-                onChange={(e) =>
-                  updateRules({ cameraMode: e.target.value as CameraMode })
-                }
+                onChange={(e) => {
+                  gameRef.current?.unlockCamera();
+                  updateRules({ cameraMode: e.target.value as CameraMode });
+                }}
                 className={inputClass}
               >
-                <option value="sway">Đứng yên, lắc nhẹ</option>
-                <option value="orbit">Xoay vòng quanh sàn</option>
+                <option value="sway">Điện ảnh (tự cắt góc)</option>
+                <option value="orbit">Điện ảnh + góc xoay quanh sàn</option>
+                <option value="overview">Toàn cảnh (cố định)</option>
               </select>
             </label>
+            {rules.cameraMode !== "overview" && (
+              <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/2 px-3 py-2 text-[11px] leading-relaxed text-white/55">
+                <span className="text-sm leading-none">🖱️</span>
+                <span>
+                  <b className="text-white/75">Kéo chuột</b> để xoay mọi hướng ·{" "}
+                  <b className="text-white/75">lăn chuột</b> để phóng/thu ·{" "}
+                  <b className="text-white/75">nháy đúp</b> để trở lại tự cắt góc
+                </span>
+              </div>
+            )}
             <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
               Bố trí khu vực
               <select
@@ -1050,7 +1131,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 }
                 className={inputClass}
               >
-                <option value="auto">Tự do — chat lệnh để lên sàn</option>
+                <option value="auto">Chat lệnh để lên sàn</option>
                 <option value="all-floor">Tất cả lên sàn nhảy</option>
                 <option value="all-audience">Tất cả ở khán đài</option>
               </select>

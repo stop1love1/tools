@@ -76,7 +76,7 @@ export type GiftTiers = {
 
 export type ZoneMode = "auto" | "all-floor" | "all-audience";
 
-export type CameraMode = "sway" | "orbit";
+export type CameraMode = "sway" | "orbit" | "overview";
 
 export type GameRules = {
   cameraMode: CameraMode;

@@ -19,8 +19,8 @@ export function lerpHue(a: number, b: number, k: number): number {
 }
 
 let glowTexture: THREE.Texture | null = null;
-/** Texture chấm tròn mờ dần ra mép — dùng chung cho lửa/khói. */
-function makeGlowTexture(): THREE.Texture {
+/** Texture chấm tròn mờ dần ra mép — dùng chung cho lửa/khói/đèn bóng. */
+export function makeGlowTexture(): THREE.Texture {
   if (glowTexture) return glowTexture;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 64;
@@ -930,6 +930,102 @@ export class SmokeJets {
       this.colors[i * 3 + 2] = v;
     }
     if (!any) return;
+    const geo = this.points.geometry;
+    (geo.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+    (geo.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
+  }
+}
+
+const CROWD_MAX = 140;
+const WARM_WHITE = new THREE.Color(1, 0.93, 0.8);
+
+/**
+ * Biển ánh sáng trên tay đám đông: ballad → ánh đèn pin điện thoại trắng ấm
+ * giơ cao lắc chậm; nhạc mạnh → que neon đủ màu nhấp nháy nhanh. Số đèn
+ * hiện theo số người đang chơi (visibleCount).
+ */
+export class CrowdLights {
+  readonly points: THREE.Points;
+  visibleCount = 0;
+  private base: Float32Array;
+  private phase: Float32Array;
+  private hue: Float32Array;
+  private positions: Float32Array;
+  private colors: Float32Array;
+  private color = new THREE.Color();
+
+  constructor() {
+    this.base = new Float32Array(CROWD_MAX * 3);
+    this.phase = new Float32Array(CROWD_MAX);
+    this.hue = new Float32Array(CROWD_MAX);
+    this.positions = new Float32Array(CROWD_MAX * 3);
+    this.colors = new Float32Array(CROWD_MAX * 3);
+    for (let i = 0; i < CROWD_MAX; i++) {
+      // 40% ở khán đài phía sau, còn lại rải trên sàn nhảy
+      const inAudience = Math.random() < 0.4;
+      this.base[i * 3] = (Math.random() - 0.5) * (inAudience ? 27 : 26);
+      this.base[i * 3 + 1] = inAudience ? 1.15 : 1.85;
+      this.base[i * 3 + 2] = inAudience
+        ? 10 + Math.random() * 3
+        : -4 + Math.random() * 13;
+      this.phase[i] = Math.random() * Math.PI * 2;
+      this.hue[i] = Math.random();
+      this.positions[i * 3 + 1] = -50;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(this.positions, 3),
+    );
+    geometry.setAttribute("color", new THREE.BufferAttribute(this.colors, 3));
+    this.points = new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({
+        size: 0.28,
+        map: makeGlowTexture(),
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    this.points.frustumCulled = false;
+  }
+
+  update(energy: number, valence: number, musicOn: boolean) {
+    const t = performance.now() / 1000;
+    // calm cao = ballad → biển đèn pin trắng; calm thấp = quẩy → que neon
+    const calm = musicOn
+      ? Math.max(0, 1 - energy * 1.4) * (1 - valence * 0.4)
+      : 0.35;
+    const n = Math.min(CROWD_MAX, this.visibleCount);
+    for (let i = 0; i < CROWD_MAX; i++) {
+      if (i >= n) {
+        this.positions[i * 3 + 1] = -50;
+        this.colors[i * 3] = this.colors[i * 3 + 1] = this.colors[i * 3 + 2] = 0;
+        continue;
+      }
+      const p = this.phase[i];
+      const swaySpeed = 0.9 + (1 - calm) * 2.4;
+      const swayAmp = 0.14 + calm * 0.32;
+      this.positions[i * 3] =
+        this.base[i * 3] + Math.sin(t * swaySpeed + p) * swayAmp;
+      // Ballad giơ đèn cao hơn hẳn — đúng dáng biển đèn pin concert
+      this.positions[i * 3 + 1] =
+        this.base[i * 3 + 1] +
+        calm * 0.3 +
+        Math.sin(t * 0.8 + p) * 0.1;
+      this.positions[i * 3 + 2] = this.base[i * 3 + 2];
+      const flicker = musicOn
+        ? 0.55 + 0.45 * Math.sin(t * (2 + (1 - calm) * 6) + p * 3)
+        : 0.5;
+      this.color.setHSL(this.hue[i], 0.85, 0.6);
+      this.color.lerp(WARM_WHITE, calm);
+      const bright = flicker * (0.35 + energy * 0.35 + calm * 0.45);
+      this.colors[i * 3] = this.color.r * bright;
+      this.colors[i * 3 + 1] = this.color.g * bright;
+      this.colors[i * 3 + 2] = this.color.b * bright;
+    }
     const geo = this.points.geometry;
     (geo.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
     (geo.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;

@@ -192,6 +192,11 @@ export class Player {
   score = 0;
   onFloor = false;
   onPodium = false;
+  /**
+   * Đã được phép lên sàn — ở chế độ "auto" chỉ khi đã chat lệnh lên sàn cờ
+   * này mới bật; quà/follow không tự đưa người chưa chat lên sàn.
+   */
+  floorEligible = false;
   forcedMove: DanceMove | null = null;
   /** Điệu đồng diễn cả sàn — game đặt/xóa theo chu kỳ 32 beat. */
   choreoMove: DanceMove | null = null;
@@ -272,10 +277,8 @@ export class Player {
     this.sprite.center.set(0.5, 0);
     this.sprite.position.y = 0;
 
-    const { texture, aspect } = makeLabelTexture(
-      user.nickname,
-      this.currentSkin.accent,
-    );
+    const { face: nf, accent: na } = this.nameTag();
+    const { texture, aspect } = makeLabelTexture(user.nickname, na, nf);
     this.label = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: texture, transparent: true }),
     );
@@ -322,8 +325,7 @@ export class Player {
     this.zone = zone;
     this.baseScale = zone === "audience" ? 0.72 : zone === "podium" ? 1.4 : 1;
     // Bục podium đã có bảng tên 🥇 riêng — ẩn nhãn cá nhân tránh trùng đôi
-    this.label.visible =
-      zone === "floor" || performance.now() < this.labelForceUntil;
+    this.syncLabelVisible();
   }
 
   showLabel(ms: number) {
@@ -375,18 +377,48 @@ export class Player {
 
   setSkin(index: number) {
     this.skinIndex = index % this.skins.length;
+    this.applyNameTag();
+    this.frame = 0;
+    this.applyFrame();
+    this.applyAspect();
+  }
+
+  /** Màu tên theo mốc donate: 0💎 trắng → cao dần xanh/vàng/hồng/tím VIP. */
+  private nameTag(): { face: string; accent: string } {
+    const d = this.diamonds;
+    if (d >= 2000) return { face: "#d8b4fe", accent: "#5b21a8" };
+    if (d >= 500) return { face: "#ff5c7a", accent: "#8f1330" };
+    if (d >= 100) return { face: "#ffd25e", accent: "#8a6414" };
+    if (d >= 20) return { face: "#5ef0e6", accent: "#0e6b66" };
+    return { face: "#ffffff", accent: "#151a28" };
+  }
+
+  private applyNameTag() {
+    const { face, accent } = this.nameTag();
     const { texture, aspect } = makeLabelTexture(
       this.user.nickname,
-      this.currentSkin.accent,
+      accent,
+      face,
     );
     this.label.material.map?.dispose();
     this.label.material.map = texture;
     this.label.material.needsUpdate = true;
     const labelH = 0.42;
     this.label.scale.set(labelH * aspect, labelH, 1);
-    this.frame = 0;
-    this.applyFrame();
-    this.applyAspect();
+  }
+
+  /** Gọi khi số 💎 đổi — cập nhật màu tên theo mốc donate + hiện tên donor. */
+  refreshNameTag() {
+    this.applyNameTag();
+    this.syncLabelVisible();
+  }
+
+  /** Hiện tên khi: đang trên sàn, HOẶC là donor (💎>0, trừ bục có bảng riêng). */
+  private syncLabelVisible() {
+    this.label.visible =
+      this.zone === "floor" ||
+      (this.zone !== "podium" && this.diamonds > 0) ||
+      performance.now() < this.labelForceUntil;
   }
 
   runCircle() {
@@ -440,10 +472,12 @@ export class Player {
     this.bubble = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: texture, transparent: true }),
     );
-    this.bubble.material.color.setScalar(0.72);
-    const h = 0.42;
+    // Bong bóng chat phải sáng rõ dễ đọc — chỉ hạ nhẹ để không lóa bloom
+    this.bubble.material.color.setScalar(0.9);
+    // To hơn hẳn cho dễ đọc; nâng cao hơn để không đè lên tên nhân vật
+    const h = 0.62;
     this.bubble.scale.set(h * aspect, h, 1);
-    this.bubble.position.y = BASE_H + 0.75;
+    this.bubble.position.y = BASE_H + 0.95;
     this.group.add(this.bubble);
     this.bubbleUntil = performance.now() + BUBBLE_MS;
   }
@@ -459,7 +493,10 @@ export class Player {
   ) {
     const now = performance.now();
     const t = now / 1000;
-    const dancing = musicOn && now < this.danceUntil;
+    // Ở khán đài (ngoài sàn nhảy) thì KHÔNG nhảy — chỉ đứng gật gù theo
+    // nhạc; muốn quẩy phải được đưa lên sàn (chat lệnh / zone mode)
+    const dancing =
+      musicOn && now < this.danceUntil && this.zone !== "audience";
 
     if (this.moveT < 1 && this.moveFrom && this.moveTo) {
       this.moveT = Math.min(1, this.moveT + dt / 0.9);
@@ -802,7 +839,7 @@ export class Player {
 
     if (this.labelForceUntil && now > this.labelForceUntil) {
       this.labelForceUntil = 0;
-      this.label.visible = this.zone === "floor";
+      this.syncLabelVisible();
     }
 
     if (this.badge) {

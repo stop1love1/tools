@@ -394,6 +394,7 @@ export async function loadCustomSkins(urls: string[]): Promise<Skin[]> {
 export function makeLabelTexture(
   text: string,
   accent: string,
+  faceColor = "#ffffff",
 ): { texture: THREE.Texture; aspect: number } {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
@@ -427,8 +428,8 @@ export function makeLabelTexture(
   for (let i = depth - 1; i >= 1; i--) {
     c.fillText(label, cx, cy + i);
   }
-  // Mặt chữ trên cùng
-  c.fillStyle = "#ffffff";
+  // Mặt chữ trên cùng — trắng mặc định, donor đổi màu theo tier
+  c.fillStyle = faceColor;
   c.fillText(label, cx, cy);
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -440,36 +441,59 @@ export function makeBubbleTexture(text: string): {
   texture: THREE.Texture;
   aspect: number;
 } {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d")!;
-  const font = "600 24px system-ui, sans-serif";
-  ctx.font = font;
-  const label = text.length > 24 ? `${text.slice(0, 23)}…` : text;
-  const textW = ctx.measureText(label).width;
-  canvas.width = Math.ceil(textW + 36);
-  canvas.height = 54;
+  // Vẽ ở độ phân giải gấp đôi (DPR) cho chữ sắc nét, font to hơn để dễ đọc
+  const DPR = 2;
+  const measure = document.createElement("canvas").getContext("2d")!;
+  const fontSize = 34;
+  const font = `700 ${fontSize}px system-ui, sans-serif`;
+  measure.font = font;
+  const label = text.length > 28 ? `${text.slice(0, 27)}…` : text;
+  const textW = measure.measureText(label).width;
+  const padX = 30;
+  const padY = 20;
+  const bodyH = fontSize + padY * 2;
+  const tailH = 16;
+  const cssW = Math.ceil(textW + padX * 2);
+  const cssH = bodyH + tailH;
 
+  const canvas = document.createElement("canvas");
+  canvas.width = cssW * DPR;
+  canvas.height = cssH * DPR;
   const c = canvas.getContext("2d")!;
+  c.scale(DPR, DPR);
   c.font = font;
-  c.fillStyle = "rgba(255,255,255,0.96)";
-  c.strokeStyle = "rgba(0,0,0,0.85)";
-  c.lineWidth = 3;
+
+  // Bóng đổ để bong bóng nổi bật trên sân khấu nhiều màu
+  c.save();
+  c.shadowColor = "rgba(0,0,0,0.55)";
+  c.shadowBlur = 8;
+  c.shadowOffsetY = 3;
+  c.fillStyle = "rgba(255,255,255,0.98)";
+  c.strokeStyle = "rgba(0,0,0,0.9)";
+  c.lineWidth = 3.5;
+  const radius = 18;
   c.beginPath();
-  c.roundRect(2, 2, canvas.width - 4, canvas.height - 10, 14);
+  c.roundRect(3, 3, cssW - 6, bodyH - 6, radius);
+  c.fill();
+  c.restore();
+  c.stroke();
+  // Đuôi bong bóng chỉ xuống đầu nhân vật
+  c.beginPath();
+  c.moveTo(cssW / 2 - 11, bodyH - 6);
+  c.lineTo(cssW / 2, bodyH + tailH - 6);
+  c.lineTo(cssW / 2 + 11, bodyH - 6);
+  c.closePath();
+  c.fillStyle = "rgba(255,255,255,0.98)";
   c.fill();
   c.stroke();
-  c.beginPath();
-  c.moveTo(canvas.width / 2 - 7, canvas.height - 9);
-  c.lineTo(canvas.width / 2, canvas.height);
-  c.lineTo(canvas.width / 2 + 7, canvas.height - 9);
-  c.closePath();
-  c.fill();
-  c.fillStyle = "#111";
+
+  c.fillStyle = "#0d0f16";
   c.textAlign = "center";
   c.textBaseline = "middle";
-  c.fillText(label, canvas.width / 2, canvas.height / 2 - 3);
+  c.fillText(label, cssW / 2, bodyH / 2);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  return { texture, aspect: canvas.width / canvas.height };
+  texture.anisotropy = 4;
+  return { texture, aspect: cssW / cssH };
 }
