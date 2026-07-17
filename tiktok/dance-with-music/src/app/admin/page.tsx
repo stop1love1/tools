@@ -67,6 +67,12 @@ export default function AdminPage() {
     setRules(loadRules());
     setUsername(localStorage.getItem("md:admin-user") ?? "");
     const bus = openBus((msg: BusMessage) => {
+      // Preview (hoặc tab khác) đổi luật chơi → cập nhật form admin ngay
+      if (msg.t === "rules") {
+        setRules(msg.rules);
+        saveRules(msg.rules);
+        return;
+      }
       if (msg.t !== "state") return;
       setGame(msg);
       setLastSeen(Date.now());
@@ -723,11 +729,6 @@ export default function AdminPage() {
             </div>
           </Card>
         </div>
-
-        <p className="pb-2 text-xs text-white/40">
-          Đưa trang game ({GAME_URL}) vào OBS để lên sóng — trang admin này chỉ để
-          điều khiển, không hiện trên stream. Nhạc phát ra từ tab game.
-        </p>
       </div>
     </main>
   );

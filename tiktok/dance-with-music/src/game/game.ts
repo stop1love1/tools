@@ -100,6 +100,9 @@ const FRONT_SHOTS: CamShot[] = [
   { pos: [16.5, 5, 5], look: [-3, 1.6, -4], drift: 0.8, kind: "side" },
   // POV của DJ: máy sau bàn DJ, trên cao, CHÚC XUỐNG bao quát đám đông
   { pos: [0, 4.3, -11.2], look: [0, 0, 3], drift: 0.4, kind: "dj" },
+  // Cận cảnh thấp giữa sàn — khung ngắm sẽ bám theo một vũ công thật
+  { pos: [-5, 2.7, 6], look: [0, 2, -1], drift: 0.45, kind: "close" },
+  { pos: [5.5, 2.7, 5.5], look: [0, 2, -1.5], drift: 0.45, kind: "close" },
 ];
 const ORBIT_SHOTS: CamShot[] = [
   ...FRONT_SHOTS,
@@ -276,6 +279,8 @@ export class MemeDanceGame {
   private camCut = false;
   private camGlide = 0.55;
   private camMoveMode: "push" | "slide" = "push";
+  // Chủ thể cận cảnh: vũ công auto camera đang bám khung
+  private camSubject: Player | null = null;
   // Admin khóa góc: đạo diễn tự động tạm ngưng, chỉ đổi khi admin bấm
   private cameraLocked = false;
   // Camera tự do (toạ độ cầu) khi admin điều khiển tay — xoay mọi hướng
@@ -349,7 +354,8 @@ export class MemeDanceGame {
     this.buildSlots();
 
     this.floor = new DiscoFloor(FLOOR_W, FLOOR_D, 20, 15);
-    this.ledWall = new LedWall(FLOOR_W + 8, 8, -FLOOR_D / 2 - 2.4);
+    // Nhiều ô hơn + cao hơn để phủ kín khung truss sân khấu (ô vuông đều)
+    this.ledWall = new LedWall(FLOOR_W + 8, 10.4, -FLOOR_D / 2 - 2.4, 44, 14);
     this.speakers = [
       new SpeakerStack(-FLOOR_W / 2 - 2.1, -3),
       new SpeakerStack(FLOOR_W / 2 + 2.1, -3),
@@ -1019,6 +1025,36 @@ export class MemeDanceGame {
    * và viền neon dọc sàn — các dải LED đẩy vào boothLeds để đổi màu theo nhạc.
    */
   private buildEnvironment() {
+    // --- Phông hậu đặc sau sân khấu: chắn không cho nhìn xuyên thấu vào
+    // trong khi xoay camera ra phía sau (tường LED chỉ có 1 mặt) ---
+    const backdropMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0c16,
+      metalness: 0.4,
+      roughness: 0.8,
+      side: THREE.DoubleSide,
+    });
+    const backdrop = new THREE.Mesh(
+      new THREE.BoxGeometry(FLOOR_W + 12, 14, 0.6),
+      backdropMat,
+    );
+    backdrop.position.set(0, 6, -FLOOR_D / 2 - 3.2);
+    this.scene.add(backdrop);
+    // Hai cánh gà hông + trần che khe hở hai bên/đỉnh khi nhìn chếch từ sau
+    for (const sx of [-1, 1]) {
+      const wing = new THREE.Mesh(
+        new THREE.BoxGeometry(0.6, 14, 10),
+        backdropMat,
+      );
+      wing.position.set(sx * (FLOOR_W / 2 + 5.7), 6, -FLOOR_D / 2 + 1.5);
+      this.scene.add(wing);
+    }
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(FLOOR_W + 12, 0.6, 10),
+      backdropMat,
+    );
+    roof.position.set(0, 12.7, -FLOOR_D / 2 + 1.5);
+    this.scene.add(roof);
+
     // --- Skyline thành phố: silhouette nhà cao tầng + cửa sổ sáng ---
     const city = document.createElement("canvas");
     city.width = 2048;
@@ -1679,19 +1715,41 @@ export class MemeDanceGame {
     if (oldest) this.removePlayer(oldest);
   }
 
-  /** Đổi sang góc máy mới — tránh lặp 2 shot gần nhất, lọc theo loại khung. */
+  /** Chọn một vũ công đang nhảy trên sàn — cho các cú cận cảnh có chủ thể. */
+  private pickActiveDancer(): Player | null {
+    const pool: Player[] = [];
+    this.players.forEach((p) => {
+      if (p.onFloor && !p.onPodium) pool.push(p);
+    });
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  /**
+   * Đổi sang góc máy mới — tránh lặp 2 shot gần nhất VÀ cùng kiểu khung liên
+   * tiếp (để nhịp cắt đa dạng như cameraman thật), lọc theo loại khung.
+   */
   private switchShot(
     shots: CamShot[],
     opts: { kinds?: CamShot["kind"][]; cut?: boolean; energy: number },
   ) {
+    const curKind = shots[this.shotIdx % shots.length]?.kind;
+    const inKinds = (s: CamShot) => !opts.kinds || opts.kinds.includes(s.kind);
+    // Ưu tiên: khác index gần đây + khác KIỂU góc hiện tại + trong nhóm cho phép
     let candidates = shots
       .map((s, i) => ({ s, i }))
       .filter(
         ({ s, i }) =>
           i !== this.shotIdx &&
           i !== this.prevShotIdx &&
-          (!opts.kinds || opts.kinds.includes(s.kind)),
+          s.kind !== curKind &&
+          inKinds(s),
       );
+    if (!candidates.length) {
+      candidates = shots
+        .map((s, i) => ({ s, i }))
+        .filter(({ s, i }) => i !== this.shotIdx && inKinds(s));
+    }
     if (!candidates.length) {
       candidates = shots
         .map((s, i) => ({ s, i }))
@@ -1706,6 +1764,11 @@ export class MemeDanceGame {
     // Nhạc căng lướt nhanh dứt khoát, nhạc êm trôi chậm rãi
     this.camGlide = 0.3 + opts.energy * 0.6;
     this.camMoveMode = Math.random() < 0.6 ? "push" : "slide";
+    // Cận cảnh: bám theo một vũ công thật trên sàn cho khung có chủ thể
+    this.camSubject =
+      pick.s.kind === "close" && Math.random() < 0.75
+        ? this.pickActiveDancer()
+        : null;
   }
 
   /** Cắt thẳng sang góc toàn cảnh — phản xạ của cameraman khi drop/vào điệp khúc. */
@@ -1739,14 +1802,14 @@ export class MemeDanceGame {
   orbitCamera(dYaw: number, dPitch: number) {
     this.enterFreeCam();
     this.fcYaw += dYaw;
-    // Cho ngóc gần thẳng đứng nhưng chặn lật qua đỉnh
-    this.fcPitch = Math.max(-0.35, Math.min(1.45, this.fcPitch + dPitch));
+    // Chặn chúc quá thấp (xuyên xuống dưới sàn) và lật qua đỉnh
+    this.fcPitch = Math.max(-0.1, Math.min(1.45, this.fcPitch + dPitch));
   }
 
   /** Admin phóng to / thu xa (dolly theo bán kính). */
   zoomCamera(dRadius: number) {
     this.enterFreeCam();
-    this.fcRadius = Math.max(5, Math.min(70, this.fcRadius + dRadius));
+    this.fcRadius = Math.max(5, Math.min(52, this.fcRadius + dRadius));
   }
 
   /** Admin dời điểm ngắm (pan ngang/dọc) — quan sát khu vực khác. */
@@ -1782,6 +1845,7 @@ export class MemeDanceGame {
     if (fr >= 0) this.frontRow[fr] = null;
     if (this.focusPlayer === player) this.focusPlayer = null;
     if (this.spotlightPlayer === player) this.spotlightPlayer = null;
+    if (this.camSubject === player) this.camSubject = null;
   }
 
   handleChat(event: ChatEvent) {
@@ -2736,16 +2800,23 @@ export class MemeDanceGame {
         if (this.takeBeats >= this.takeLen && beat.index % 8 === 0) {
           const hot = sectionNow > 0.7;
           const calm = sectionNow < 0.4;
+          // Nhóm góc theo không khí đoạn nhạc:
+          // - trầm/intro: góc rộng, đám đông, trên cao — dựng cảnh thong thả
+          // - điệp khúc/drop: góc động (cận, DJ, cánh, trên) + cắt nhanh
+          // - verse: đa dạng vừa phải
+          const kinds: CamShot["kind"][] = hot
+            ? ["dj", "side", "close", "top", "medium"]
+            : calm
+              ? ["wide", "crowd", "top", "medium"]
+              : ["wide", "medium", "side", "top", "crowd", "dj", "close"];
           this.switchShot(shots, {
-            kinds: hot
-              ? undefined
-              : calm
-                ? ["wide", "crowd", "medium"]
-                : ["wide", "medium", "side", "top", "crowd", "dj"],
             cut: hot && Math.random() < 0.5,
             energy: mEnergy,
+            kinds,
           });
-          this.takeLen = hot ? 8 : calm ? 24 : 16;
+          // Độ dài take lệch ngẫu nhiên ±2 beat cho nhịp cắt tự nhiên
+          const jitter = Math.floor(Math.random() * 5) - 2;
+          this.takeLen = (hot ? 8 : calm ? 24 : 16) + jitter;
         }
       }
     } else if (this.takeT >= 13) {
@@ -2762,6 +2833,8 @@ export class MemeDanceGame {
         this.fcTarget.y + this.fcRadius * sp,
         this.fcTarget.z + this.fcRadius * cp * Math.cos(this.fcYaw),
       );
+      // Chặn cứng không cho máy tụt xuống dưới mặt sàn (thấy gầm sân khấu)
+      this.camShotPos.y = Math.max(0.8, this.camShotPos.y);
       this.camShotLook.copy(this.fcTarget);
     } else {
       const shot =
@@ -2772,6 +2845,18 @@ export class MemeDanceGame {
       const takeProg = Math.min(1, this.takeT / 11);
       const takeEase = takeProg * takeProg * (3 - 2 * takeProg);
       this.camShotLook.set(shot.look[0], shot.look[1], shot.look[2]);
+      // Cận cảnh: khung ngắm bám theo vũ công thật (chủ thể) thay vì điểm cố
+      // định — máy như "đi tìm" người nhảy giữa sàn
+      if (
+        shot.kind === "close" &&
+        this.camSubject &&
+        this.camSubject.onFloor
+      ) {
+        const sp = this.camSubject.group.position;
+        this.camShotLook.set(sp.x, sp.y + 1.1, sp.z);
+      } else if (shot.kind !== "close") {
+        this.camSubject = null;
+      }
       this.camShotPos.set(
         shot.pos[0] + Math.sin(t * 0.13) * 0.5 * shot.drift,
         shot.pos[1] +

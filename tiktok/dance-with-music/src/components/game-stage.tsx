@@ -110,6 +110,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   };
   const [showChatTest, setShowChatTest] = useState(false);
   const [chatTest, setChatTest] = useState("");
+  const [settingsTab, setSettingsTab] = useState<
+    "connect" | "music" | "rules" | "display"
+  >("connect");
   const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
   const playlistRef = useRef<PlaylistItem[]>([]);
   playlistRef.current = playlist;
@@ -251,6 +254,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     setRules(next);
     saveRules(next);
     if (gameRef.current) gameRef.current.rules = next;
+    // Đồng bộ sang trang admin + các tab khác (preview đổi → admin thấy ngay)
+    broadcast({ t: "rules", rules: next });
   };
 
   const updateGiftAction = (index: number, patch: Partial<GiftActionRule>) => {
@@ -759,11 +764,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         </button>
       )}
 
-      {preview && !showSettings && !showStats && (
-        <div className="absolute left-3 top-3 text-[11px] text-white/20 max-sm:hidden">
-          Nhấn S để mở Setting
-        </div>
-      )}
 
       {preview && showChatTest && (
         <form
@@ -897,8 +897,34 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
             <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#25f4ee]/70 to-[#fe2c55]/70" />
           </div>
 
+          <div className="flex gap-1 px-3 pt-1">
+            {(
+              [
+                ["connect", "📡", "Kết nối"],
+                ["music", "🎵", "Nhạc"],
+                ["rules", "🎛️", "Luật chơi"],
+                ["display", "🖥️", "Hiển thị"],
+              ] as const
+            ).map(([key, icon, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSettingsTab(key)}
+                className={`flex flex-1 flex-col items-center gap-0.5 rounded-lg border px-1 py-1.5 text-[10px] font-semibold transition-colors ${
+                  settingsTab === key
+                    ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-300"
+                    : "border-white/10 text-white/50 hover:border-white/25 hover:text-white/80"
+                }`}
+              >
+                <span className="text-base leading-none">{icon}</span>
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div className="nice-scroll flex flex-1 flex-col gap-3 overflow-y-auto p-3 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
 
+          {settingsTab === "connect" && (
           <Section title="Kết nối TikTok LIVE" icon="📡">
             <form onSubmit={handleConnect} className="flex flex-col gap-2">
               <input
@@ -942,7 +968,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               <p className={`text-xs ${TONE_CLASS[s.tone]}`}>{s.text}</p>
             </form>
           </Section>
+          )}
 
+          {settingsTab === "music" && (
           <Section title="Nhạc (playlist)" icon="🎵">
             <form
               onSubmit={(e) => {
@@ -1060,7 +1088,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               )}
             </form>
           </Section>
+          )}
 
+          {settingsTab === "display" && (
           <Section title="Hiển thị" icon="🖥️">
             <label className="flex cursor-pointer items-center gap-2 text-sm text-white/85">
               <input
@@ -1095,7 +1125,10 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               Hiện số liệu 👀❤️💎 trên màn hình
             </label>
           </Section>
+          )}
 
+          {settingsTab === "rules" && (
+          <>
           <Section title="Luật chơi (admin)" icon="🎛️">
             <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
               Camera
@@ -1340,6 +1373,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
                 setRules(DEFAULT_RULES);
                 saveRules(DEFAULT_RULES);
                 if (gameRef.current) gameRef.current.rules = DEFAULT_RULES;
+                broadcast({ t: "rules", rules: DEFAULT_RULES });
               }}
               className="self-start rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/35 hover:text-white"
             >
@@ -1369,6 +1403,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               ))}
             </ul>
           </Section>
+          </>
+          )}
           </div>
         </div>
       )}
