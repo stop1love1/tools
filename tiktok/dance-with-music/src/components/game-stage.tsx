@@ -719,10 +719,24 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   }, []);
 
   return (
-    <main className="relative h-dvh w-full overflow-hidden bg-[#05060a]">
+    <main className="relative h-dvh w-full touch-manipulation overflow-hidden bg-[#05060a]">
       <div className="absolute inset-0">
         <canvas ref={canvasRef} className="block h-full w-full" />
       </div>
+
+      {/* Nút mở cài đặt — cho mobile (không có phím S). CHỈ ở trang preview;
+          trang chủ là overlay đưa lên stream nên không được lộ nút */}
+      {preview && !showSettings && (
+        <button
+          type="button"
+          onClick={() => setShowSettings(true)}
+          title="Cài đặt (S)"
+          aria-label="Mở cài đặt"
+          className="absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/55 text-lg text-white/80 backdrop-blur transition-colors hover:border-white/35 hover:text-white active:scale-95"
+        >
+          ⚙️
+        </button>
+      )}
 
       {needsGesture && (
         <button
@@ -734,38 +748,38 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       )}
 
       {preview && !showSettings && !showStats && (
-        <div className="absolute left-3 top-3 text-[11px] text-white/20">
+        <div className="absolute left-3 top-3 text-[11px] text-white/20 max-sm:hidden">
           Nhấn S để mở Setting
         </div>
       )}
 
       {preview && (
-        <aside className="absolute bottom-3 left-3 flex max-w-[70vw] flex-wrap gap-1.5">
+        <aside className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 flex max-w-[70vw] flex-wrap gap-1.5 max-sm:right-3 max-sm:max-w-none max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:pb-1 max-sm:[scrollbar-width:none]">
           <button
             type="button"
             onClick={() => fireTestChat(rules.startCommand)}
-            className="rounded-full border border-cyan-300/40 bg-black/60 px-3 py-1 text-[11px] font-semibold text-cyan-300 backdrop-blur hover:border-cyan-300/80"
+            className="shrink-0 rounded-full border border-cyan-300/40 bg-black/60 px-3.5 py-2 text-xs font-semibold text-cyan-300 backdrop-blur hover:border-cyan-300/80 active:scale-95"
           >
             💬 “{rules.startCommand}” lên sàn
           </button>
           <button
             type="button"
             onClick={() => fireTestChat("hello anh em 👋")}
-            className="rounded-full border border-white/15 bg-black/60 px-3 py-1 text-[11px] font-semibold text-white/80 backdrop-blur hover:text-white"
+            className="shrink-0 rounded-full border border-white/15 bg-black/60 px-3.5 py-2 text-xs font-semibold text-white/80 backdrop-blur hover:text-white active:scale-95"
           >
             💬 comment
           </button>
           <button
             type="button"
             onClick={() => fireTestChat("nhảy")}
-            className="rounded-full border border-white/15 bg-black/60 px-3 py-1 text-[11px] font-semibold text-white/80 backdrop-blur hover:text-white"
+            className="shrink-0 rounded-full border border-white/15 bg-black/60 px-3.5 py-2 text-xs font-semibold text-white/80 backdrop-blur hover:text-white active:scale-95"
           >
             💬 nhảy
           </button>
           <button
             type="button"
             onClick={fireTestLike}
-            className="rounded-full border border-rose-400/40 bg-black/60 px-3 py-1 text-[11px] font-semibold text-rose-300 backdrop-blur hover:border-rose-400/80"
+            className="shrink-0 rounded-full border border-rose-400/40 bg-black/60 px-3.5 py-2 text-xs font-semibold text-rose-300 backdrop-blur hover:border-rose-400/80 active:scale-95"
           >
             ❤️ ×10
           </button>
@@ -774,7 +788,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               key={`${rule.min}-${i}`}
               type="button"
               onClick={() => fireTestGift(rule)}
-              className="rounded-full border border-amber-300/40 bg-black/60 px-3 py-1 text-[11px] font-semibold text-amber-300 backdrop-blur hover:border-amber-300/80"
+              className="shrink-0 rounded-full border border-amber-300/40 bg-black/60 px-3.5 py-2 text-xs font-semibold text-amber-300 backdrop-blur hover:border-amber-300/80 active:scale-95"
               title={GIFT_ACTION_META[rule.action].label}
             >
               {GIFT_ACTION_META[rule.action].emoji}{" "}
@@ -793,7 +807,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       )}
 
       {showLegend && (
-        <aside className="absolute bottom-3 right-3 flex flex-col items-end gap-1">
+        <aside className="absolute bottom-3 right-3 flex flex-col items-end gap-1 max-sm:bottom-[calc(3.5rem+env(safe-area-inset-bottom))]">
           {buildLegend(rules).map((item) => (
             <span
               key={item.label}
@@ -816,8 +830,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       )}
 
       {showSettings && (
-        <div className="absolute bottom-3 right-3 top-3 flex w-[26rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0d17]/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl">
-          <div className="relative flex items-center justify-between px-5 py-4">
+        <div className="absolute bottom-3 right-3 top-3 flex w-[26rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0d17]/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-[10dvh] max-sm:w-auto max-sm:max-w-none max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0">
+          {/* Thanh kéo kiểu bottom-sheet cho mobile */}
+          <div className="hidden justify-center pt-2 max-sm:flex">
+            <span className="h-1 w-10 rounded-full bg-white/20" />
+          </div>
+          <div className="relative flex items-center justify-between px-5 py-4 max-sm:py-3">
             <div className="flex flex-col">
               <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-white">
                 Cài đặt
@@ -830,14 +848,14 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               type="button"
               onClick={() => setShowSettings(false)}
               title="Đóng (Esc)"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 text-white/50 transition-colors hover:border-white/30 hover:text-white"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-white/50 transition-colors hover:border-white/30 hover:text-white active:scale-95"
             >
               ✕
             </button>
             <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#25f4ee]/70 to-[#fe2c55]/70" />
           </div>
 
-          <div className="nice-scroll flex flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div className="nice-scroll flex flex-1 flex-col gap-3 overflow-y-auto p-3 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
 
           <Section title="Kết nối TikTok LIVE" icon="📡">
             <form onSubmit={handleConnect} className="flex flex-col gap-2">

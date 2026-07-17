@@ -181,6 +181,8 @@ export class MemeDanceGame {
   // Pyro director: đang trong điệp khúc hay không + pattern lửa hiện hành
   private inClimax = false;
   private pyroPattern = 0;
+  private blinderMat!: THREE.MeshBasicMaterial;
+  private blinderFlash = 0;
   // Object dùng chung truyền xuống mọi Player mỗi frame (tránh cấp phát mới)
   private vibe: MusicVibe = { genre: "pop", melodyTrend: 0, melodyHeight: 0.5 };
   // Đồng diễn: cứ 32 beat cả sàn cùng nhảy một điệu trong 8 beat
@@ -740,6 +742,24 @@ export class MemeDanceGame {
       );
       par.position.set((i - 4) * (FLOOR_W / 9), 11.45, 6.5);
       this.stageGroup.add(par);
+    }
+
+    // Dàn blinder trắng ấm trên truss mặt tiền — chớp thẳng về phía khán
+    // giả/camera ở phách 1 điệp khúc, đặc sản concert thật
+    this.blinderMat = new THREE.MeshBasicMaterial({
+      color: 0xffe3b8,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    for (let i = 0; i < 5; i++) {
+      const blinder = new THREE.Mesh(
+        new THREE.CircleGeometry(0.42, 16),
+        this.blinderMat,
+      );
+      blinder.position.set((i - 2) * 5.5, 11.1, 6.7);
+      this.stageGroup.add(blinder);
     }
 
     const headBodyMat = new THREE.MeshStandardMaterial({
@@ -1682,7 +1702,10 @@ export class MemeDanceGame {
     this.music.update();
     let beat: Beat;
     if (this.music.playing) {
-      beat = this.music.getBeat();
+      const raw = this.music.getBeat();
+      // Dịch lưới về phách 1 THẬT (downbeat detector) — mọi accent %4/%8
+      // của đèn, pyro, dancer đều rơi đúng đầu ô nhịp
+      beat = { index: raw.index - this.music.barOffset, pulse: raw.pulse };
       this.beatIndex = beat.index;
     } else {
       beat = { index: this.beatIndex, pulse: 1 };
@@ -1741,7 +1764,9 @@ export class MemeDanceGame {
       } else if (section < 0.6) {
         this.inClimax = false;
       }
-      if (this.inClimax && level > 0.12) {
+      // Beat mờ mịt (đoạn ambient, nhạc không rõ nhịp) → pyro im để không
+      // bắn sai nhịp — như người vận hành thận trọng khi chưa bắt được bài
+      if (this.inClimax && level > 0.12 && this.music.beatConfidence > 0.45) {
         // Sparkular mặt tiền chạy suốt điệp khúc — mỗi phách một đợt tia
         this.frontSparks.fire(0.45 + level * 0.3);
         if (beat.index % 16 === 0) {
@@ -1769,6 +1794,8 @@ export class MemeDanceGame {
           this.flames.fire(0.9 + level * 0.5);
         }
         if (beat.index % 8 === 0) this.smokeJets.blast(0.5 + level * 0.4);
+        // Blinder trắng ấm chớp về khán giả đúng phách 1 điệp khúc
+        if (beat.index % 4 === 0) this.blinderFlash = 1;
         // Điệp khúc thật căng: pháo hoa nổ sau sân khấu mỗi 4 ô nhịp
         if (beat.index % 16 === 8 && section > 0.8) {
           this.fireworks.spawn(
@@ -1863,9 +1890,11 @@ export class MemeDanceGame {
       p.update(dt, effHype, beat, this.music.playing, level, mEnergy, this.vibe);
     });
     const mid = this.music.playing ? this.music.mid : 0;
+    // Mật độ khói quyết định beam rực cỡ nào — có khói beam mới hiện rõ
+    const haze = this.smokeJets.density;
     this.floor.update(dt, effHype, beat, level, this.music.playing, mood);
     this.ledWall.update(dt, effHype, beat, level, this.music.playing, mid, mood);
-    this.beams.update(dt, effHype, beat, level, this.music.playing, mood);
+    this.beams.update(dt, effHype, beat, level, this.music.playing, mood, haze);
     this.ball.update(dt, effHype, mEnergy);
     this.clubLights.update(dt, effHype, beat, level, this.music.playing, mood);
     this.speakers[0].update(dt, effHype, beat);
@@ -1968,9 +1997,14 @@ export class MemeDanceGame {
       this.moodColor.setHSL((moodHue + i * 0.12) % 1, 0.9, 0.6);
       mhMat.color.lerp(this.moodColor, Math.min(1, dt * 1.5));
       mhMat.opacity = this.music.playing
-        ? (0.035 + level * 0.1 + kick * level * 0.08) * (0.55 + mEnergy * 0.75)
+        ? (0.035 + level * 0.1 + kick * level * 0.08) *
+          (0.55 + mEnergy * 0.75) *
+          (0.4 + haze * 0.85)
         : 0;
     });
+    // Blinder tắt nhanh sau mỗi cú chớp
+    this.blinderFlash = Math.max(0, this.blinderFlash - dt * 4);
+    this.blinderMat.opacity = this.blinderFlash * 0.75;
     this.boothLeds.forEach((mat, i) => {
       const hue = (moodHue + i * 0.06 + this.beatIndex * 0.02) % 1;
       const bright = this.music.playing

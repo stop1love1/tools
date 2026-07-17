@@ -1,5 +1,14 @@
 import type { Beat, MusicGenre } from "./player";
 
+// Krumhansl key profiles — trọng số cảm nhận 12 bậc trong giọng trưởng/thứ,
+// dùng so khớp chromagram để đoán bài đang ở giọng trưởng (vui) hay thứ (buồn)
+const MAJOR_PROFILE = [
+  6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88,
+];
+const MINOR_PROFILE = [
+  6.33, 2.68, 3.52, 5.38, 2.6, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
+];
+
 export class MusicPlayer {
   private audio: HTMLAudioElement | null = null;
   private ctx: AudioContext | null = null;
@@ -51,6 +60,18 @@ export class MusicPlayer {
   melodyHeight = 0.5;
   /** Thể loại ước lượng từ tempo + cân bằng phổ + mật độ onset. */
   genre: MusicGenre = "pop";
+  /**
+   * Lệch lưới beat → phách 1 THẬT của ô nhịp (downbeat), dò bằng cộng dồn
+   * trọng âm theo 4 pha. Game trừ offset này để mọi accent %4/%8 khớp nhịp.
+   */
+  barOffset = 0;
+  /** Tin cậy beat 0..1 — onset khớp lưới đều đặn thì cao; thấp → bớt pyro. */
+  beatConfidence = 0.5;
+  private phaseEnergy = [0, 0, 0, 0];
+  private chromaMap: Int32Array | null = null;
+  private chroma = new Float32Array(12);
+  /** 0 = giọng thứ (buồn) → 1 = giọng trưởng (tươi sáng). */
+  private modeMajor = 0.5;
   private hzPerBin = 21.5;
   private melodyFast = 0;
   private melodySlow = 0;
@@ -125,6 +146,14 @@ export class MusicPlayer {
       this.freq = new Uint8Array(this.analyser.frequencyBinCount);
       const hzPerBin = this.ctx.sampleRate / this.analyser.fftSize;
       this.hzPerBin = hzPerBin;
+      // Bảng bin FFT → lớp cao độ (chroma) cho dải 80Hz–2kHz, dựng một lần
+      this.chromaMap = new Int32Array(this.freq.length).fill(-1);
+      const cLo = Math.max(1, Math.floor(80 / hzPerBin));
+      const cHi = Math.min(this.freq.length - 1, Math.ceil(2000 / hzPerBin));
+      for (let i = cLo; i <= cHi; i++) {
+        const midi = Math.round(69 + 12 * Math.log2((i * hzPerBin) / 440));
+        this.chromaMap[i] = ((midi % 12) + 12) % 12;
+      }
       this.loBin = Math.max(1, Math.floor(20 / hzPerBin));
       this.hiBin = Math.ceil(150 / hzPerBin);
       this.midLo = Math.max(this.hiBin + 1, Math.floor(250 / hzPerBin));
@@ -162,6 +191,11 @@ export class MusicPlayer {
     this.melodyTrend = 0;
     this.melodyHeight = 0.5;
     this.onsetRate = 0;
+    this.barOffset = 0;
+    this.beatConfidence = 0.5;
+    this.phaseEnergy = [0, 0, 0, 0];
+    this.chroma.fill(0);
+    this.modeMajor = 0.5;
   }
 
   pause() {
@@ -258,18 +292,65 @@ export class MusicPlayer {
     const centroid = mSum > 1 ? wSum / mSum / (this.midHi * 2) : 0.3;
     this.centroidAvg += (centroid - this.centroidAvg) * Math.min(1, dtu * 0.5);
 
+    // === Chromagram → giọng trưởng/thứ: tín hiệu buồn/vui THẬT của hòa âm
+    // (thay vì chỉ đoán qua độ "sáng" phổ) ===
+    if (this.chromaMap) {
+      const fc = new Array(12).fill(0);
+      for (let i = 0; i < this.chromaMap.length; i++) {
+        const c = this.chromaMap[i];
+        if (c >= 0) fc[c] += this.freq[i];
+      }
+      let fsum = 0;
+      for (let c = 0; c < 12; c++) fsum += fc[c];
+      if (fsum > 50) {
+        for (let c = 0; c < 12; c++) {
+          this.chroma[c] +=
+            (fc[c] / fsum - this.chroma[c]) * Math.min(1, dtu * 0.5);
+        }
+        // So khớp với 12 giọng trưởng + 12 giọng thứ, lấy giọng khớp nhất
+        let bestMaj = 0;
+        let bestMin = 0;
+        for (let root = 0; root < 12; root++) {
+          let sMaj = 0;
+          let sMin = 0;
+          for (let c = 0; c < 12; c++) {
+            const v = this.chroma[(root + c) % 12];
+            sMaj += v * MAJOR_PROFILE[c];
+            sMin += v * MINOR_PROFILE[c];
+          }
+          if (sMaj > bestMaj) bestMaj = sMaj;
+          if (sMin > bestMin) bestMin = sMin;
+        }
+        const modeInst =
+          bestMaj + bestMin > 0 ? bestMaj / (bestMaj + bestMin) : 0.5;
+        // Chênh lệch quanh 0.5 rất nhỏ — khuếch đại rồi làm mượt chậm ~4s
+        const amplified = Math.min(
+          1,
+          Math.max(0, 0.5 + (modeInst - 0.5) * 6),
+        );
+        this.modeMajor += (amplified - this.modeMajor) * Math.min(1, dtu * 0.25);
+      }
+    }
+
     const bpm = 60 / this.interval;
     const tempoNorm = Math.min(1, Math.max(0, (bpm - 85) / 70));
     // Energy = độ lớn tuyệt đối × vị thế đoạn trong bài — verse dịu, drop bùng
     const absLoud = Math.min(1, inst * 2.2);
     const energyInst = Math.min(1, absLoud * (0.4 + this.section * 0.8));
+    // Valence: trưởng/thứ là tín hiệu chính, phổ sáng + tempo phụ trợ
     const valenceInst = Math.min(
       1,
-      Math.max(0, (this.centroidAvg - 0.16) * 2.4) * 0.65 + tempoNorm * 0.35,
+      this.modeMajor * 0.45 +
+        Math.max(0, (this.centroidAvg - 0.16) * 2.4) * 0.3 +
+        tempoNorm * 0.25,
     );
     this.moodEnergy += (energyInst - this.moodEnergy) * Math.min(1, dtu * 0.7);
     this.moodValence +=
       (valenceInst - this.moodValence) * Math.min(1, dtu * 0.35);
+    // Lâu không bắt được onset nào (đoạn ambient/nhiễu) → giảm tin cậy beat
+    if (nowT - this.lastRealOnset > 2.5) {
+      this.beatConfidence = Math.max(0.25, this.beatConfidence - dtu * 0.12);
+    }
 
     // === Giai điệu: dò cao độ trội dải giọng hát/lead → nốt thăng/trầm ===
     let peakI = this.midLo;
@@ -358,6 +439,20 @@ export class MusicPlayer {
     if (energyHit && fluxHit && gap > 0.25) {
       // Đếm mật độ onset (dùng cho ước lượng thể loại — nhạc dồn dập vs thưa)
       this.onsetRate += 0.6;
+      // Downbeat: cộng dồn năng lượng onset theo 4 pha của ô nhịp — pha nào
+      // mạnh nhất qua nhiều ô nhịp chính là phách 1 thật
+      for (let p = 0; p < 4; p++) this.phaseEnergy[p] *= 0.96;
+      this.phaseEnergy[this.beatIndex % 4] += bass;
+      let bestP = 0;
+      for (let p = 1; p < 4; p++) {
+        if (this.phaseEnergy[p] > this.phaseEnergy[bestP]) bestP = p;
+      }
+      this.barOffset = bestP;
+      // Tin cậy beat: onset rơi khớp lưới (gap ≈ bội số interval) → tăng
+      const ratio = gap / this.interval;
+      const offGrid = Math.abs(ratio - Math.round(ratio));
+      this.beatConfidence +=
+        ((offGrid < 0.18 ? 1 : 0) - this.beatConfidence) * 0.12;
       if (gap > 0.33 && gap < 0.86) {
         this.interval = this.interval * 0.6 + gap * 0.4;
       } else if (gap / 2 > 0.33 && gap / 2 < 0.86) {

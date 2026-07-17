@@ -208,6 +208,8 @@ export class Player {
   private danceUntil = 0;
   private readonly ampScale = 0.85 + Math.random() * 0.3;
   private readonly phase = Math.random() * Math.PI * 2;
+  /** Pha đổi điệu riêng — mỗi người đổi ở một phách khác trong ô nhịp. */
+  private readonly phraseOffset = Math.floor(Math.random() * 4);
   private tilt = 0;
   private tiltTarget = 0;
   private hopBoost = 0;
@@ -481,7 +483,12 @@ export class Player {
         } else if (this.choreoMove) {
           this.move = this.choreoMove;
           this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
-        } else if (this.moveBeatsLeft <= 0) {
+        } else if (
+          this.moveBeatsLeft <= 0 &&
+          (((beat.index + this.phraseOffset) % 4) + 4) % 4 === 0
+        ) {
+          // Chỉ đổi điệu ở ranh giới ô nhịp (lệch pha riêng từng người) —
+          // người thật đổi động tác theo câu nhạc chứ không giữa chừng.
           // Chọn điệu trong pool của thể loại đang phát — ballad lắc lư,
           // EDM bật nhảy... mỗi loại nhạc ra một chất nhảy khác nhau
           const pool = vibe ? GENRE_MOVES[vibe.genre] : DANCE_MOVES;

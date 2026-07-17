@@ -262,6 +262,7 @@ export class LightBeams {
     level = 0,
     musicOn = true,
     mood?: Mood,
+    haze = 0.5,
   ) {
     const t = performance.now() / 1000;
     const kick = Math.max(0, 1 - beat.pulse * 3);
@@ -284,9 +285,11 @@ export class LightBeams {
         : 0;
       beam.rotation.x += (targetX - beam.rotation.x) * Math.min(1, dt * 5);
       const mat = beam.material as THREE.MeshBasicMaterial;
+      // Beam chỉ rực khi không khí có khói — nhân theo mật độ haze
       mat.opacity = musicOn
         ? (0.04 + hype * 0.05 + level * 0.13 + kick * (0.03 + level * 0.11)) *
-          (0.4 + energy * 0.7)
+          (0.4 + energy * 0.7) *
+          (0.35 + haze * 0.9)
         : 0.015;
       if (mood) {
         // Màu beam bám theo hue tâm trạng, tỏa nhẹ hai bên cho có chiều sâu
@@ -565,6 +568,8 @@ const FLAME_MAX = 900;
 export class FlameJets {
   readonly group = new THREE.Group();
   private readonly nozzles: THREE.Vector3[] = [];
+  // Lửa thật CHIẾU SÁNG xung quanh — một PointLight lóe theo mỗi loạt bắn
+  private flash!: THREE.PointLight;
   private positions = new Float32Array(FLAME_MAX * 3);
   private velocities = new Float32Array(FLAME_MAX * 3);
   private life = new Float32Array(FLAME_MAX);
@@ -630,6 +635,13 @@ export class FlameJets {
     // PHẢI tắt frustum culling, không thì cả cột lửa bị loại khỏi render
     this.points.frustumCulled = false;
     this.group.add(this.points);
+    this.flash = new THREE.PointLight(
+      style === "spark" ? 0xffd27a : 0xff8a3c,
+      0,
+      26,
+      2,
+    );
+    this.group.add(this.flash);
   }
 
   /** Số vòi — dùng cho các pattern đuổi/cặp bên ngoài. */
@@ -641,6 +653,26 @@ export class FlameJets {
   fire(strength = 1, which?: number[]) {
     const idxs = which ?? this.nozzles.map((_, i) => i);
     const per = Math.round(24 * Math.min(2, strength));
+    // Đặt đèn lóe tại trung tâm các vòi vừa bắn
+    let ax = 0;
+    let ay = 0;
+    let az = 0;
+    let cnt = 0;
+    for (const n of idxs) {
+      const noz = this.nozzles[n];
+      if (!noz) continue;
+      ax += noz.x;
+      ay += noz.y;
+      az += noz.z;
+      cnt++;
+    }
+    if (cnt) {
+      this.flash.position.set(ax / cnt, ay / cnt + 1.6, az / cnt);
+      this.flash.intensity = Math.min(
+        130,
+        this.flash.intensity + 50 * strength,
+      );
+    }
     for (const n of idxs) {
       const nozzle = this.nozzles[n];
       if (!nozzle) continue;
@@ -667,6 +699,8 @@ export class FlameJets {
 
   update(dt: number) {
     const t = performance.now() / 1000;
+    // Đèn lóe tắt nhanh như ánh lửa thật
+    this.flash.intensity *= Math.max(0, 1 - dt * 7);
     let any = false;
     for (let i = 0; i < FLAME_MAX; i++) {
       if (this.life[i] <= 0) continue;
@@ -723,6 +757,11 @@ const SMOKE_MAX = 520;
  */
 export class SmokeJets {
   readonly group = new THREE.Group();
+  /**
+   * Mật độ khói toàn sàn 0..1 — tăng khi phun, tự tan dần. Beam đèn nhân
+   * theo giá trị này: có khói beam mới rực, đúng vật lý club thật.
+   */
+  density = 0;
   private readonly nozzles: { pos: THREE.Vector3; dir: THREE.Vector3 }[] = [];
   private positions = new Float32Array(SMOKE_MAX * 3);
   private velocities = new Float32Array(SMOKE_MAX * 3);
@@ -812,6 +851,7 @@ export class SmokeJets {
 
   /** Cột CO2 phụt chéo từ mọi vòi — dùng cho drop và phách mạnh cao trào. */
   blast(strength = 1) {
+    this.density = Math.min(1, this.density + 0.12 * strength);
     const per = Math.round(16 * Math.min(2, strength));
     for (const { pos, dir } of this.nozzles) {
       for (let k = 0; k < per; k++) {
@@ -854,9 +894,11 @@ export class SmokeJets {
       4 + Math.random() * 2.5,
       0.085,
     );
+    this.density = Math.min(1, this.density + 0.03);
   }
 
   update(dt: number) {
+    this.density = Math.max(0, this.density - dt * 0.035);
     const drag = Math.exp(-dt * 1.9);
     let any = false;
     for (let i = 0; i < SMOKE_MAX; i++) {
