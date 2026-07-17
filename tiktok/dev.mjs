@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+
+// Port đã có service chạy (vd sidecar mở sẵn ở terminal khác) → bỏ qua,
+// không spawn chồng để rồi crash vì bind trùng địa chỉ
+const portFree = (port) =>
+  new Promise((resolve) => {
+    const srv = net
+      .createServer()
+      .once("error", () => resolve(false))
+      .once("listening", () => srv.close(() => resolve(true)))
+      .listen(port, "127.0.0.1");
+  });
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const isWin = process.platform === "win32";
@@ -68,25 +80,33 @@ process.on("SIGINT", () => { shutdown(); process.exit(0); });
 process.on("SIGTERM", () => { shutdown(); process.exit(0); });
 
 if (!noServer) {
-  console.log("==> Starting Go backend (port 8080)...");
-  const server = run("go", ["run", "."], path.join(root, "server"), "server", "36");
-  server.on("exit", (code) => {
-    if (code !== 0 && code !== null) console.error(`[server] exited with code ${code}`);
-  });
+  if (await portFree(8080)) {
+    console.log("==> Starting Go backend (port 8080)...");
+    const server = run("go", ["run", "."], path.join(root, "server"), "server", "36");
+    server.on("exit", (code) => {
+      if (code !== 0 && code !== null) console.error(`[server] exited with code ${code}`);
+    });
+  } else {
+    console.log("==> Port 8080 đang bận — backend đã chạy sẵn, bỏ qua.");
+  }
 
-  console.log("==> Starting Python sidecar (port 8500)...");
-  const pythonCmd = process.env.PYTHON ?? (isWin ? "py" : "python3");
-  const pythonArgs = process.env.PYTHON ? [] : isWin ? ["-3.13"] : [];
-  const sidecar = run(
-    pythonCmd,
-    [...pythonArgs, "main.py"],
-    path.join(root, "server", "sidecar"),
-    "sidecar",
-    "33"
-  );
-  sidecar.on("exit", (code) => {
-    if (code !== 0 && code !== null) console.error(`[sidecar] exited with code ${code}`);
-  });
+  if (await portFree(8500)) {
+    console.log("==> Starting Python sidecar (port 8500)...");
+    const pythonCmd = process.env.PYTHON ?? (isWin ? "py" : "python3");
+    const pythonArgs = process.env.PYTHON ? [] : isWin ? ["-3.13"] : [];
+    const sidecar = run(
+      pythonCmd,
+      [...pythonArgs, "main.py"],
+      path.join(root, "server", "sidecar"),
+      "sidecar",
+      "33"
+    );
+    sidecar.on("exit", (code) => {
+      if (code !== 0 && code !== null) console.error(`[sidecar] exited with code ${code}`);
+    });
+  } else {
+    console.log("==> Port 8500 đang bận — sidecar đã chạy sẵn, bỏ qua.");
+  }
 }
 
 const feDir = path.join(root, fe);
