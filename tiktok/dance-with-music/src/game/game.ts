@@ -82,8 +82,10 @@ const FRONT_SHOTS: CamShot[] = [
   { pos: [0, 3.4, 18.5], look: [0, 2.4, -4], drift: 0.6, kind: "crowd" },
   // Trên cao chếch xuống toàn sàn
   { pos: [0, 10, 20], look: [0, 1, -3], drift: 0.7, kind: "top" },
-  // Thẳng từ trên xuống — bird's eye toàn bộ sàn nhảy
-  { pos: [0, 16.5, 3], look: [0, 0.5, -2.5], drift: 0.5, kind: "top" },
+  // Crane chéo góc cao trái/phải — cảm giác từ trên xuống nhưng máy đặt
+  // LỆCH ra ngoài vòng giàn đèn nên không bị giàn đèn/cầu disco che khung
+  { pos: [-11, 13.5, 13.5], look: [2, 0.4, -1.5], drift: 0.5, kind: "top" },
+  { pos: [11, 13.5, 13.5], look: [-2, 0.4, -1.5], drift: 0.5, kind: "top" },
   // Cánh trái/phải nhìn ngang qua sàn
   { pos: [-15.5, 5.5, 12], look: [3, 1.8, -2.5], drift: 0.9, kind: "side" },
   { pos: [15.5, 5.5, 12], look: [-3, 1.8, -2.5], drift: 0.9, kind: "side" },
