@@ -18,16 +18,22 @@ import {
   DiscoBall,
   DiscoFloor,
   Fireworks,
+  FlameJets,
   LedWall,
   LightBeams,
+  lerpHue,
+  SmokeJets,
   SpeakerStack,
 } from "./effects";
 import { MusicPlayer } from "./music";
 import {
   ALL_DANCE_MOVES,
+  GENRE_MOVES,
   Player,
   type Beat,
   type DanceMove,
+  type MusicGenre,
+  type MusicVibe,
 } from "./player";
 import { NowPlayingScreen } from "./screen";
 import {
@@ -42,6 +48,52 @@ const FLOOR_D = 19;
 const NEON_MH = [0x25f4ee, 0xfe2c55, 0xffc94d, 0x8a2be2];
 const MAX_PLAYERS = 220;
 const HYPE_DECAY_PER_S = 0.14;
+// TikTok không có event "rời live" — user im lặng quá lâu coi như đã thoát
+const IDLE_REMOVE_MS = 4 * 60_000;
+
+// "Chất" ánh sáng theo thể loại: hue lệch thêm, hệ số năng lượng (tốc độ +
+// độ sáng đèn), mức strobe cho phép — ballad ấm dịu không strobe, EDM gắt
+const GENRE_LIGHT: Record<
+  MusicGenre,
+  { hueShift: number; energyMul: number; strobe: number }
+> = {
+  ballad: { hueShift: 0.02, energyMul: 0.72, strobe: 0.12 },
+  pop: { hueShift: 0, energyMul: 1, strobe: 0.6 },
+  hiphop: { hueShift: 0.08, energyMul: 0.92, strobe: 0.45 },
+  rock: { hueShift: -0.06, energyMul: 1.08, strobe: 0.85 },
+  edm: { hueShift: 0.05, energyMul: 1.12, strobe: 1 },
+};
+
+// Danh sách góc máy "điện ảnh". drift = biên độ trôi nhẹ quanh vị trí;
+// kind = loại khung hình để đạo diễn chọn theo không khí đoạn nhạc.
+type CamShot = {
+  pos: [number, number, number];
+  look: [number, number, number];
+  drift: number;
+  kind: "wide" | "medium" | "crowd" | "top" | "side" | "close";
+};
+const FRONT_SHOTS: CamShot[] = [
+  // Toàn cảnh chính diện — thấy cả khán giả lẫn sân khấu
+  { pos: [0, 6.2, 23.5], look: [0, 1.8, -2.5], drift: 1, kind: "wide" },
+  // Chếch trái/phải hạ thấp — có chiều sâu
+  { pos: [-6.5, 4.4, 20], look: [1.5, 1.9, -3], drift: 0.8, kind: "medium" },
+  { pos: [6.5, 4.4, 20], look: [-1.5, 1.9, -3], drift: 0.8, kind: "medium" },
+  // Giữa đám đông nhìn lên sân khấu
+  { pos: [0, 3.4, 18.5], look: [0, 2.4, -4], drift: 0.6, kind: "crowd" },
+  // Trên cao chếch xuống toàn sàn
+  { pos: [0, 10, 20], look: [0, 1, -3], drift: 0.7, kind: "top" },
+  // Thẳng từ trên xuống — bird's eye toàn bộ sàn nhảy
+  { pos: [0, 16.5, 3], look: [0, 0.5, -2.5], drift: 0.5, kind: "top" },
+  // Cánh trái/phải nhìn ngang qua sàn
+  { pos: [-15.5, 5.5, 12], look: [3, 1.8, -2.5], drift: 0.9, kind: "side" },
+  { pos: [15.5, 5.5, 12], look: [-3, 1.8, -2.5], drift: 0.9, kind: "side" },
+];
+const ORBIT_SHOTS: CamShot[] = [
+  ...FRONT_SHOTS,
+  // Sát mép sàn nhìn chéo lên sân khấu
+  { pos: [-12, 4.2, 1.5], look: [4, 2.1, -6.5], drift: 0.7, kind: "close" },
+  { pos: [12, 4.2, 1.5], look: [-4, 2.1, -6.5], drift: 0.7, kind: "close" },
+];
 const STAGE_H = 0.9;
 const AUDIENCE_Y = -0.35;
 const AUDIENCE_Z0 = FLOOR_D / 2 + 0.5;
@@ -82,6 +134,53 @@ export class MemeDanceGame {
   private speakers: SpeakerStack[];
   private fireworks = new Fireworks();
   private confetti = new Confetti();
+  // Vành đai pyro BAO QUANH sàn diễn (không dồn về bàn DJ): lửa ở hai đầu
+  // mép sân khấu + dọc hai bên sàn nhảy; thứ tự vòi xếp trái → phải để các
+  // pattern "đuổi vòng quanh" chạy đúng chiều
+  private flames = new FlameJets([
+    { x: -FLOOR_W / 2 - 1, y: 0, z: 2 },
+    { x: -FLOOR_W / 2 - 1, y: 0, z: -4.5 },
+    { x: -9, y: STAGE_H, z: -FLOOR_D / 2 + 2.15 },
+    { x: 9, y: STAGE_H, z: -FLOOR_D / 2 + 2.15 },
+    { x: FLOOR_W / 2 + 1, y: 0, z: -4.5 },
+    { x: FLOOR_W / 2 + 1, y: 0, z: 2 },
+  ]);
+  private smokeJets = new SmokeJets([
+    { x: -11.5, y: STAGE_H, z: -FLOOR_D / 2 + 2.15, tilt: -0.5 },
+    { x: 11.5, y: STAGE_H, z: -FLOOR_D / 2 + 2.15, tilt: 0.5 },
+    { x: -FLOOR_W / 2 - 1, y: 0, z: -1.5, tilt: -0.4 },
+    { x: FLOOR_W / 2 + 1, y: 0, z: -1.5, tilt: 0.4 },
+    { x: -FLOOR_W / 2 - 1, y: 0, z: 6.5, tilt: -0.4 },
+    { x: FLOOR_W / 2 + 1, y: 0, z: 6.5, tilt: 0.4 },
+    // Hai góc TRƯỚC — đặt NGOÀI mép sàn, dưới dải thấp giáp khán giả
+    { x: -14, y: AUDIENCE_Y, z: FLOOR_D / 2 + 0.4, tilt: -0.35 },
+    { x: 14, y: AUDIENCE_Y, z: FLOOR_D / 2 + 0.4, tilt: 0.35 },
+  ]);
+  // Dàn sparkular MẶT TIỀN: tia lửa vàng-trắng mảnh đặt NGOÀI sàn nhảy —
+  // trên dải thấp ngay sau lan can, phụt gần như liên tục trong điệp khúc
+  private frontSparks = new FlameJets(
+    [
+      { x: -12, y: AUDIENCE_Y, z: FLOOR_D / 2 + 0.4 },
+      { x: -6, y: AUDIENCE_Y, z: FLOOR_D / 2 + 0.4 },
+      { x: 0, y: AUDIENCE_Y, z: FLOOR_D / 2 + 0.4 },
+      { x: 6, y: AUDIENCE_Y, z: FLOOR_D / 2 + 0.4 },
+      { x: 12, y: AUDIENCE_Y, z: FLOOR_D / 2 + 0.4 },
+    ],
+    "spark",
+  );
+  private ambient!: THREE.AmbientLight;
+  private keyLight!: THREE.DirectionalLight;
+  private moodColor = new THREE.Color();
+  private idleSweepT = 0;
+  // Preview/demo chưa phát nhạc: bắn pyro định kỳ để xem trước hiệu ứng
+  private showcaseMode = false;
+  private showcasePyroT = 0;
+  private showcaseFxIdx = 0;
+  // Pyro director: đang trong điệp khúc hay không + pattern lửa hiện hành
+  private inClimax = false;
+  private pyroPattern = 0;
+  // Object dùng chung truyền xuống mọi Player mỗi frame (tránh cấp phát mới)
+  private vibe: MusicVibe = { genre: "pop", melodyTrend: 0, melodyHeight: 0.5 };
   // Đồng diễn: cứ 32 beat cả sàn cùng nhảy một điệu trong 8 beat
   private choreoMove: DanceMove | null = null;
   private choreoEndBeat = 0;
@@ -96,6 +195,8 @@ export class MemeDanceGame {
   private movingHeads: { yoke: THREE.Group; head: THREE.Mesh; dir: number }[] =
     [];
   private movingHeadBeams: THREE.MeshBasicMaterial[] = [];
+  // Hướng pan của từng moving head — nhảy sang mốc mới theo mỗi beat
+  private mhPan: number[] = [];
   private djLastBeat = -1;
   private djFacing = 1;
   private djFacingCur = 1;
@@ -126,7 +227,21 @@ export class MemeDanceGame {
   private focusUntil = 0;
   private focusBlend = 0;
   private lookTarget = new THREE.Vector3();
-  private orbitAngle = 0;
+  // Đạo diễn camera: take hiện tại (đếm theo beat), kiểu chuyển cảnh,
+  // chuyển động dolly trong take (push-in/slide)
+  private shotIdx = 0;
+  private prevShotIdx = -1;
+  private takeT = 0;
+  private takeBeats = 0;
+  private takeLen = 16;
+  private camLastBeat = -1;
+  private camCut = false;
+  private camGlide = 0.55;
+  private camMoveMode: "push" | "slide" = "push";
+  private camPos = new THREE.Vector3(0, 6.2, 23.5);
+  private camLook = new THREE.Vector3(0, 1.8, -2.5);
+  private camShotPos = new THREE.Vector3();
+  private camShotLook = new THREE.Vector3();
 
   private spotlightPlayer: Player | null = null;
   private spotlightUntil = 0;
@@ -149,8 +264,10 @@ export class MemeDanceGame {
       canvas,
       antialias: true,
       alpha: false,
+      powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // 1.5 là đủ nét cho stream — dpr 2 khiến bloom nặng gấp ~1.8 lần
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
 
@@ -158,13 +275,16 @@ export class MemeDanceGame {
     this.scene.fog = new THREE.Fog(0x04050a, 34, 78);
 
     this.camera = new THREE.PerspectiveCamera(58, 1, 0.1, 200);
-    this.camera.position.set(0, 7.2, 19.5);
+    // Camera hạ thấp + lùi ra sau khu khán giả: góc nhìn "người ngoài" thấy
+    // được cả hàng khán giả lẫn sân khấu — user mới join thấy ngay nhân vật
+    this.camera.position.set(0, 6.2, 23.5);
     this.camera.lookAt(0, 1.8, -2.5);
 
-    this.scene.add(new THREE.AmbientLight(0x8890c0, 0.5));
-    const key = new THREE.DirectionalLight(0xffffff, 0.5);
-    key.position.set(4, 12, 10);
-    this.scene.add(key);
+    this.ambient = new THREE.AmbientLight(0x8890c0, 0.5);
+    this.scene.add(this.ambient);
+    this.keyLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    this.keyLight.position.set(4, 12, 10);
+    this.scene.add(this.keyLight);
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -195,6 +315,9 @@ export class MemeDanceGame {
       this.clubLights.group,
       this.fireworks.group,
       this.confetti.points,
+      this.flames.group,
+      this.smokeJets.group,
+      this.frontSparks.group,
     );
     this.stageGroup.add(
       this.ledWall.mesh,
@@ -659,13 +782,16 @@ export class MemeDanceGame {
       this.movingHeads.push({ yoke, head, dir: z < 0 ? -1 : 1 });
     });
 
-    this.djBaseY = STAGE_H + 1.75;
+    // Neo DJ tại CHÂN như Player — đứng trên bục sau bàn, không còn cảnh
+    // nửa người chìm xuyên qua mặt bàn khi camera nhìn từ trên cao
+    this.djBaseY = STAGE_H + 0.55;
     this.djSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.skins[3 % this.skins.length].frames[0],
         transparent: true,
       }),
     );
+    this.djSprite.center.set(0.5, 0);
     this.djSprite.material.color.setScalar(0.72);
     this.djSprite.scale.set(1.7, 2.125, 1);
     this.djSprite.position.set(0, this.djBaseY, -FLOOR_D / 2 - 0.5);
@@ -1046,12 +1172,56 @@ export class MemeDanceGame {
     for (const p of this.players.values()) {
       if (!oldest || p.lastActive < oldest.lastActive) oldest = p;
     }
-    if (oldest) {
-      this.scene.remove(oldest.group);
-      oldest.dispose();
-      this.releaseSlot(oldest.user.userId);
-      this.players.delete(oldest.user.userId);
+    if (oldest) this.removePlayer(oldest);
+  }
+
+  /** Đổi sang góc máy mới — tránh lặp 2 shot gần nhất, lọc theo loại khung. */
+  private switchShot(
+    shots: CamShot[],
+    opts: { kinds?: CamShot["kind"][]; cut?: boolean; energy: number },
+  ) {
+    let candidates = shots
+      .map((s, i) => ({ s, i }))
+      .filter(
+        ({ s, i }) =>
+          i !== this.shotIdx &&
+          i !== this.prevShotIdx &&
+          (!opts.kinds || opts.kinds.includes(s.kind)),
+      );
+    if (!candidates.length) {
+      candidates = shots
+        .map((s, i) => ({ s, i }))
+        .filter(({ i }) => i !== this.shotIdx);
     }
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    this.prevShotIdx = this.shotIdx;
+    this.shotIdx = pick.i;
+    this.takeT = 0;
+    this.takeBeats = 0;
+    this.camCut = !!opts.cut;
+    // Nhạc căng lướt nhanh dứt khoát, nhạc êm trôi chậm rãi
+    this.camGlide = 0.3 + opts.energy * 0.6;
+    this.camMoveMode = Math.random() < 0.6 ? "push" : "slide";
+  }
+
+  /** Cắt thẳng sang góc toàn cảnh — phản xạ của cameraman khi drop/vào điệp khúc. */
+  private cutToWide() {
+    const shots =
+      this.rules.cameraMode === "orbit" ? ORBIT_SHOTS : FRONT_SHOTS;
+    this.switchShot(shots, { kinds: ["wide", "top"], cut: true, energy: 1 });
+    this.takeLen = 8;
+  }
+
+  /** Gỡ hẳn một người khỏi sàn: trả slot, xóa khỏi scene và mọi tham chiếu. */
+  private removePlayer(player: Player) {
+    this.scene.remove(player.group);
+    player.dispose();
+    this.releaseSlot(player.user.userId);
+    this.players.delete(player.user.userId);
+    const fr = this.frontRow.indexOf(player);
+    if (fr >= 0) this.frontRow[fr] = null;
+    if (this.focusPlayer === player) this.focusPlayer = null;
+    if (this.spotlightPlayer === player) this.spotlightPlayer = null;
   }
 
   handleChat(event: ChatEvent) {
@@ -1240,6 +1410,11 @@ export class MemeDanceGame {
     }
     await this.music.play(url, title);
     this.npScreen.setTitle(title);
+    // Chào sân bài mới: một loạt lửa + CO2 như pháo mở màn sân khấu thật
+    this.inClimax = false;
+    this.flames.fire(1.1);
+    this.smokeJets.blast(1);
+    this.frontSparks.fire(1);
   }
 
   handleLike(event: LikeEvent) {
@@ -1262,6 +1437,7 @@ export class MemeDanceGame {
 
   reset() {
     this.stopDemo();
+    this.showcaseMode = false;
     this.players.forEach((p) => {
       this.scene.remove(p.group);
       p.dispose();
@@ -1471,6 +1647,7 @@ export class MemeDanceGame {
 
   startShowcase() {
     this.reset();
+    this.showcaseMode = true;
     const total = Math.min(
       Math.max(this.skins.length * 2, ALL_DANCE_MOVES.length * 2),
       40,
@@ -1514,16 +1691,100 @@ export class MemeDanceGame {
     const level = this.music.playing ? this.music.level : 0;
     const drop = this.music.dropLevel;
 
-    // Mỗi beat mới: quản lý đồng diễn 32-beat
+    // Tâm trạng bài hát → bảng màu toàn sàn: buồn = xanh tím trầm, vui =
+    // vàng cam rực, mạnh = kéo về đỏ hồng. Hue đổi rất chậm nên không giật.
+    const valence = this.music.moodValence;
+    let mEnergy = this.music.playing ? this.music.moodEnergy : 0.25;
+    let moodHue = 0.66 - valence * 0.5;
+    if (mEnergy > 0.55) {
+      moodHue = lerpHue(
+        moodHue,
+        0.97,
+        Math.min(1, (mEnergy - 0.55) / 0.35) * 0.65,
+      );
+    }
+    // Thể loại nhạc phủ "chất" riêng lên bảng màu, tốc độ đèn và điệu nhảy
+    const genre = this.music.playing ? this.music.genre : "pop";
+    const gLight = GENRE_LIGHT[genre];
+    moodHue = (moodHue + gLight.hueShift + 1) % 1;
+    mEnergy = Math.min(1, mEnergy * gLight.energyMul);
+    const mood = { hue: moodHue, energy: mEnergy, valence };
+    this.vibe.genre = genre;
+    this.vibe.melodyTrend = this.music.playing ? this.music.melodyTrend : 0;
+    this.vibe.melodyHeight = this.music.melodyHeight;
+
+    // Mỗi beat mới: đèn moving head quét sang mốc mới + đồng diễn 32-beat
     if (this.music.playing && beat.index !== this.lastLoopBeat) {
       this.lastLoopBeat = beat.index;
+      this.movingHeads.forEach((_, i) => {
+        this.mhPan[i] =
+          (((beat.index + i) % 2) * 2 - 1) * (0.35 + Math.random() * 0.3);
+      });
+      // PYRO DIRECTOR — bắt chước người chạy hiệu ứng sân khấu thật:
+      // 1) Khoảnh khắc VÀO điệp khúc (section vượt ngưỡng lần đầu): toàn dàn
+      //    khai hỏa một loạt lửa + CO2 đánh dấu cú bung.
+      // 2) Trong điệp khúc: chạy pattern theo phách — lửa đuổi vòng quanh
+      //    sàn / từ giữa tỏa ra hai bên / cả dàn dậm phách 1 — đổi pattern
+      //    mỗi 4 ô nhịp cho đỡ lặp; CO2 nhấn phách 1 mỗi 2 ô nhịp.
+      // 3) Đoạn trầm/buildup: CO2 nhả hơi ngắn như nén hơi chờ bung.
+      const section = this.music.section;
+      if (section > 0.72 && !this.inClimax && level > 0.12) {
+        this.inClimax = true;
+        this.pyroPattern = Math.floor(Math.random() * 3);
+        this.flames.fire(1.3);
+        this.smokeJets.blast(1.2);
+        this.frontSparks.fire(1.2);
+        // Vào điệp khúc: cameraman cắt thẳng sang toàn cảnh đón cú bung
+        this.cutToWide();
+      } else if (section < 0.6) {
+        this.inClimax = false;
+      }
+      if (this.inClimax && level > 0.12) {
+        // Sparkular mặt tiền chạy suốt điệp khúc — mỗi phách một đợt tia
+        this.frontSparks.fire(0.45 + level * 0.3);
+        if (beat.index % 16 === 0) {
+          this.pyroPattern = Math.floor(Math.random() * 3);
+        }
+        const n = this.flames.count;
+        if (this.pyroPattern === 0) {
+          // Lửa đuổi vòng quanh sàn — mỗi phách một vòi kế tiếp
+          this.flames.fire(0.7 + level * 0.4, [beat.index % n]);
+        } else if (this.pyroPattern === 1) {
+          // Từ giữa (mép sân khấu) tỏa ra hai bên theo cặp, mỗi 2 phách
+          if (beat.index % 2 === 0) {
+            const pairs = [
+              [2, 3],
+              [1, 4],
+              [0, 5],
+            ];
+            this.flames.fire(
+              0.8 + level * 0.4,
+              pairs[(beat.index >> 1) % pairs.length],
+            );
+          }
+        } else if (beat.index % 4 === 0) {
+          // Cả dàn dậm đúng phách 1 của mỗi ô nhịp
+          this.flames.fire(0.9 + level * 0.5);
+        }
+        if (beat.index % 8 === 0) this.smokeJets.blast(0.5 + level * 0.4);
+        // Điệp khúc thật căng: pháo hoa nổ sau sân khấu mỗi 4 ô nhịp
+        if (beat.index % 16 === 8 && section > 0.8) {
+          this.fireworks.spawn(
+            new THREE.Vector3((Math.random() - 0.5) * 12, 4.5, -7),
+            2,
+          );
+        }
+      } else if (this.music.inQuietSection && beat.index % 2 === 0) {
+        this.smokeJets.blast(0.22);
+      }
       if (this.choreoMove && beat.index >= this.choreoEndBeat) {
         this.choreoMove = null;
         this.players.forEach((p) => (p.choreoMove = null));
       }
       if (!this.choreoMove && beat.index % 32 === 0 && this.players.size >= 3) {
-        this.choreoMove =
-          ALL_DANCE_MOVES[Math.floor(Math.random() * ALL_DANCE_MOVES.length)];
+        // Đồng diễn cũng chọn điệu hợp thể loại đang phát
+        const pool = GENRE_MOVES[genre];
+        this.choreoMove = pool[Math.floor(Math.random() * pool.length)];
         this.choreoEndBeat = beat.index + 8;
         this.players.forEach((p) => {
           if (p.onFloor && !p.forcedMove) p.choreoMove = this.choreoMove;
@@ -1531,10 +1792,14 @@ export class MemeDanceGame {
       }
     }
 
-    // Drop vừa nổ: confetti + pháo hoa + cả sàn bật nhảy
+    // Drop vừa nổ: confetti + pháo hoa + toàn bộ vòi lửa & CO2 + cả sàn bật nhảy
     if (drop > 0.9 && this.lastDropLevel <= 0.9) {
       this.confetti.burst(150);
       this.fireworks.spawn(new THREE.Vector3(0, 2.5, -4), 3);
+      this.flames.fire(1.6);
+      this.smokeJets.blast(1.6);
+      this.frontSparks.fire(1.5);
+      this.cutToWide();
       this.players.forEach((p) => {
         if (p.onFloor) p.jump();
       });
@@ -1551,6 +1816,21 @@ export class MemeDanceGame {
     if (this.reseatT >= 4) {
       this.reseatT = 0;
       this.updateFrontRow();
+    }
+
+    // Không có event "rời live" từ TikTok — ai im lặng quá lâu coi như đã
+    // thoát: gỡ nhân vật khỏi sàn để không tồn đọng người ảo
+    this.idleSweepT += dt;
+    if (this.idleSweepT >= 5) {
+      this.idleSweepT = 0;
+      const cutoff = performance.now() - IDLE_REMOVE_MS;
+      let podiumChanged = false;
+      for (const p of [...this.players.values()]) {
+        if (p.lastActive >= cutoff) continue;
+        podiumChanged ||= p.onPodium;
+        this.removePlayer(p);
+      }
+      if (podiumChanged) this.updatePodium();
     }
 
     // Người đang được camera zoom cận cảnh không bao giờ bị làm mờ/mất tên
@@ -1578,19 +1858,64 @@ export class MemeDanceGame {
             else if (!p.isDancing && p.onFloor) this.demoteToAudience(p);
         }
       }
-      p.update(dt, effHype, beat, this.music.playing, level);
+      p.update(dt, effHype, beat, this.music.playing, level, mEnergy, this.vibe);
     });
     const mid = this.music.playing ? this.music.mid : 0;
-    this.floor.update(dt, effHype, beat, level, this.music.playing);
-    this.ledWall.update(dt, effHype, beat, level, this.music.playing, mid);
-    this.beams.update(dt, effHype, beat, level, this.music.playing);
-    this.ball.update(dt, effHype);
-    this.clubLights.update(dt, effHype, beat, level, this.music.playing);
+    this.floor.update(dt, effHype, beat, level, this.music.playing, mood);
+    this.ledWall.update(dt, effHype, beat, level, this.music.playing, mid, mood);
+    this.beams.update(dt, effHype, beat, level, this.music.playing, mood);
+    this.ball.update(dt, effHype, mEnergy);
+    this.clubLights.update(dt, effHype, beat, level, this.music.playing, mood);
     this.speakers[0].update(dt, effHype, beat);
     this.speakers[1].update(dt, effHype, beat);
     this.fireworks.update(dt);
     this.confetti.update(dt, effHype);
+    // Đoạn trầm/breakdown hoặc bài buồn: khói haze mỏng bò chậm quanh sân
+    // khấu — beam đèn hiện rõ trong khói đúng chất club thật
+    if (this.music.playing) {
+      // Đoạn trầm (theo z-score của chính bài) hoặc bài buồn → haze dày hơn
+      const hazeRate =
+        (this.music.inQuietSection || this.music.section < 0.35 ? 2.4 : 0) +
+        (1 - valence) * (1 - mEnergy) * 1.6 +
+        0.1;
+      if (Math.random() < hazeRate * dt) this.smokeJets.puff();
+    } else if (this.showcaseMode || this.demoRunning) {
+      // Trang preview/demo chưa bật nhạc: xoay vòng lửa → CO2 → pháo hoa
+      // mỗi ~2.5s + haze nhẹ, để thấy đủ bộ hiệu ứng mà không cần chờ nhạc
+      this.showcasePyroT += dt;
+      if (this.showcasePyroT >= 2.5) {
+        this.showcasePyroT = 0;
+        this.showcaseFxIdx = (this.showcaseFxIdx + 1) % 4;
+        if (this.showcaseFxIdx === 0) this.flames.fire(1.1);
+        else if (this.showcaseFxIdx === 1) this.frontSparks.fire(1);
+        else if (this.showcaseFxIdx === 2) this.smokeJets.blast(1);
+        else
+          this.fireworks.spawn(
+            new THREE.Vector3((Math.random() - 0.5) * 10, 4, -7),
+            2,
+          );
+      }
+      if (Math.random() < dt * 0.8) this.smokeJets.puff();
+    }
+    this.flames.update(dt);
+    this.smokeJets.update(dt);
+    this.frontSparks.update(dt);
     this.updateBanners(dt);
+
+    // Ánh sáng nền + bầu trời nhuộm theo tâm trạng — đổi từ từ như kéo dimmer
+    this.moodColor.setHSL(moodHue, 0.4, 0.6);
+    this.ambient.color.lerp(this.moodColor, Math.min(1, dt * 0.8));
+    this.ambient.intensity +=
+      (0.36 + valence * 0.22 + mEnergy * 0.08 - this.ambient.intensity) *
+      Math.min(1, dt * 0.8);
+    this.keyLight.intensity +=
+      (0.25 + valence * 0.2 - this.keyLight.intensity) * Math.min(1, dt * 0.8);
+    this.moodColor.setHSL(moodHue, 0.55, 0.025 + valence * 0.012);
+    (this.scene.background as THREE.Color).lerp(
+      this.moodColor,
+      Math.min(1, dt * 0.6),
+    );
+    this.scene.fog?.color.copy(this.scene.background as THREE.Color);
 
     const kick = Math.max(0, 1 - beat.pulse * 3);
     // Cả khối sân khấu nhún rất nhẹ theo kick + đung đưa theo bass
@@ -1628,30 +1953,38 @@ export class MemeDanceGame {
       this.decks.forEach((d) => (d.rotation.y += dt * (2 + effHype * 6)));
     }
     this.movingHeads.forEach(({ yoke, head, dir }, i) => {
-      const panTarget = this.music.playing
-        ? Math.sin(t * (0.4 + i * 0.06) + i * 1.3) * 0.65
-        : 0;
-      yoke.rotation.y += (panTarget - yoke.rotation.y) * Math.min(1, dt * 3);
+      const panTarget = this.music.playing ? (this.mhPan[i] ?? 0) : 0;
+      yoke.rotation.y += (panTarget - yoke.rotation.y) * Math.min(1, dt * 6);
+      // Nốt thăng: beam ngẩng dần lên; nốt trầm: chúc xuống sàn
       const tiltTarget = this.music.playing
-        ? dir * (0.3 + Math.sin(t * 0.33 + i * 1.7) * 0.32)
+        ? dir * (0.3 + Math.sin(t * 0.33 + i * 1.7) * 0.32 +
+            this.vibe.melodyTrend * 0.12)
         : dir * 0.1;
       head.rotation.x += (tiltTarget - head.rotation.x) * Math.min(1, dt * 3);
-      this.movingHeadBeams[i].opacity = this.music.playing
-        ? 0.035 + level * 0.1 + kick * level * 0.08
+      const mhMat = this.movingHeadBeams[i];
+      // Beam moving head nhuộm theo tâm trạng, nhạc êm thì mờ dịu lại
+      this.moodColor.setHSL((moodHue + i * 0.12) % 1, 0.9, 0.6);
+      mhMat.color.lerp(this.moodColor, Math.min(1, dt * 1.5));
+      mhMat.opacity = this.music.playing
+        ? (0.035 + level * 0.1 + kick * level * 0.08) * (0.55 + mEnergy * 0.75)
         : 0;
     });
     this.boothLeds.forEach((mat, i) => {
-      const hue = (0.52 + i * 0.17 + this.beatIndex * 0.02) % 1;
+      const hue = (moodHue + i * 0.06 + this.beatIndex * 0.02) % 1;
       const bright = this.music.playing
-        ? Math.min(0.62, 0.22 + level * 0.5 + kick * 0.18)
+        ? Math.min(0.62, (0.22 + level * 0.5 + kick * 0.18) * (0.55 + mEnergy * 0.6))
         : 0.1;
       mat.color.setHSL(hue, 0.9, bright);
     });
-    // Drop: strobe nhấp nháy nhanh vài giây cho cảm giác bùng nổ
+    // Drop: strobe nhấp nháy nhanh vài giây cho cảm giác bùng nổ;
+    // nhạc êm/buồn thì strobe gần như tắt hẳn — dịu hơn để không chói
     const dropFlicker = drop > 0.05 ? (Math.sin(t * 42) > 0 ? 1 : 0.15) : 0;
     (this.strobe.material as THREE.MeshBasicMaterial).opacity =
-      kick * (0.06 + level * 0.45 + effHype * 0.18) +
-      drop * 0.28 * dropFlicker;
+      kick *
+        (0.04 + level * 0.28 + effHype * 0.12) *
+        (0.3 + mEnergy * 0.9) *
+        gLight.strobe +
+      drop * 0.22 * dropFlicker;
     this.npScreen.paused = !this.music.playing;
     this.npScreen.update(dt, this.music.getSpectrum(), beat, this.music.progress);
 
@@ -1664,7 +1997,7 @@ export class MemeDanceGame {
         Math.min(1, dt * 9),
       );
     }
-    this.followSpot.intensity = this.followBlend * 220;
+    this.followSpot.intensity = this.followBlend * 150;
     this.followBeam.visible = this.followBlend > 0.02;
     if (this.followBeam.visible) {
       const dir = new THREE.Vector3()
@@ -1689,20 +2022,73 @@ export class MemeDanceGame {
       ((focusing ? 1 : 0) - this.focusBlend) * Math.min(1, dt * 2.5);
     if (!focusing && this.focusBlend < 0.01) this.focusPlayer = null;
 
-    let baseX: number;
-    let baseZ: number;
-    const lookY = 1.8;
-    const lookZ = -2.5;
-    const baseY =
-      7.2 + Math.sin(t * 0.09) * 0.3 + Math.sin(t * 5) * effHype * 0.04;
-    if (this.rules.cameraMode === "orbit") {
-      this.orbitAngle += dt * (0.18 + effHype * 0.06);
-      const arc = Math.sin(this.orbitAngle) * 0.85;
-      baseX = Math.sin(arc) * 19.5;
-      baseZ = Math.cos(arc) * 19.5;
+    // ĐẠO DIỄN CAMERA — như người quay phim concert chuyên nghiệp:
+    // - Đổi góc đúng RANH GIỚI CÂU NHẠC (bội số 8 beat), không theo đồng hồ
+    // - Điệp khúc: take ngắn 8 beat, thi thoảng CẮT THẲNG; verse: take 16
+    //   beat lướt vừa; đoạn trầm: take dài, chỉ góc rộng/đám đông
+    // - Trong take máy không đứng yên: push-in chậm về sân khấu hoặc slide
+    //   ngang như chạy trên ray
+    const shots =
+      this.rules.cameraMode === "orbit" ? ORBIT_SHOTS : FRONT_SHOTS;
+    this.takeT += dt;
+    const sectionNow = this.music.section;
+    if (this.music.playing) {
+      if (beat.index !== this.camLastBeat) {
+        this.camLastBeat = beat.index;
+        this.takeBeats++;
+        if (this.takeBeats >= this.takeLen && beat.index % 8 === 0) {
+          const hot = sectionNow > 0.7;
+          const calm = sectionNow < 0.4;
+          this.switchShot(shots, {
+            kinds: hot
+              ? undefined
+              : calm
+                ? ["wide", "crowd", "medium"]
+                : ["wide", "medium", "side", "top", "crowd"],
+            cut: hot && Math.random() < 0.5,
+            energy: mEnergy,
+          });
+          this.takeLen = hot ? 8 : calm ? 24 : 16;
+        }
+      }
+    } else if (this.takeT >= 13) {
+      // Chưa phát nhạc: fallback đổi góc theo thời gian
+      this.switchShot(shots, { energy: 0.4 });
+      this.takeLen = 16;
+    }
+    const shot = shots[this.shotIdx % shots.length];
+    // Dolly trong take: ease mượt suốt ~11s, kèm rung thở rất nhẹ
+    const takeProg = Math.min(1, this.takeT / 11);
+    const takeEase = takeProg * takeProg * (3 - 2 * takeProg);
+    this.camShotLook.set(shot.look[0], shot.look[1], shot.look[2]);
+    this.camShotPos.set(
+      shot.pos[0] + Math.sin(t * 0.13) * 0.5 * shot.drift,
+      shot.pos[1] +
+        Math.sin(t * 0.09) * 0.25 * shot.drift +
+        Math.sin(t * 5) * effHype * 0.04,
+      shot.pos[2] + Math.sin(t * 0.07) * 0.4 * shot.drift,
+    );
+    if (this.camMoveMode === "push") {
+      // Đẩy máy từ từ về phía điểm nhìn (~1/5 quãng đường mỗi take)
+      this.camShotPos.lerp(this.camShotLook, takeEase * 0.2);
     } else {
-      baseX = Math.sin(t * 0.14) * (2.2 + effHype * 0.8);
-      baseZ = 21 - Math.sin(t * 0.055) * 1.6;
+      // Slide ngang vuông góc trục nhìn, từ mép này sang mép kia của take
+      const dx = this.camShotLook.x - this.camShotPos.x;
+      const dz = this.camShotLook.z - this.camShotPos.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const amp = 2.4 * shot.drift * (takeEase * 2 - 1);
+      this.camShotPos.x += (-dz / len) * amp;
+      this.camShotPos.z += (dx / len) * amp;
+    }
+    if (this.camCut) {
+      // Hard cut: nhảy thẳng sang góc mới trong một frame
+      this.camCut = false;
+      this.camPos.copy(this.camShotPos);
+      this.camLook.copy(this.camShotLook);
+    } else {
+      const camK = Math.min(1, dt * this.camGlide);
+      this.camPos.lerp(this.camShotPos, camK);
+      this.camLook.lerp(this.camShotLook, camK);
     }
     if (this.focusPlayer && this.focusBlend > 0.01) {
       const target = this.focusPlayer.group.position;
@@ -1710,26 +2096,27 @@ export class MemeDanceGame {
       const focusCamY = target.y + 2.6;
       const focusLookY = target.y + 1.2;
       this.camera.position.set(
-        baseX * (1 - b) + target.x * 0.7 * b,
-        baseY * (1 - b) + focusCamY * b,
-        baseZ * (1 - b) + (target.z + 6) * b,
+        this.camPos.x * (1 - b) + target.x * 0.7 * b,
+        this.camPos.y * (1 - b) + focusCamY * b,
+        this.camPos.z * (1 - b) + (target.z + 6) * b,
       );
       this.lookTarget.set(
-        target.x * b,
-        lookY * (1 - b) + focusLookY * b,
-        lookZ * (1 - b) + target.z * b,
+        this.camLook.x * (1 - b) + target.x * b,
+        this.camLook.y * (1 - b) + focusLookY * b,
+        this.camLook.z * (1 - b) + target.z * b,
       );
       this.camera.lookAt(this.lookTarget);
     } else {
-      this.camera.position.set(baseX, baseY, baseZ);
-      this.camera.lookAt(0, lookY, lookZ);
+      this.camera.position.copy(this.camPos);
+      this.camera.lookAt(this.camLook);
     }
 
-    // Bloom "thở" theo kick của bass, bùng thêm khi drop
+    // Bloom "thở" theo kick của bass, bùng thêm khi drop; giữ mức thấp để
+    // không lóa — glow chỉ nhấn nhá chứ không rửa trắng cả khung hình
     this.bloom.strength =
-      0.4 + effHype * 0.4 + kick * level * 0.35 + drop * 0.3;
+      0.22 + mEnergy * 0.16 + effHype * 0.22 + kick * level * 0.25 + drop * 0.25;
     // Camera punch-in nhẹ theo kick — cảm giác dồn nhịp như video ca nhạc
-    const targetFov = 58 - kick * level * 3.5 - drop * 2;
+    const targetFov = 58 - kick * level * (2 + mEnergy * 2.5) - drop * 2;
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 10);
     this.camera.updateProjectionMatrix();
     this.composer.render();
@@ -1747,6 +2134,9 @@ export class MemeDanceGame {
     if (w === 0 || h === 0) return;
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
+    // Bloom vốn là hiệu ứng mờ — chạy ở nửa độ phân giải không khác gì
+    // về hình nhưng giảm hẳn tải GPU (phải gọi SAU composer.setSize)
+    this.bloom.setSize(w / 2, h / 2);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }

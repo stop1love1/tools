@@ -105,6 +105,40 @@ const DANCE_MOVES: DanceMove[] = [
   "windmill",
   "stomp",
 ];
+/** Thể loại nhạc ước lượng từ phổ tần — quyết định pool điệu nhảy + chất đèn. */
+export type MusicGenre = "ballad" | "pop" | "hiphop" | "rock" | "edm";
+
+/**
+ * Pool điệu nhảy theo thể loại: ballad lắc lư mềm, hiphop groove khớp,
+ * rock quẩy đầu, EDM bật nhảy liên tục. Lặp phần tử = tăng tỉ lệ ra điệu đó.
+ */
+export const GENRE_MOVES: Record<MusicGenre, DanceMove[]> = {
+  ballad: [
+    "sway", "sway", "wave", "wave", "lean-back", "fan", "dip", "roll",
+    "freeze", "cross-step", "sway", "wave",
+  ],
+  pop: [], // gán = DANCE_MOVES bên dưới — giữ độ đa dạng mặc định
+  hiphop: [
+    "two-step", "two-step", "robot", "robot", "moonwalk", "cross-step",
+    "shoulder", "bounce", "slide", "twist", "stomp", "freeze",
+  ],
+  rock: [
+    "headbang", "headbang", "pogo", "stomp", "stomp", "windmill", "clap",
+    "hop", "headbang",
+  ],
+  edm: [
+    "pogo", "pogo", "shuffle", "shuffle", "hop", "double-bounce",
+    "charleston", "twist", "clap", "bounce",
+  ],
+};
+
+/** Tín hiệu nhạc nâng cao game truyền xuống mỗi frame (dùng chung 1 object). */
+export type MusicVibe = {
+  genre: MusicGenre;
+  melodyTrend: number;
+  melodyHeight: number;
+};
+
 const MOVE_BEATS: Record<DanceMove, number> = {
   bounce: 2,
   "two-step": 2,
@@ -135,6 +169,8 @@ const MOVE_BEATS: Record<DanceMove, number> = {
   windmill: 2,
   stomp: 2,
 };
+
+GENRE_MOVES.pop = DANCE_MOVES;
 
 export type Beat = { index: number; pulse: number };
 
@@ -228,7 +264,11 @@ export class Player {
     );
     this.sprite.material.color.setScalar(0.72);
     this.applyAspect();
-    this.sprite.position.y = BASE_H / 2;
+    // Neo sprite tại CHÂN (center.y = 0): billboard chỉ vươn lên trên nên khi
+    // camera trên cao nhìn xuống, thân dưới không còn ngả tới trước và cắm
+    // xuyên bục podium/bàn DJ như khi neo giữa thân
+    this.sprite.center.set(0.5, 0);
+    this.sprite.position.y = 0;
 
     const { texture, aspect } = makeLabelTexture(
       user.nickname,
@@ -401,7 +441,15 @@ export class Player {
     this.bubbleUntil = performance.now() + BUBBLE_MS;
   }
 
-  update(dt: number, hype: number, beat: Beat, musicOn = true, level = 0) {
+  update(
+    dt: number,
+    hype: number,
+    beat: Beat,
+    musicOn = true,
+    level = 0,
+    moodEnergy = 0.5,
+    vibe?: MusicVibe,
+  ) {
     const now = performance.now();
     const t = now / 1000;
     const dancing = musicOn && now < this.danceUntil;
@@ -434,10 +482,12 @@ export class Player {
           this.move = this.choreoMove;
           this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
         } else if (this.moveBeatsLeft <= 0) {
-          let next =
-            DANCE_MOVES[Math.floor(Math.random() * DANCE_MOVES.length)];
+          // Chọn điệu trong pool của thể loại đang phát — ballad lắc lư,
+          // EDM bật nhảy... mỗi loại nhạc ra một chất nhảy khác nhau
+          const pool = vibe ? GENRE_MOVES[vibe.genre] : DANCE_MOVES;
+          let next = pool[Math.floor(Math.random() * pool.length)];
           if (next === this.move)
-            next = DANCE_MOVES[Math.floor(Math.random() * DANCE_MOVES.length)];
+            next = pool[Math.floor(Math.random() * pool.length)];
           this.move = next;
           this.moveBeatsLeft = MOVE_BEATS[this.move] ?? 2;
         }
@@ -524,10 +574,14 @@ export class Player {
       // Phách 1 của ô nhịp 4 nhún mạnh nhất, phách 3 vừa — tạo groove rõ rệt
       const accent =
         beat.index % 4 === 0 ? 1.25 : beat.index % 2 === 0 ? 1.1 : 1;
+      // Nhạc buồn/êm nhún dịu lại, nhạc dữ dội quẩy hết biên độ;
+      // giai điệu đang lên (nốt thăng) thì bật cao thêm chút cho tới khúc
       const amp =
         (0.2 + hype * 0.22 + level * 0.22 + this.hopBoost) *
         this.ampScale *
-        accent;
+        accent *
+        (0.72 + moodEnergy * 0.5) *
+        (1 + (vibe?.melodyTrend ?? 0) * 0.18);
       const hopPhase =
         this.move === "double-bounce" ||
         this.move === "charleston" ||
@@ -653,6 +707,13 @@ export class Player {
         rot = this.tilt + Math.max(0, 1 - beat.pulse * 3) * 0.08 * this.sideDir;
       } else {
         rot = this.tilt + Math.sin(Math.PI * 2 * beat.pulse + this.phase) * 0.06;
+      }
+      // Nốt thăng: người vươn nhẹ lên; nốt trầm: chùng người xuống — như
+      // đang "hát theo" giai điệu chứ không chỉ dậm theo kick
+      if (vibe) {
+        const mt = vibe.melodyTrend;
+        scaleY *= 1 + Math.max(0, mt) * 0.05 - Math.max(0, -mt) * 0.03;
+        rot += mt * 0.03 * this.sideDir;
       }
       this.sideOffset +=
         (this.sideTarget - this.sideOffset) * Math.min(1, dt * 7);

@@ -1,4 +1,4 @@
-import type { Beat } from "./player";
+import type { Beat, MusicGenre } from "./player";
 
 export class MusicPlayer {
   private audio: HTMLAudioElement | null = null;
@@ -25,6 +25,45 @@ export class MusicPlayer {
   high = 0;
   /** Cường độ "drop" (1 → tắt dần): nhạc lặng >1s rồi bass bùng nổ. */
   dropLevel = 0;
+  /**
+   * Tâm trạng bài hát, làm mượt rất chậm để không giật giữa các câu nhạc:
+   * - moodEnergy 0..1: êm dịu → dữ dội (tổng năng lượng phổ).
+   * - moodValence 0..1: buồn → vui (phổ "sáng" nhiều treble + tempo nhanh).
+   */
+  moodEnergy = 0;
+  moodValence = 0.4;
+  /**
+   * Cường độ đoạn nhạc SO VỚI chính bài đó (z-score loudness): 0 = đoạn
+   * trầm/break, ~0.5 = bình thường, 1 = điệp khúc/drop. Không phụ thuộc bài
+   * mix to hay nhỏ nên dùng làm cò kích pyro/đèn chuẩn hơn ngưỡng tuyệt đối.
+   */
+  section = 0.5;
+  private emaFast = 0;
+  private emaSlow = 0;
+  private emaVar = 0.001;
+  private centroidAvg = 0.3;
+  /**
+   * Giai điệu (nốt thăng/trầm) dò từ cao độ trội dải 250–2000Hz:
+   * - melodyTrend -1..1: >0 nốt đang đi LÊN (thăng), <0 đi XUỐNG (trầm).
+   * - melodyHeight 0..1: cao độ hiện tại so với dải của chính bài.
+   */
+  melodyTrend = 0;
+  melodyHeight = 0.5;
+  /** Thể loại ước lượng từ tempo + cân bằng phổ + mật độ onset. */
+  genre: MusicGenre = "pop";
+  private hzPerBin = 21.5;
+  private melodyFast = 0;
+  private melodySlow = 0;
+  private melodyLo = Number.POSITIVE_INFINITY;
+  private melodyHi = Number.NEGATIVE_INFINITY;
+  private onsetRate = 0;
+  private genreScores: Record<MusicGenre, number> = {
+    ballad: 0,
+    pop: 0.4,
+    hiphop: 0,
+    rock: 0,
+    edm: 0,
+  };
 
   private midLo = 8;
   private midHi = 60;
@@ -39,6 +78,12 @@ export class MusicPlayer {
   get playing(): boolean {
     return !!this.audio && !this.audio.paused && !this.audio.ended;
   }
+
+  /** Đang ở đoạn trầm (bass chìm dưới nền >0.5s) — thường là break/buildup. */
+  get inQuietSection(): boolean {
+    return this.playing && this.quietTime > 0.5;
+  }
+
 
   /** Tiến độ bài hiện tại (giây) — null khi chưa có bài/chưa biết độ dài. */
   get progress(): { time: number; duration: number } | null {
@@ -79,6 +124,7 @@ export class MusicPlayer {
       this.analyser.connect(this.ctx.destination);
       this.freq = new Uint8Array(this.analyser.frequencyBinCount);
       const hzPerBin = this.ctx.sampleRate / this.analyser.fftSize;
+      this.hzPerBin = hzPerBin;
       this.loBin = Math.max(1, Math.floor(20 / hzPerBin));
       this.hiBin = Math.ceil(150 / hzPerBin);
       this.midLo = Math.max(this.hiBin + 1, Math.floor(250 / hzPerBin));
@@ -104,6 +150,18 @@ export class MusicPlayer {
     this.energyAvg = 0;
     this.quietTime = 0;
     this.dropLevel = 0;
+    this.section = 0.5;
+    this.emaFast = 0;
+    this.emaSlow = 0;
+    this.emaVar = 0.001;
+    this.centroidAvg = 0.3;
+    this.melodyFast = 0;
+    this.melodySlow = 0;
+    this.melodyLo = Number.POSITIVE_INFINITY;
+    this.melodyHi = Number.NEGATIVE_INFINITY;
+    this.melodyTrend = 0;
+    this.melodyHeight = 0.5;
+    this.onsetRate = 0;
   }
 
   pause() {
@@ -141,6 +199,9 @@ export class MusicPlayer {
       this.level = Math.max(0, this.level - 0.02);
       this.mid = Math.max(0, this.mid - 0.02);
       this.high = Math.max(0, this.high - 0.02);
+      this.moodEnergy = Math.max(0, this.moodEnergy - dtu * 0.15);
+      this.moodValence += (0.4 - this.moodValence) * Math.min(1, dtu * 0.2);
+      this.section += (0.5 - this.section) * Math.min(1, dtu * 0.3);
       return;
     }
     this.analyser.getByteFrequencyData(this.freq);
@@ -169,6 +230,101 @@ export class MusicPlayer {
     for (let i = this.highLo; i <= this.highHi; i++) highSum += this.freq[i];
     this.high +=
       (highSum / ((this.highHi - this.highLo + 1) * 255) - this.high) * 0.35;
+
+    // === Detect thích ứng theo chính bài đang phát ===
+    // Loudness tổng hợp có trọng số (bass nặng nhất, như tai người cảm nhận)
+    const inst = this.level * 0.5 + this.mid * 0.35 + this.high * 0.15;
+    // EMA nhanh/chậm + phương sai → z-score: đoạn hiện tại to/nhỏ bất thường
+    // cỡ nào so với mức trung bình của CHÍNH bài này (bất kể mix to hay nhỏ)
+    this.emaFast += (inst - this.emaFast) * Math.min(1, dtu * 3);
+    this.emaSlow += (inst - this.emaSlow) * Math.min(1, dtu * 0.12);
+    const dev = inst - this.emaSlow;
+    this.emaVar += (dev * dev - this.emaVar) * Math.min(1, dtu * 0.12);
+    const z =
+      (this.emaFast - this.emaSlow) / Math.max(0.012, Math.sqrt(this.emaVar));
+    const sectionTarget = Math.min(1, Math.max(0, 0.5 + z * 0.3));
+    // Vào cao trào bắt nhanh, thoát thì lơi chậm — như lighting operator thật
+    this.section +=
+      (sectionTarget - this.section) *
+      Math.min(1, dtu * (sectionTarget > this.section ? 2.5 : 0.8));
+
+    // Spectral centroid — "trọng tâm" phổ: cao = tươi sáng, thấp = trầm tối
+    let wSum = 0;
+    let mSum = 0;
+    for (let i = this.loBin; i <= this.highHi; i++) {
+      wSum += i * this.freq[i];
+      mSum += this.freq[i];
+    }
+    const centroid = mSum > 1 ? wSum / mSum / (this.midHi * 2) : 0.3;
+    this.centroidAvg += (centroid - this.centroidAvg) * Math.min(1, dtu * 0.5);
+
+    const bpm = 60 / this.interval;
+    const tempoNorm = Math.min(1, Math.max(0, (bpm - 85) / 70));
+    // Energy = độ lớn tuyệt đối × vị thế đoạn trong bài — verse dịu, drop bùng
+    const absLoud = Math.min(1, inst * 2.2);
+    const energyInst = Math.min(1, absLoud * (0.4 + this.section * 0.8));
+    const valenceInst = Math.min(
+      1,
+      Math.max(0, (this.centroidAvg - 0.16) * 2.4) * 0.65 + tempoNorm * 0.35,
+    );
+    this.moodEnergy += (energyInst - this.moodEnergy) * Math.min(1, dtu * 0.7);
+    this.moodValence +=
+      (valenceInst - this.moodValence) * Math.min(1, dtu * 0.35);
+
+    // === Giai điệu: dò cao độ trội dải giọng hát/lead → nốt thăng/trầm ===
+    let peakI = this.midLo;
+    let peakV = 0;
+    for (let i = this.midLo; i <= this.midHi; i++) {
+      if (this.freq[i] > peakV) {
+        peakV = this.freq[i];
+        peakI = i;
+      }
+    }
+    if (peakV > 45) {
+      const semi = 12 * Math.log2((peakI * this.hzPerBin) / 440) + 69;
+      if (this.melodySlow === 0) this.melodyFast = this.melodySlow = semi;
+      // EMA nhanh vs chậm: hiệu của chúng = hướng giai điệu đang đi
+      this.melodyFast += (semi - this.melodyFast) * Math.min(1, dtu * 8);
+      this.melodySlow += (semi - this.melodySlow) * Math.min(1, dtu * 1.2);
+      const trend = Math.max(
+        -1,
+        Math.min(1, (this.melodyFast - this.melodySlow) / 5),
+      );
+      this.melodyTrend += (trend - this.melodyTrend) * Math.min(1, dtu * 4);
+      this.melodyLo = Math.min(this.melodyLo, this.melodyFast);
+      this.melodyHi = Math.max(this.melodyHi, this.melodyFast);
+      // Dải co lại từ từ để thích ứng khi bài chuyển tông
+      this.melodyLo += (this.melodyFast - this.melodyLo) * Math.min(1, dtu * 0.02);
+      this.melodyHi += (this.melodyFast - this.melodyHi) * Math.min(1, dtu * 0.02);
+      const range = Math.max(3, this.melodyHi - this.melodyLo);
+      const h = (this.melodyFast - this.melodyLo) / range;
+      this.melodyHeight += (h - this.melodyHeight) * Math.min(1, dtu * 3);
+    } else {
+      this.melodyTrend *= Math.max(0, 1 - dtu * 2);
+    }
+
+    // === Ước lượng thể loại: tempo + cân bằng bass/mid/treble + độ dày onset.
+    // Điểm số làm mượt ~4s rồi lấy max — không nhảy thể loại giữa câu nhạc ===
+    this.onsetRate *= Math.max(0, 1 - dtu * 0.6);
+    const bassN = Math.min(1, this.level * 2.2);
+    const midN = Math.min(1, this.mid * 2.5);
+    const highN = Math.min(1, this.high * 3);
+    const perc = Math.min(1, this.onsetRate / 1.5);
+    const target: Record<MusicGenre, number> = {
+      ballad: (1 - tempoNorm) * (1 - absLoud) * (1 - perc * 0.6),
+      pop: 0.28 + midN * 0.3 + tempoNorm * 0.12,
+      hiphop:
+        bassN * (1 - tempoNorm * 0.8) * (0.35 + perc * 0.65) * (1 - highN * 0.4),
+      rock: midN * (0.35 + tempoNorm * 0.5) * (0.4 + highN * 0.6),
+      edm: bassN * tempoNorm * (0.4 + perc * 0.6) * (0.5 + highN * 0.5),
+    };
+    let best: MusicGenre = "pop";
+    for (const g of Object.keys(target) as MusicGenre[]) {
+      this.genreScores[g] +=
+        (target[g] - this.genreScores[g]) * Math.min(1, dtu * 0.25);
+      if (this.genreScores[g] > this.genreScores[best]) best = g;
+    }
+    this.genre = best;
 
     // Drop: bass chìm dưới mức nền >1s (break/buildup) rồi bùng vượt hẳn nền
     this.energyAvg += (bass - this.energyAvg) * 0.012;
@@ -200,6 +356,8 @@ export class MusicPlayer {
     const fluxHit =
       flux > this.fluxAvg * 1.1 || bass > avg * this.sensitivity * 1.4;
     if (energyHit && fluxHit && gap > 0.25) {
+      // Đếm mật độ onset (dùng cho ước lượng thể loại — nhạc dồn dập vs thưa)
+      this.onsetRate += 0.6;
       if (gap > 0.33 && gap < 0.86) {
         this.interval = this.interval * 0.6 + gap * 0.4;
       } else if (gap / 2 > 0.33 && gap / 2 < 0.86) {
