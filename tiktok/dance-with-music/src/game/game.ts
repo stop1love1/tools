@@ -183,6 +183,12 @@ export class MemeDanceGame {
   private pyroPattern = 0;
   private blinderMat!: THREE.MeshBasicMaterial;
   private blinderFlash = 0;
+  // Lighting director: mức kích hoạt từng nhóm đèn rọi (làm mượt) + "look"
+  // đang chạy — verse luân phiên nhóm đèn thay vì bật hết
+  private beamAct = 0.5;
+  private mhAct = 0.5;
+  private clubAct = 0.7;
+  private lookMode = 0;
   // Object dùng chung truyền xuống mọi Player mỗi frame (tránh cấp phát mới)
   private vibe: MusicVibe = { genre: "pop", melodyTrend: 0, melodyHeight: 0.5 };
   // Đồng diễn: cứ 32 beat cả sàn cùng nhảy một điệu trong 8 beat
@@ -213,6 +219,15 @@ export class MemeDanceGame {
   private djOrdersThisSong = 0;
   private djDefaultMap: THREE.Texture | null = null;
   private djDefaultW = 1.7;
+  // DJ "sống": bộ frame đang dùng (đổi theo beat), cú nhảy drop, độ nghiêng
+  // người theo đoạn nhạc, và trạng thái scratch đĩa
+  private djFrames: THREE.Texture[] = [];
+  private djDefaultFrames: THREE.Texture[] = [];
+  private djFrame = 0;
+  private djJumpT = -1;
+  private djLean = 0;
+  private djScratchT = -1;
+  private djScratchDeck = 0;
   /** HUD gắn handler: user order xong chat bài muốn nghe → thêm vào playlist. */
   onSongRequest: ((nickname: string, query: string) => void) | null = null;
   private djBaseY = 0;
@@ -818,6 +833,8 @@ export class MemeDanceGame {
     this.djSprite.scale.set(1.7, 2.125, 1);
     this.djSprite.position.set(0, this.djBaseY, -FLOOR_D / 2 - 0.5);
     this.djDefaultMap = this.skins[3 % this.skins.length].frames[0];
+    this.djDefaultFrames = this.skins[3 % this.skins.length].frames;
+    this.djFrames = this.djDefaultFrames;
     this.djDefaultW = 1.7;
     this.stageGroup.add(this.djSprite);
 
@@ -1147,10 +1164,12 @@ export class MemeDanceGame {
     this.players.forEach((p) => p.setSkins(custom));
     const dj = custom[3 % custom.length];
     this.djDefaultMap = dj.frames[0];
+    this.djDefaultFrames = dj.frames;
     this.djDefaultW = 2.125 * dj.aspect;
     if (!this.djTakeover) {
       this.djSprite.material.map = this.djDefaultMap;
       this.djSprite.material.needsUpdate = true;
+      this.djFrames = this.djDefaultFrames;
       this.djW = this.djDefaultW;
       this.djSprite.scale.set(this.djW, 2.125, 1);
     }
@@ -1394,6 +1413,7 @@ export class MemeDanceGame {
       this.djTakeover = info;
       this.djSprite.material.map = player.texture;
       this.djSprite.material.needsUpdate = true;
+      this.djFrames = player.skinFrames;
       this.djW = 2.125 * player.skinAspect;
       this.showBanner(
         `🎧 ${player.user.nickname} top donate — lên bàn DJ! Chat tên bài/link để thêm vào playlist`,
@@ -1427,6 +1447,7 @@ export class MemeDanceGame {
         this.djSprite.material.map = this.djDefaultMap;
         this.djSprite.material.needsUpdate = true;
       }
+      this.djFrames = this.djDefaultFrames;
       this.djW = this.djDefaultW;
       this.npScreen.orderedBy = orderedBy;
     }
@@ -1759,8 +1780,10 @@ export class MemeDanceGame {
         this.flames.fire(1.3);
         this.smokeJets.blast(1.2);
         this.frontSparks.fire(1.2);
-        // Vào điệp khúc: cameraman cắt thẳng sang toàn cảnh đón cú bung
+        // Vào điệp khúc: cameraman cắt thẳng sang toàn cảnh đón cú bung,
+        // DJ bật nhảy ăn mừng
         this.cutToWide();
+        this.djJumpT = 0;
       } else if (section < 0.6) {
         this.inClimax = false;
       }
@@ -1806,6 +1829,8 @@ export class MemeDanceGame {
       } else if (this.music.inQuietSection && beat.index % 2 === 0) {
         this.smokeJets.blast(0.22);
       }
+      // Mỗi câu 8 beat đổi "look" — verse luân phiên moving head ↔ beam
+      if (beat.index % 8 === 0) this.lookMode = (this.lookMode + 1) % 2;
       if (this.choreoMove && beat.index >= this.choreoEndBeat) {
         this.choreoMove = null;
         this.players.forEach((p) => (p.choreoMove = null));
@@ -1829,6 +1854,7 @@ export class MemeDanceGame {
       this.smokeJets.blast(1.6);
       this.frontSparks.fire(1.5);
       this.cutToWide();
+      this.djJumpT = 0;
       this.players.forEach((p) => {
         if (p.onFloor) p.jump();
       });
@@ -1892,11 +1918,58 @@ export class MemeDanceGame {
     const mid = this.music.playing ? this.music.mid : 0;
     // Mật độ khói quyết định beam rực cỡ nào — có khói beam mới hiện rõ
     const haze = this.smokeJets.density;
+
+    // ĐẠO DIỄN ĐÈN RỌI — không auto bật cả dàn suốt bài: đoạn trầm tắt
+    // beam gần hết, verse luân phiên nhóm (moving head ↔ beam) theo câu
+    // 8 beat, chỉ điệp khúc mới lên full dàn
+    const sec = this.music.section;
+    let beamT: number;
+    let mhT: number;
+    let clubT: number;
+    if (!this.music.playing) {
+      beamT = 0.4;
+      mhT = 0.4;
+      clubT = 0.65;
+    } else if (sec > 0.7) {
+      beamT = 1;
+      mhT = 1;
+      clubT = 1;
+    } else if (sec < 0.35 || this.music.inQuietSection) {
+      beamT = 0;
+      mhT = 0.22;
+      clubT = 0.35;
+    } else {
+      beamT = this.lookMode === 0 ? 0.25 : 1;
+      mhT = this.lookMode === 0 ? 1 : 0.3;
+      clubT = 0.7;
+    }
+    const actK = Math.min(1, dt * 1.8);
+    this.beamAct += (beamT - this.beamAct) * actK;
+    this.mhAct += (mhT - this.mhAct) * actK;
+    this.clubAct += (clubT - this.clubAct) * actK;
+
     this.floor.update(dt, effHype, beat, level, this.music.playing, mood);
     this.ledWall.update(dt, effHype, beat, level, this.music.playing, mid, mood);
-    this.beams.update(dt, effHype, beat, level, this.music.playing, mood, haze);
+    this.beams.update(
+      dt,
+      effHype,
+      beat,
+      level,
+      this.music.playing,
+      mood,
+      haze,
+      this.beamAct,
+    );
     this.ball.update(dt, effHype, mEnergy);
-    this.clubLights.update(dt, effHype, beat, level, this.music.playing, mood);
+    this.clubLights.update(
+      dt,
+      effHype,
+      beat,
+      level,
+      this.music.playing,
+      mood,
+      this.clubAct,
+    );
     this.speakers[0].update(dt, effHype, beat);
     this.speakers[1].update(dt, effHype, beat);
     this.fireworks.update(dt);
@@ -1958,12 +2031,33 @@ export class MemeDanceGame {
       : 0;
     this.stageGroup.position.x +=
       (stageSwayTarget - this.stageGroup.position.x) * Math.min(1, dt * 8);
-    // DJ quẩy: nhún theo kick (mạnh hơn mỗi 4 beat), đi qua lại sau bàn,
-    // thi thoảng quay người, gật đầu theo nhịp
+    // DJ "sống" theo đoạn nhạc: đổi frame skin mỗi beat, đoạn trầm cúi
+    // người chỉnh mixer + hay chạy tới bàn đĩa, điệp khúc ngửa người quẩy
+    // hết cỡ, drop thì bật nhảy; thi thoảng scratch đĩa như DJ thật
     if (this.music.playing && beat.index !== this.djLastBeat) {
       this.djLastBeat = beat.index;
+      if (this.djFrames.length > 1) {
+        this.djFrame = (this.djFrame + 1) % this.djFrames.length;
+        this.djSprite.material.map = this.djFrames[this.djFrame];
+        this.djSprite.material.needsUpdate = true;
+      }
       if (Math.random() < 0.22) this.djFacing = -this.djFacing;
       if (Math.random() < 0.3) this.djXTarget = (Math.random() - 0.5) * 1.7;
+      // Scratch: nhạc có mid dày (vocal/synth) → 6% mỗi beat chạy tới một
+      // bàn đĩa và kéo đĩa tới lui ~0.9s
+      if (
+        this.djScratchT < 0 &&
+        this.music.mid > 0.22 &&
+        Math.random() < 0.06
+      ) {
+        this.djScratchT = 0;
+        this.djScratchDeck = Math.random() < 0.5 ? 0 : 1;
+        this.djXTarget = this.djScratchDeck === 0 ? -1.45 : 1.45;
+      }
+    }
+    if (this.djScratchT >= 0) {
+      this.djScratchT += dt;
+      if (this.djScratchT > 0.9) this.djScratchT = -1;
     }
     this.djX += (this.djXTarget - this.djX) * Math.min(1, dt * 3.5);
     this.djFacingCur += (this.djFacing - this.djFacingCur) * Math.min(1, dt * 9);
@@ -1974,14 +2068,40 @@ export class MemeDanceGame {
           : 0.08
         : this.djFacingCur;
     this.djSprite.scale.x = this.djW * djF;
+    // Đoạn trầm: cúi về bàn mixer; điệp khúc: ngửa người về phía đám đông
+    const djLeanT = !this.music.playing
+      ? 0
+      : this.djScratchT >= 0 || sec < 0.35
+        ? 0.16
+        : this.inClimax
+          ? -0.12
+          : 0;
+    this.djLean += (djLeanT - this.djLean) * Math.min(1, dt * 4);
     const strongBeat = this.beatIndex % 4 === 0 ? 1.5 : 1;
     this.djSprite.position.x = this.djX;
-    this.djSprite.position.y = this.djBaseY + kick * 0.3 * strongBeat;
+    // Nhún dịu ở verse, quẩy hết biên độ ở điệp khúc
+    this.djSprite.position.y =
+      this.djBaseY + kick * 0.3 * strongBeat * (0.55 + sec * 0.9);
+    if (this.djJumpT >= 0) {
+      this.djJumpT += dt / 0.7;
+      if (this.djJumpT >= 1) this.djJumpT = -1;
+      else
+        this.djSprite.position.y += Math.sin(this.djJumpT * Math.PI) * 0.85;
+    }
     this.djSprite.material.rotation = this.music.playing
-      ? Math.sin(t * 2.4) * 0.05 + Math.sin(beat.pulse * Math.PI * 2) * 0.09
+      ? Math.sin(t * 2.4) * 0.05 +
+        Math.sin(beat.pulse * Math.PI * 2) * 0.09 * (0.6 + sec * 0.8) +
+        this.djLean
       : Math.sin(t * 1.2) * 0.03;
     if (this.music.playing) {
-      this.decks.forEach((d) => (d.rotation.y += dt * (2 + effHype * 6)));
+      this.decks.forEach((d, i) => {
+        if (this.djScratchT >= 0 && i === this.djScratchDeck) {
+          // Kéo đĩa tới lui — platter quay giật ngược xuôi
+          d.rotation.y += Math.sin(t * 26) * dt * 9;
+        } else {
+          d.rotation.y += dt * (2 + effHype * 6);
+        }
+      });
     }
     this.movingHeads.forEach(({ yoke, head, dir }, i) => {
       const panTarget = this.music.playing ? (this.mhPan[i] ?? 0) : 0;
@@ -1999,7 +2119,8 @@ export class MemeDanceGame {
       mhMat.opacity = this.music.playing
         ? (0.035 + level * 0.1 + kick * level * 0.08) *
           (0.55 + mEnergy * 0.75) *
-          (0.4 + haze * 0.85)
+          (0.4 + haze * 0.85) *
+          (0.1 + this.mhAct * 0.9)
         : 0;
     });
     // Blinder tắt nhanh sau mỗi cú chớp

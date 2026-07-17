@@ -295,6 +295,11 @@ export class Player {
     return this.currentSkin.frames[0];
   }
 
+  /** Toàn bộ frame của skin hiện tại — cho DJ takeover cũng nhảy theo beat. */
+  get skinFrames(): THREE.Texture[] {
+    return this.currentSkin.frames;
+  }
+
   get isDancing(): boolean {
     return performance.now() < this.danceUntil;
   }

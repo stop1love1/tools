@@ -324,23 +324,6 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     });
   };
 
-  const fireTestChat = (text: string) => {
-    gameRef.current?.handleChat({
-      id: `pv-c-${Date.now()}`,
-      user: testUser.current,
-      comment: text,
-      ts: Date.now(),
-    });
-  };
-
-  const fireTestLike = () => {
-    gameRef.current?.handleLike({
-      user: testUser.current,
-      count: 10,
-      ts: Date.now(),
-    });
-  };
-
   const toggleDemo = () => {
     const game = gameRef.current;
     if (!game) return;
@@ -754,47 +737,37 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       )}
 
       {preview && (
-        <aside className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 flex max-w-[70vw] flex-wrap gap-1.5 max-sm:right-3 max-sm:max-w-none max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:pb-1 max-sm:[scrollbar-width:none]">
-          <button
-            type="button"
-            onClick={() => fireTestChat(rules.startCommand)}
-            className="shrink-0 rounded-full border border-cyan-300/40 bg-black/60 px-3.5 py-2 text-xs font-semibold text-cyan-300 backdrop-blur hover:border-cyan-300/80 active:scale-95"
-          >
-            💬 “{rules.startCommand}” lên sàn
-          </button>
-          <button
-            type="button"
-            onClick={() => fireTestChat("hello anh em 👋")}
-            className="shrink-0 rounded-full border border-white/15 bg-black/60 px-3.5 py-2 text-xs font-semibold text-white/80 backdrop-blur hover:text-white active:scale-95"
-          >
-            💬 comment
-          </button>
-          <button
-            type="button"
-            onClick={() => fireTestChat("nhảy")}
-            className="shrink-0 rounded-full border border-white/15 bg-black/60 px-3.5 py-2 text-xs font-semibold text-white/80 backdrop-blur hover:text-white active:scale-95"
-          >
-            💬 nhảy
-          </button>
-          <button
-            type="button"
-            onClick={fireTestLike}
-            className="shrink-0 rounded-full border border-rose-400/40 bg-black/60 px-3.5 py-2 text-xs font-semibold text-rose-300 backdrop-blur hover:border-rose-400/80 active:scale-95"
-          >
-            ❤️ ×10
-          </button>
-          {rules.giftActions.map((rule, i) => (
-            <button
-              key={`${rule.min}-${i}`}
-              type="button"
-              onClick={() => fireTestGift(rule)}
-              className="shrink-0 rounded-full border border-amber-300/40 bg-black/60 px-3.5 py-2 text-xs font-semibold text-amber-300 backdrop-blur hover:border-amber-300/80 active:scale-95"
-              title={GIFT_ACTION_META[rule.action].label}
-            >
-              {GIFT_ACTION_META[rule.action].emoji}{" "}
-              {rule.gift ? rule.gift.split(" (")[0] : `${rule.min}💎`}
-            </button>
-          ))}
+        <aside className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 flex max-w-[80vw] flex-wrap items-end gap-2 max-sm:right-3 max-sm:max-w-none max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:pb-1 max-sm:[scrollbar-width:none]">
+          {/* Dàn icon quà theo đúng cấu hình settings — bấm để test donate */}
+          {rules.giftActions.map((rule, i) => {
+            const gift = TIKTOK_GIFTS.find((g) => g.name === rule.gift);
+            const meta = GIFT_ACTION_META[rule.action];
+            return (
+              <button
+                key={`${rule.min}-${i}`}
+                type="button"
+                onClick={() => fireTestGift(rule)}
+                title={`${rule.gift ?? `${rule.min}💎`} → ${meta.label}`}
+                className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-amber-300/40 bg-black/60 backdrop-blur transition-transform hover:border-amber-300/80 active:scale-90"
+              >
+                {gift?.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={gift.image}
+                    alt={gift.name}
+                    className="h-8 w-8 object-contain"
+                  />
+                ) : (
+                  <span className="text-2xl leading-none">
+                    {gift?.emoji ?? meta.emoji}
+                  </span>
+                )}
+                <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/85 px-1.5 text-[9px] font-bold text-amber-300">
+                  {rule.min}💎
+                </span>
+              </button>
+            );
+          })}
         </aside>
       )}
 

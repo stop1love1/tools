@@ -263,6 +263,7 @@ export class LightBeams {
     musicOn = true,
     mood?: Mood,
     haze = 0.5,
+    active = 1,
   ) {
     const t = performance.now() / 1000;
     const kick = Math.max(0, 1 - beat.pulse * 3);
@@ -285,11 +286,13 @@ export class LightBeams {
         : 0;
       beam.rotation.x += (targetX - beam.rotation.x) * Math.min(1, dt * 5);
       const mat = beam.material as THREE.MeshBasicMaterial;
-      // Beam chỉ rực khi không khí có khói — nhân theo mật độ haze
+      // Beam chỉ rực khi có khói (haze) và khi lighting director BẬT nhóm
+      // này (active) — không còn auto sáng cả dàn suốt bài
       mat.opacity = musicOn
         ? (0.04 + hype * 0.05 + level * 0.13 + kick * (0.03 + level * 0.11)) *
           (0.4 + energy * 0.7) *
-          (0.35 + haze * 0.9)
+          (0.35 + haze * 0.9) *
+          active
         : 0.015;
       if (mood) {
         // Màu beam bám theo hue tâm trạng, tỏa nhẹ hai bên cho có chiều sâu
@@ -434,6 +437,7 @@ export class ClubLights {
     level = 0,
     musicOn = true,
     mood?: Mood,
+    active = 1,
   ) {
     const t = performance.now() / 1000;
     const kick = Math.max(0, 1 - beat.pulse * 3);
@@ -452,13 +456,15 @@ export class ClubLights {
         5.2 + Math.sin(t * 0.3 + i) * 1.2,
         Math.sin(a) * 8,
       );
-      // Cap cứng để không bao giờ rửa trắng nhân vật hay đốt lóa sàn
+      // Cap cứng để không bao giờ rửa trắng nhân vật hay đốt lóa sàn;
+      // active = lighting director bật/giảm nhóm đèn màu theo đoạn nhạc
       const target = musicOn
         ? Math.min(
             80,
             (22 + hype * 22 + level * 60 + kick * (15 + level * 45 + hype * 15)) *
               (0.35 + energy * 0.65),
-          )
+          ) *
+          (0.25 + active * 0.75)
         : 8;
       light.intensity += (target - light.intensity) * Math.min(1, dt * 6);
       if (mood) {
