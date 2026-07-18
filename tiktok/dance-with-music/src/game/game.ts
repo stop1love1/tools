@@ -55,6 +55,18 @@ const HYPE_DECAY_PER_S = 0.14;
 // TikTok không có event "rời live" — user im lặng quá lâu coi như đã thoát
 const IDLE_REMOVE_MS = 4 * 60_000;
 
+/**
+ * Ép về số hữu hạn. Event từ WebSocket qua JSON.parse KHÔNG được TS đảm bảo
+ * đúng kiểu lúc chạy: một trường số thiếu/null biến phép nhân thành NaN. Nếu
+ * NaN lọt vào `hype` (biến dùng chung mọi vũ công) thì mọi Math.min/max sau đó
+ * đều ra NaN vĩnh viễn → toạ độ nhân vật NaN → sprite bị frustum-cull → MẤT
+ * TOÀN BỘ nhân vật trên sàn tới khi reload. Chặn ngay từ biên.
+ */
+function num(v: unknown, fallback = 0): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 // "Chất" ánh sáng theo thể loại: hue lệch thêm, hệ số năng lượng (tốc độ +
 // độ sáng đèn), mức strobe cho phép — ballad ấm dịu không strobe, EDM gắt
 const GENRE_LIGHT: Record<
@@ -112,6 +124,17 @@ const ORBIT_SHOTS: CamShot[] = [
   { pos: [-12, 4.2, 1.5], look: [4, 2.1, -6.5], drift: 0.7, kind: "close" },
   { pos: [12, 4.2, 1.5], look: [-4, 2.1, -6.5], drift: 0.7, kind: "close" },
 ];
+// Ống kính theo loại khung — chất điện ảnh: cận cảnh dùng "tele" (FOV hẹp) nén
+// hậu cảnh, ấm cúng; toàn cảnh dùng "wide" (FOV rộng) cho hoành tráng
+const FOV_BY_KIND: Record<CamShot["kind"], number> = {
+  close: 44,
+  dj: 48,
+  side: 50,
+  medium: 52,
+  top: 54,
+  crowd: 58,
+  wide: 60,
+};
 const STAGE_H = 0.9;
 const AUDIENCE_Y = -0.35;
 const AUDIENCE_Z0 = FLOOR_D / 2 + 0.5;
@@ -306,6 +329,10 @@ export class MemeDanceGame {
   private camLook = new THREE.Vector3(0, 1.8, -4);
   private camShotPos = new THREE.Vector3();
   private camShotLook = new THREE.Vector3();
+  // Chất điện ảnh: ống kính (FOV) theo loại khung. Giữ khung CHẮC kiểu MV —
+  // không nghiêng máy, không rung tay liên tục; động lực đến từ cắt cảnh theo
+  // nhịp + punch-zoom theo kick + bám chủ thể thật.
+  private camBaseFov = 58;
 
   private spotlightPlayer: Player | null = null;
   private spotlightUntil = 0;
@@ -1893,11 +1920,26 @@ export class MemeDanceGame {
     // Nhạc căng lướt nhanh dứt khoát, nhạc êm trôi chậm rãi
     this.camGlide = 0.3 + opts.energy * 0.6;
     this.camMoveMode = Math.random() < 0.6 ? "push" : "slide";
-    // Cận cảnh: bám theo một vũ công thật trên sàn cho khung có chủ thể
+    // Cận/trung cảnh: bám một CHỦ THỂ thật để khung luôn có người, không ngắm
+    // trúng chỗ trống. Góc rộng/trên/cánh giữ điểm ngắm sân khấu cố định.
     this.camSubject =
-      pick.s.kind === "close" && Math.random() < 0.75
-        ? this.pickActiveDancer()
+      pick.s.kind === "close" || pick.s.kind === "medium"
+        ? this.pickHeroSubject()
         : null;
+  }
+
+  /**
+   * Chọn "nhân vật chính" để đóng khung: ưu tiên người đang được spotlight,
+   * rồi hàng đầu (top tương tác/donate), cuối cùng là vũ công bất kỳ trên sàn.
+   */
+  private pickHeroSubject(): Player | null {
+    if (this.spotlightPlayer?.onFloor) return this.spotlightPlayer;
+    const front = this.frontRow.filter(
+      (p): p is Player => !!p && p.onFloor && !p.onPodium,
+    );
+    if (front.length)
+      return front[Math.floor(Math.random() * front.length)];
+    return this.pickActiveDancer();
   }
 
   /** Cắt thẳng sang góc toàn cảnh — phản xạ của cameraman khi drop/vào điệp khúc. */
@@ -2039,27 +2081,32 @@ export class MemeDanceGame {
   handleGift(event: GiftEvent) {
     const player = this.ensurePlayer(event.user);
     player.celebrate();
+    // Ép các trường số về hữu hạn — event thiếu trường sẽ thành NaN, làm hỏng
+    // điểm/sort/podium và số hạt confetti
+    const diamondCount = num(event.diamondCount);
+    const repeatCount = num(event.repeatCount, 1);
+    const totalDiamonds = num(event.totalDiamonds);
     const bursts = Math.min(
       6,
-      1 + Math.floor((event.diamondCount * event.repeatCount) / 100),
+      1 + Math.floor((diamondCount * repeatCount) / 100),
     );
     this.confetti.burst(30 + bursts * 20);
     this.showBanner(
-      `🎁 ${event.user.nickname} tặng ${event.giftName} ×${event.repeatCount}` +
-        (event.totalDiamonds > 0 ? ` 💎${event.totalDiamonds}` : ""),
+      `🎁 ${event.user.nickname} tặng ${event.giftName} ×${repeatCount}` +
+        (totalDiamonds > 0 ? ` 💎${totalDiamonds}` : ""),
     );
 
     // Cộng 💎 TRƯỚC khi xử lý action — orderDj cần so tổng donate mới nhất
     if (!event.streaking) {
-      player.diamonds += event.totalDiamonds;
+      player.diamonds += totalDiamonds;
       // Donate tính điểm nặng nhất — 1💎 = 5 điểm tương tác
-      player.score += event.totalDiamonds * 5;
+      player.score += totalDiamonds * 5;
       // Đổi màu tên theo mốc donate mới (trắng → xanh/vàng/hồng/tím VIP)
       player.refreshNameTag();
       this.updatePodium();
     }
 
-    const value = event.diamondCount;
+    const value = diamondCount;
     const matched = this.rules.giftActions
       .filter((rule) => value >= rule.min)
       .sort((a, b) => b.min - a.min)[0];
@@ -2179,11 +2226,12 @@ export class MemeDanceGame {
   }
 
   handleLike(event: LikeEvent) {
-    this.hype = Math.min(1, this.hype + event.count * 0.014);
+    const count = num(event.count, 1);
+    this.hype = Math.min(1, this.hype + count * 0.014);
     const player = this.players.get(event.user.userId);
     if (player) {
       player.lastActive = performance.now();
-      player.score += event.count * 0.05;
+      player.score += count * 0.05;
     }
   }
 
@@ -2452,6 +2500,9 @@ export class MemeDanceGame {
       beat = { index: this.beatIndex, pulse: 1 };
     }
 
+    // Backstop: NaN lọt vào hype sẽ lan ra mọi Math.min/max thành NaN vĩnh
+    // viễn → toạ độ vũ công NaN → mất sạch nhân vật tới khi reload. Tự chữa.
+    if (!Number.isFinite(this.hype)) this.hype = 0;
     this.hype = Math.max(0, this.hype - HYPE_DECAY_PER_S * dt);
     const effHype = Math.max(this.hype, this.music.level * 0.75);
     const level = this.music.playing ? this.music.level : 0;
@@ -2980,9 +3031,10 @@ export class MemeDanceGame {
             energy: mEnergy,
             kinds,
           });
-          // Độ dài take lệch ngẫu nhiên ±2 beat cho nhịp cắt tự nhiên
+          // Độ dài take: điệp khúc cắt nhanh (kiểu MV), verse vừa, trầm dài vừa
+          // phải (không để đứng một góc quá lâu). Lệch ±2 beat cho tự nhiên.
           const jitter = Math.floor(Math.random() * 5) - 2;
-          this.takeLen = (hot ? 8 : calm ? 24 : 16) + jitter;
+          this.takeLen = (hot ? 8 : calm ? 18 : 14) + jitter;
         }
       }
     } else if (this.takeT >= 13) {
@@ -3002,33 +3054,33 @@ export class MemeDanceGame {
       // Chặn cứng không cho máy tụt xuống dưới mặt sàn (thấy gầm sân khấu)
       this.camShotPos.y = Math.max(0.8, this.camShotPos.y);
       this.camShotLook.copy(this.fcTarget);
+      this.camBaseFov = 55;
     } else {
       const shot =
         this.rules.cameraMode === "overview"
           ? OVERVIEW_SHOT
           : shots[this.shotIdx % shots.length];
+      this.camBaseFov = FOV_BY_KIND[shot.kind];
       // Dolly trong take: ease mượt suốt ~11s, kèm rung thở rất nhẹ
       const takeProg = Math.min(1, this.takeT / 11);
       const takeEase = takeProg * takeProg * (3 - 2 * takeProg);
       this.camShotLook.set(shot.look[0], shot.look[1], shot.look[2]);
-      // Cận cảnh: khung ngắm bám theo vũ công thật (chủ thể) thay vì điểm cố
-      // định — máy như "đi tìm" người nhảy giữa sàn
-      if (
-        shot.kind === "close" &&
-        this.camSubject &&
-        this.camSubject.onFloor
-      ) {
-        const sp = this.camSubject.group.position;
-        this.camShotLook.set(sp.x, sp.y + 1.1, sp.z);
-      } else if (shot.kind !== "close") {
+      // Cận/trung cảnh: khung ngắm bám CHỦ THỂ thật (chiều cao theo cỡ nhân
+      // vật) thay vì điểm cố định — luôn có người trong khung
+      const tracks = shot.kind === "close" || shot.kind === "medium";
+      if (tracks && this.camSubject && this.camSubject.onFloor) {
+        const g = this.camSubject.group;
+        const sp = g.position;
+        const h = 1.15 * Math.max(0.6, g.scale.y || 1);
+        this.camShotLook.set(sp.x, sp.y + h, sp.z);
+      } else if (!tracks) {
         this.camSubject = null;
       }
+      // Trôi rất nhẹ, tần số THẤP (thở) — không rung. Bỏ dao động nhanh cũ.
       this.camShotPos.set(
-        shot.pos[0] + Math.sin(t * 0.13) * 0.5 * shot.drift,
-        shot.pos[1] +
-          Math.sin(t * 0.09) * 0.25 * shot.drift +
-          Math.sin(t * 5) * effHype * 0.04,
-        shot.pos[2] + Math.sin(t * 0.07) * 0.4 * shot.drift,
+        shot.pos[0] + Math.sin(t * 0.13) * 0.4 * shot.drift,
+        shot.pos[1] + Math.sin(t * 0.09) * 0.2 * shot.drift,
+        shot.pos[2] + Math.sin(t * 0.07) * 0.35 * shot.drift,
       );
       if (this.camMoveMode === "push") {
         // Đẩy máy từ từ về phía điểm nhìn (~1/5 quãng đường mỗi take)
@@ -3049,37 +3101,51 @@ export class MemeDanceGame {
       this.camPos.copy(this.camShotPos);
       this.camLook.copy(this.camShotLook);
     } else {
-      const camK = Math.min(1, dt * this.camGlide);
+      // Làm mượt kiểu hàm mũ (độc lập FPS) — lia máy êm, không khựng/giật
+      const camK = 1 - Math.exp(-dt * this.camGlide * 3.2);
       this.camPos.lerp(this.camShotPos, camK);
       this.camLook.lerp(this.camShotLook, camK);
     }
-    if (this.focusPlayer && this.focusBlend > 0.01) {
-      const target = this.focusPlayer.group.position;
+    const focusingCam = this.focusPlayer && this.focusBlend > 0.01;
+    if (focusingCam && this.focusPlayer) {
+      const g = this.focusPlayer.group;
+      const target = g.position;
       const b = this.focusBlend;
-      const focusCamY = target.y + 2.6;
-      const focusLookY = target.y + 1.2;
+      // QUAN TRỌNG: khung theo KÍCH THƯỚC THẬT của nhân vật. Người được quà
+      // thường bị grow (×1.9) hoặc đứng podium (×1.4) nên rất to — khoảng cách
+      // cố định cũ (z+6) khiến máy dí sát tràn khung. Lùi xa theo chiều cao.
+      const s = Math.max(0.4, g.scale.y || 1);
+      const charH = 1.9 * s;
+      const dist = 4.2 + charH * 1.7; // càng to càng lùi để lọt trọn người
+      const lookY = target.y + charH * 0.55; // ngắm giữa thân, chừa headroom
+      const camY = lookY + charH * 0.14;
       this.camera.position.set(
-        this.camPos.x * (1 - b) + target.x * 0.7 * b,
-        this.camPos.y * (1 - b) + focusCamY * b,
-        this.camPos.z * (1 - b) + (target.z + 6) * b,
+        this.camPos.x * (1 - b) + target.x * 0.5 * b,
+        this.camPos.y * (1 - b) + camY * b,
+        this.camPos.z * (1 - b) + (target.z + dist) * b,
       );
       this.lookTarget.set(
         this.camLook.x * (1 - b) + target.x * b,
-        this.camLook.y * (1 - b) + focusLookY * b,
+        this.camLook.y * (1 - b) + lookY * b,
         this.camLook.z * (1 - b) + target.z * b,
       );
-      this.camera.lookAt(this.lookTarget);
     } else {
       this.camera.position.copy(this.camPos);
-      this.camera.lookAt(this.camLook);
+      this.lookTarget.copy(this.camLook);
     }
+    // Khung CHẮC, chân trời thẳng — không rung tay, không nghiêng máy.
+    this.camera.lookAt(this.lookTarget);
 
     // Bloom "thở" theo kick của bass, bùng thêm khi drop; giữ mức thấp để
     // không lóa — glow chỉ nhấn nhá chứ không rửa trắng cả khung hình
     this.bloom.strength =
       0.22 + mEnergy * 0.16 + effHype * 0.22 + kick * level * 0.25 + drop * 0.25;
-    // Camera punch-in nhẹ theo kick — cảm giác dồn nhịp như video ca nhạc
-    const targetFov = 58 - kick * level * (2 + mEnergy * 2.5) - drop * 2;
+    // Ống kính theo loại khung + punch-in theo kick cho cảm giác dồn nhịp.
+    // Focus KHÔNG punch (nếu không sẽ zoom sát thêm khi đang có action).
+    const punch = kick * level * (2 + mEnergy * 2.5) + drop * 2;
+    // Focus: ống kính cố định 46° + KHÔNG punch → khung ổn định, không zoom sát
+    // thêm khi nhân vật đang có action (grow/podium)
+    const targetFov = focusingCam ? 46 : this.camBaseFov - punch;
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 10);
     this.camera.updateProjectionMatrix();
     this.composer.render();
