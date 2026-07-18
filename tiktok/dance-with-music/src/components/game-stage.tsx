@@ -96,6 +96,10 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   const [showLegend, setShowLegend] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [demoRunning, setDemoRunning] = useState(false);
+  // Bù nhịp thủ công (ms) — canh dancer/đèn khớp tiếng thật. Hiện tạm khi chỉnh.
+  const [beatSync, setBeatSync] = useState(0);
+  const [showBeatSync, setShowBeatSync] = useState(false);
+  const beatSyncHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [rules, setRules] = useState<GameRules>(DEFAULT_RULES);
 
   type PlaylistItem = {
@@ -134,6 +138,12 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     const game = new MemeDanceGame(canvas);
     game.rules = loadRules();
     gameRef.current = game;
+    // Khôi phục mức bù nhịp đã canh lần trước
+    const savedSync = Number(localStorage.getItem("md:beatSync") ?? 0);
+    if (Number.isFinite(savedSync) && savedSync !== 0) {
+      game.setBeatSyncMs(savedSync);
+      setBeatSync(savedSync);
+    }
 
     const skinsReady = fetch("/api/characters")
       .then((r) => r.json())
@@ -235,6 +245,20 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       }
       if (e.key === "s" || e.key === "S") setShowSettings((v) => !v);
       if (e.key === "Escape") setShowSettings(false);
+      // Canh nhịp live: , / . nhích ∓10ms, phím 0 đặt lại. Cho khớp tiếng thật.
+      if (e.key === "," || e.key === "." || e.key === "0") {
+        const g = gameRef.current;
+        if (!g) return;
+        const next =
+          e.key === "0" ? 0 : g.beatSyncMs + (e.key === "." ? 10 : -10);
+        g.setBeatSyncMs(next);
+        const v = g.beatSyncMs;
+        setBeatSync(v);
+        localStorage.setItem("md:beatSync", String(v));
+        setShowBeatSync(true);
+        if (beatSyncHideRef.current) clearTimeout(beatSyncHideRef.current);
+        beatSyncHideRef.current = setTimeout(() => setShowBeatSync(false), 1800);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -846,6 +870,16 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
           <span>👀 {stats.viewerCount.toLocaleString("vi-VN")}</span>
           <span>❤️ {stats.totalLikes.toLocaleString("vi-VN")}</span>
           <span>💎 {stats.totalDiamonds.toLocaleString("vi-VN")}</span>
+        </div>
+      )}
+
+      {showBeatSync && (
+        <div className="pointer-events-none absolute left-1/2 top-[max(0.75rem,env(safe-area-inset-top))] z-30 -translate-x-1/2 rounded-full border border-cyan-300/50 bg-black/80 px-4 py-2 text-center text-sm font-semibold text-cyan-200 backdrop-blur">
+          🎵 Canh nhịp: {beatSync > 0 ? "+" : ""}
+          {beatSync} ms
+          <span className="ml-2 text-[11px] font-normal text-white/45">
+            , / . chỉnh · 0 reset
+          </span>
         </div>
       )}
 

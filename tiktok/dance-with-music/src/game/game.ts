@@ -3262,6 +3262,14 @@ export class MemeDanceGame {
     return this.hype;
   }
 
+  /** Bù nhịp thủ công (ms, +sớm/−trễ) — canh dancer/đèn khớp tiếng thật. */
+  get beatSyncMs(): number {
+    return Math.round(this.music.beatOffset * 1000);
+  }
+  setBeatSyncMs(ms: number) {
+    this.music.beatOffset = Math.max(-0.4, Math.min(0.4, ms / 1000));
+  }
+
   resize() {
     const canvas = this.renderer.domElement;
     const parent = canvas.parentElement;

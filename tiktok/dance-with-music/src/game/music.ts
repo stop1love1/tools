@@ -478,12 +478,19 @@ export class MusicPlayer {
   // đẩy PHA sớm lên chút để hiệu ứng loé đúng lúc nghe thấy kick, không sau
   // một nhịp hình. Nhỏ (~40ms) nên phần tử tức thời cũng không thấy sớm rõ.
   private static readonly BEAT_LEAD = 0.04;
+  /**
+   * Bù nhịp thủ công (giây, +sớm/−trễ) — người vận hành tự canh cho khớp tiếng
+   * thực tế (bù độ trễ tuỳ máy/bài/đường stream). Chỉnh live bằng phím.
+   */
+  beatOffset = 0;
 
   getBeat(): Beat {
     const now = performance.now() / 1000;
     let ph =
-      (now - this.lastOnset + MusicPlayer.BEAT_LEAD) / this.interval;
+      (now - this.lastOnset + MusicPlayer.BEAT_LEAD + this.beatOffset) /
+      this.interval;
     ph -= Math.floor(ph); // giữ trong [0,1) sau khi đẩy pha
+    if (ph < 0) ph += 1;
     return { index: this.beatIndex, pulse: Math.min(0.999, ph) };
   }
 }

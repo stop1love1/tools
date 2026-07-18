@@ -698,24 +698,27 @@ export class Fireworks {
     if (type === "comet") center.y -= 2.2;
 
     const baseHue = hue ?? Math.random();
-    let gravity = 4.5;
+    // Trọng lực NHẸ để pháo nở & lơ lửng trên trời rồi tắt, không mưa sao rơi
+    // ào xuống sân khấu (trước đây trọng lực nặng làm rơi khá nhiều)
+    let gravity = 2.6;
     let life = BURST_LIFE;
     const color = new THREE.Color();
     if (type === "willow") {
-      gravity = 6.8;
-      life = 2.6;
+      // Liễu rủ vẫn buông xuống nhưng dịu hơn hẳn + tắt sớm hơn
+      gravity = 4;
+      life = 2;
       color.setHSL(0.11 + Math.random() * 0.03, 0.9, 0.62); // vàng ấm cố định
     } else if (type === "ring") {
-      gravity = 3.2;
-      life = 1.5;
+      gravity = 2;
+      life = 1.4;
       color.setHSL(baseHue, 0.95, 0.62);
     } else if (type === "crackle") {
-      gravity = 4;
-      life = 1.9;
+      gravity = 2.4;
+      life = 1.7;
       color.setHSL(baseHue, 0.9, 0.66);
     } else if (type === "comet") {
-      gravity = 4.5;
-      life = 2.2;
+      gravity = 2.8;
+      life = 2;
       color.setHSL(baseHue, 0.95, 0.66);
     } else {
       color.setHSL(baseHue, 0.95, 0.62);
@@ -1535,17 +1538,14 @@ export type DirectorCtx = {
 const FLAME_PATTERNS = 5;
 
 /**
- * "Người chạy pyro" ảo — bản ỔN ĐỊNH: bắn ĐỀU theo nhịp và bám ĐOẠN nhạc
- * (verse êm → im, điệp khúc/drop → bung) thay vì quỹ năng lượng + random gây
- * thất thường. Không kìm-bung noisy, không bỏ nhịp ngẫu nhiên; cadence pháo
- * hoa cố định + luôn nổ khi drop (có cooldown chống nổ chồng). Kiểu pháo hoa
- * và pattern lửa xoay VÒNG tuần tự cho đa dạng mà đoán trước được.
+ * "Người chạy pyro" ảo — bản ỔN ĐỊNH: điều phối LỬA / TIA / CO2 bắn ĐỀU theo
+ * nhịp và bám ĐOẠN nhạc (verse êm → im, điệp khúc → bung), pattern lửa xoay
+ * VÒNG tuần tự cho đa dạng mà đoán trước được. PHÁO HOA KHÔNG thuộc director —
+ * chỉ dành cho khoảnh khắc đặc biệt (donate / drop-cao trào), xử lý ở game.ts.
  */
 export class PyroDirector {
-  private lastType: FireworkType | null = null;
   private pattern = 0;
   private patternUntil = 0; // giữ pattern lửa tới ô nhịp này rồi xoay tiếp
-  private lastFwBar = -999; // beat của loạt pháo hoa gần nhất (cooldown)
 
   /** Không còn quỹ năng lượng — giữ chữ ký cho vòng update của game. */
   update(_dt: number) {}
@@ -1553,7 +1553,7 @@ export class PyroDirector {
   /** Gọi mỗi beat MỚI → trả về danh sách cue cần thi hành. */
   cue(ctx: DirectorCtx): PyroCue[] {
     const cues: PyroCue[] = [];
-    const { beat, level, section, drop, beatConfidence, mood } = ctx;
+    const { beat, level, section, beatConfidence } = ctx;
     const bar = beat.index;
 
     // Chưa bắt được nhịp rõ → im, tránh bắn sai phách
@@ -1583,30 +1583,9 @@ export class PyroDirector {
       cues.push({ kind: "smoke", strength: 0.5 + level * 0.4 });
     }
 
-    // PHÁO HOA — cadence CHẮC CHẮN: định kỳ mỗi 8 ô nhịp trong điệp khúc VÀ
-    // luôn nổ khi drop; cooldown 4 phách chống nổ chồng. Không random bỏ nhịp.
-    const periodic = chorus && bar % 32 === 0;
-    const onDrop = drop > 0.5;
-    if ((periodic || onDrop) && bar - this.lastFwBar >= 4) {
-      this.lastFwBar = bar;
-      const big = onDrop || section > 0.85;
-      const shells = big ? 2 + (bar % 2) : 1; // 1..3 quả, xác định theo ô nhịp
-      for (let s = 0; s < shells; s++) {
-        const type = Fireworks.randomType(this.lastType);
-        this.lastType = type;
-        cues.push({
-          kind: "firework",
-          type,
-          pos: new THREE.Vector3(
-            (((bar + s) % 5) - 2) * 3.6, // rải vị trí xác định trái↔phải
-            3.5 + ((bar + s) % 3) * 0.8,
-            -7 + (((bar + s) % 3) - 1) * 1.5,
-          ),
-          strength: 1.4 + level,
-          hue: (((mood.hue + ((bar % 5) - 2) * 0.06) % 1) + 1) % 1,
-        });
-      }
-    }
+    // PHÁO HOA KHÔNG do director bắn định kỳ nữa — chỉ dành cho khoảnh khắc
+    // ĐẶC BIỆT: khi có người donate hoặc vào cú drop/cao trào lớn nhất (xử lý
+    // trực tiếp trong game.ts). Ở đây pháo hoa im để không "rơi" suốt bài.
 
     return cues;
   }
