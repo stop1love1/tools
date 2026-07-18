@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Beat } from "./player";
+import type { BannerStyle } from "./rules";
 
 const NEON = [0xfe2c55, 0x25f4ee, 0x8a2be2, 0xffc94d, 0x2ecc71, 0x3498db];
 
@@ -1698,5 +1699,172 @@ export class PyroDirector {
         return false;
       }
     }
+  }
+}
+
+const BANNER_W = 1024;
+const BANNER_H = 256;
+
+/** Vẽ dòng chữ nghệ thuật lên canvas theo phông đã chọn (co chữ vừa bề ngang). */
+function renderBannerCanvas(
+  canvas: HTMLCanvasElement,
+  text: string,
+  style: BannerStyle,
+) {
+  const ctx = canvas.getContext("2d")!;
+  ctx.clearRect(0, 0, BANNER_W, BANNER_H);
+  if (!text.trim()) return;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const cx = BANNER_W / 2;
+  const cy = BANNER_H / 2;
+  const fontFor = (s: number) => {
+    switch (style) {
+      case "script":
+        return `italic 700 ${s}px "Segoe Script","Brush Script MT",cursive`;
+      case "gold":
+        return `900 ${s}px Georgia,"Times New Roman",serif`;
+      case "outline":
+        return `900 ${s}px "Arial Black",Impact,sans-serif`;
+      default:
+        return `italic 900 ${s}px "Arial Black",Impact,sans-serif`;
+    }
+  };
+  // Co cỡ chữ cho vừa bề ngang bảng, chừa lề hai bên như bảng khắc tên
+  let fontSize = 108;
+  ctx.font = fontFor(fontSize);
+  const maxW = BANNER_W - 150;
+  while (ctx.measureText(text).width > maxW && fontSize > 20) {
+    fontSize -= 4;
+    ctx.font = fontFor(fontSize);
+  }
+  ctx.lineJoin = "round";
+
+  if (style === "script") {
+    // Khắc tên: chữ viết tay ánh kim vàng, bóng chìm xuống + vệt sáng trên
+    // nét cho cảm giác khắc lõm vào khung (dùng normal blend, không phát sáng)
+    const grad = ctx.createLinearGradient(0, cy - fontSize / 2, 0, cy + fontSize / 2);
+    grad.addColorStop(0, "#fff2c4");
+    grad.addColorStop(0.45, "#e6b34a");
+    grad.addColorStop(0.55, "#c9902f");
+    grad.addColorStop(1, "#8a5c14");
+    ctx.shadowColor = "rgba(0,0,0,0.7)";
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetX = 1.5;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = grad;
+    ctx.fillText(text, cx, cy);
+    ctx.shadowColor = "transparent";
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "rgba(255,250,225,0.4)";
+    ctx.fillText(text, cx, cy - 1.5);
+  } else if (style === "gold") {
+    const grad = ctx.createLinearGradient(0, cy - fontSize / 2, 0, cy + fontSize / 2);
+    grad.addColorStop(0, "#fff3b0");
+    grad.addColorStop(0.5, "#e8b13a");
+    grad.addColorStop(0.52, "#9c6a15");
+    grad.addColorStop(1, "#ffe9a8");
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#3a2606";
+    ctx.strokeText(text, cx, cy);
+    ctx.shadowColor = "rgba(255,200,80,0.6)";
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = grad;
+    ctx.fillText(text, cx, cy);
+  } else if (style === "outline") {
+    // Chữ rỗng viền neon kép
+    ctx.shadowColor = "#fe2c55";
+    ctx.shadowBlur = 30;
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#ffffff";
+    ctx.strokeText(text, cx, cy);
+    ctx.shadowColor = "#8a2be2";
+    ctx.shadowBlur = 16;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#ff5c8a";
+    ctx.strokeText(text, cx, cy);
+  } else {
+    // neon: gradient TikTok + quầng sáng + lõi trắng
+    const grad = ctx.createLinearGradient(0, 0, BANNER_W, 0);
+    grad.addColorStop(0, "#25f4ee");
+    grad.addColorStop(0.5, "#ffffff");
+    grad.addColorStop(1, "#fe2c55");
+    ctx.shadowColor = "#25f4ee";
+    ctx.shadowBlur = 34;
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = "rgba(37,244,238,0.5)";
+    ctx.strokeText(text, cx, cy);
+    ctx.shadowColor = "#fe2c55";
+    ctx.shadowBlur = 24;
+    ctx.fillStyle = grad;
+    ctx.fillText(text, cx, cy);
+  }
+  ctx.shadowBlur = 0;
+}
+
+/**
+ * Bảng tên nghệ thuật gắn trên đỉnh khung truss sân khấu — dòng chữ tuỳ chỉnh
+ * trong settings (nội dung + phông), phát sáng nhè nhẹ theo nhịp. Rỗng thì ẩn.
+ */
+export class StageBanner {
+  readonly mesh: THREE.Mesh;
+  private canvas: HTMLCanvasElement;
+  private texture: THREE.CanvasTexture;
+  private text = "";
+  private style: BannerStyle = "neon";
+  private t = 0;
+
+  constructor(width = 14) {
+    this.canvas = document.createElement("canvas");
+    this.canvas.width = BANNER_W;
+    this.canvas.height = BANNER_H;
+    this.texture = new THREE.CanvasTexture(this.canvas);
+    this.texture.colorSpace = THREE.SRGBColorSpace;
+    const height = width * (BANNER_H / BANNER_W);
+    this.mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, height),
+      new THREE.MeshBasicMaterial({
+        map: this.texture,
+        transparent: true,
+        depthWrite: false,
+        // Bảng treo cao trên khung — luôn vẽ đè để không bị kết cấu sân khấu
+        // che khuất (chìm sau khung); không có gì tiền cảnh ở độ cao này
+        depthTest: false,
+        blending: THREE.NormalBlending,
+        fog: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.mesh.renderOrder = 20;
+    this.mesh.visible = false;
+  }
+
+  /** Đổi nội dung/phông (bỏ qua nếu không đổi) — vẽ lại canvas. */
+  setText(text: string, style: BannerStyle) {
+    if (text === this.text && style === this.style) return;
+    this.text = text;
+    this.style = style;
+    renderBannerCanvas(this.canvas, text, style);
+    this.texture.needsUpdate = true;
+    // Neon/viền rỗng thì cộng sáng như biển hiệu; script/vàng khắc thì blend
+    // thường để bóng chìm đọc đúng kiểu khắc tên vào khung
+    const mat = this.mesh.material as THREE.MeshBasicMaterial;
+    mat.blending =
+      style === "neon" || style === "outline"
+        ? THREE.AdditiveBlending
+        : THREE.NormalBlending;
+    mat.needsUpdate = true;
+    this.mesh.visible = !!text.trim();
+  }
+
+  /** Ánh kim/quầng sáng thở nhẹ theo phách. */
+  update(dt: number, beat?: Beat, energy = 0.4) {
+    if (!this.mesh.visible) return;
+    this.t += dt;
+    const pulse = beat ? Math.max(0, 1 - beat.pulse * 3) : 0;
+    const shimmer = 0.04 * Math.sin(this.t * 1.6);
+    (this.mesh.material as THREE.MeshBasicMaterial).opacity =
+      0.9 + shimmer + pulse * 0.1 * (0.5 + energy);
   }
 }

@@ -9,6 +9,7 @@ import {
   saveRules,
   GIFT_ACTION_META,
   TIKTOK_GIFTS,
+  type BannerStyle,
   type CameraMode,
   type GameRules,
   type GiftAction,
@@ -1091,6 +1092,33 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
           )}
 
           {settingsTab === "display" && (
+          <>
+          <Section title="Bảng tên sân khấu" icon="🪧">
+            <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
+              Dòng chữ trên khung sân khấu (để trống = ẩn)
+              <input
+                value={rules.stageBannerText}
+                onChange={(e) => updateRules({ stageBannerText: e.target.value })}
+                placeholder="stop1love1 - Đỗ Long"
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-medium text-white/60">
+              Phông nghệ thuật
+              <select
+                value={rules.stageBannerStyle}
+                onChange={(e) =>
+                  updateRules({ stageBannerStyle: e.target.value as BannerStyle })
+                }
+                className={inputClass}
+              >
+                <option value="script">Chữ viết tay (vàng ấm)</option>
+                <option value="neon">Neon (xanh–trắng–hồng)</option>
+                <option value="gold">Vàng kim khắc nổi</option>
+                <option value="outline">Viền rỗng neon</option>
+              </select>
+            </label>
+          </Section>
           <Section title="Hiển thị" icon="🖥️">
             <label className="flex cursor-pointer items-center gap-2 text-sm text-white/85">
               <input
@@ -1125,6 +1153,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
               Hiện số liệu 👀❤️💎 trên màn hình
             </label>
           </Section>
+          </>
           )}
 
           {settingsTab === "rules" && (

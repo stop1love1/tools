@@ -28,6 +28,7 @@ import {
   PyroDirector,
   SmokeJets,
   SpeakerStack,
+  StageBanner,
 } from "./effects";
 import { InfoScreens, type InfoTrack } from "./info-screens";
 import { MusicPlayer } from "./music";
@@ -88,7 +89,7 @@ type CamShot = {
   pos: [number, number, number];
   look: [number, number, number];
   drift: number;
-  kind: "wide" | "medium" | "crowd" | "top" | "side" | "close" | "dj";
+  kind: "wide" | "medium" | "crowd" | "top" | "side" | "close" | "dj" | "low";
 };
 // Góc toàn cảnh: máy đặt CAO và LÙI XA sau khán đài, nhìn bao trọn sân khấu
 // + sàn nhảy + khán đài bậc thang trong một khung (dùng cho chế độ "overview"
@@ -111,14 +112,24 @@ const FRONT_SHOTS: CamShot[] = [
   // Crane chéo góc cao trái/phải nhìn xuống toàn sàn
   { pos: [-11, 13.5, 12], look: [1.5, 0.5, -2], drift: 0.5, kind: "top" },
   { pos: [11, 13.5, 12], look: [-1.5, 0.5, -2], drift: 0.5, kind: "top" },
-  // Cánh trái/phải đặt NGOÀI mép sàn, TRƯỚC khán đài — nhìn ngang qua sàn
-  { pos: [-16.5, 5, 5], look: [3, 1.6, -4], drift: 0.8, kind: "side" },
-  { pos: [16.5, 5, 5], look: [-3, 1.6, -4], drift: 0.8, kind: "side" },
+  // Cánh trái/phải — máy jib đặt HẲN NGOÀI cột truss (x=±16.4) và loa (mép
+  // ngoài ±17.25) để KHÔNG bị che; hơi chếch ra trước, ngắm chéo qua sân khấu
+  { pos: [-19.5, 5, 6.5], look: [4, 1.7, -5], drift: 0.7, kind: "side" },
+  { pos: [19.5, 5, 6.5], look: [-4, 1.7, -5], drift: 0.7, kind: "side" },
+  // Cross ngang tầm sân khấu, ra xa thêm nữa — profile hai phía, thoáng cột/loa
+  { pos: [-20.5, 4.2, -0.5], look: [4, 2, -6], drift: 0.6, kind: "side" },
+  { pos: [20.5, 4.2, -0.5], look: [-4, 2, -6], drift: 0.6, kind: "side" },
+  // Góc THẤP ngước lên (hero) — nhấc cao hơn chút cho chuyên nghiệp, đỡ bị
+  // vũ công tiền cảnh che; nhìn hắt lên sân khấu trên nền đèn
+  { pos: [0, 1.2, 7.5], look: [0, 3.3, -9], drift: 0.5, kind: "low" },
+  { pos: [-3.8, 1.25, 6], look: [1.3, 3.1, -9], drift: 0.5, kind: "low" },
+  { pos: [3.8, 1.25, 6], look: [-1.3, 3.1, -9], drift: 0.5, kind: "low" },
   // POV của DJ: máy sau bàn DJ, trên cao, CHÚC XUỐNG bao quát đám đông
   { pos: [0, 4.3, -11.2], look: [0, 0, 3], drift: 0.4, kind: "dj" },
-  // Cận cảnh thấp giữa sàn — khung ngắm sẽ bám theo một vũ công thật
-  { pos: [-5, 2.7, 6], look: [0, 2, -1], drift: 0.45, kind: "close" },
-  { pos: [5.5, 2.7, 5.5], look: [0, 2, -1.5], drift: 0.45, kind: "close" },
+  // Cận cảnh giữa sàn — khung ngắm bám một vũ công thật, nhưng máy đặt LÙI
+  // ra để lấy cả người (không zoom sát mặt), kiểu ống kính trung-cận
+  { pos: [-7, 3, 9.5], look: [0, 2, -1], drift: 0.4, kind: "close" },
+  { pos: [7.5, 3, 9], look: [0, 2, -1.5], drift: 0.4, kind: "close" },
 ];
 const ORBIT_SHOTS: CamShot[] = [
   ...FRONT_SHOTS,
@@ -129,13 +140,14 @@ const ORBIT_SHOTS: CamShot[] = [
 // Ống kính theo loại khung — chất điện ảnh: cận cảnh dùng "tele" (FOV hẹp) nén
 // hậu cảnh, ấm cúng; toàn cảnh dùng "wide" (FOV rộng) cho hoành tráng
 const FOV_BY_KIND: Record<CamShot["kind"], number> = {
-  close: 44,
-  dj: 48,
-  side: 50,
-  medium: 52,
-  top: 54,
-  crowd: 58,
-  wide: 60,
+  close: 52, // cận cảnh vẫn ấm nhưng không zoom sát mặt nữa
+  dj: 50,
+  side: 52,
+  medium: 56,
+  top: 56,
+  low: 58, // góc thấp ngước lên — hơi rộng cho hoành tráng
+  crowd: 60,
+  wide: 62,
 };
 const STAGE_H = 0.9;
 const AUDIENCE_Y = -0.35;
@@ -220,6 +232,8 @@ export class MemeDanceGame {
   private pyroLastSection = 0; // section beat trước → tính độ leo (buildup)
   // Sương mù mỏng sát sàn, chỉ hiện đoạn trầm/ballad
   private groundFog = new GroundFog(FLOOR_W, FLOOR_D);
+  // Bảng tên nghệ thuật khắc vào khung truss (nội dung/phông chỉnh trong settings)
+  private stageBanner = new StageBanner(9.5);
   // Cột đèn rọi trời quanh venue — quét chậm trong loop
   private beacons: THREE.Mesh[] = [];
   // Hai màn hình FOH: trái = đang phát, phải = playlist (canvas texture)
@@ -1007,6 +1021,11 @@ export class MemeDanceGame {
     topBar.position.set(0, 11.8, -FLOOR_D / 2 + 1.2);
     this.stageGroup.add(topBar);
 
+    // Bảng tên khắc vào thanh truss ngang, quay ra khán giả — ngồi khớp trên
+    // thanh khung thay vì lơ lửng phía trên
+    this.stageBanner.mesh.position.set(0, 12.4, -FLOOR_D / 2 + 1.4);
+    this.stageGroup.add(this.stageBanner.mesh);
+
     const parColors = [0xfe2c55, 0x25f4ee, 0xffc94d, 0x8a2be2];
     for (let i = 0; i < 9; i++) {
       const par = new THREE.Mesh(
@@ -1792,6 +1811,31 @@ export class MemeDanceGame {
     return next;
   }
 
+  /**
+   * Chọn top vũ công tương tác nhiều nhất (điểm chat/tim/donate) đang trên
+   * sàn/podium để dựng con rối cutout (tay/chân + biểu cảm mượt hơn); còn lại
+   * giữ sprite phẳng cho nhẹ máy. Số lượng theo rules.rigDancers (0 = tắt).
+   */
+  private updateRigs() {
+    const cand = [...this.players.values()].filter(
+      (p) => (p.onFloor || p.onPodium) && p.canRig,
+    );
+    let chosen: Set<Player>;
+    if (this.showcaseMode) {
+      // Trang preview: dựng rig cho TẤT CẢ (tối đa 30) để xem rõ thiết kế mới
+      chosen = new Set(cand.slice(0, 30));
+    } else {
+      // Live: chỉ top người tương tác nhiều nhất (điểm chat/tim/donate)
+      const n = Math.max(0, this.rules.rigDancers | 0);
+      cand.sort((a, b) => b.score - a.score);
+      chosen = new Set(cand.slice(0, n));
+    }
+    for (const p of this.players.values()) {
+      const want = chosen.has(p);
+      if (want !== p.hasRig) p.setRig(want);
+    }
+  }
+
   private promoteToFloor(player: Player) {
     const pos = this.takeSlot("floor");
     this.releaseSlot(player.user.userId);
@@ -1815,6 +1859,8 @@ export class MemeDanceGame {
     player.setZone("audience");
     player.setHome(pos);
     player.choreoMove = null;
+    // Rời sàn thì bỏ rig ngay (rig chỉ cho người trên sân khấu)
+    player.setRig(false);
   }
 
   async useCustomSkins(urls: string[]) {
@@ -2485,6 +2531,8 @@ export class MemeDanceGame {
       player.startDancing(Number.POSITIVE_INFINITY);
     }
     this.hype = 0.5;
+    // Bật rig ngay để preview là "showroom" con rối mới (không chờ 4s)
+    this.updateRigs();
   }
 
   private loop = () => {
@@ -2668,6 +2716,7 @@ export class MemeDanceGame {
     if (this.reseatT >= 4) {
       this.reseatT = 0;
       this.updateFrontRow();
+      this.updateRigs();
     }
 
     // Không có event "rời live" từ TikTok — ai im lặng quá lâu coi như đã
@@ -2713,7 +2762,16 @@ export class MemeDanceGame {
             else if (!p.isDancing && p.onFloor) this.demoteToAudience(p);
         }
       }
-      p.update(dt, effHype, beat, this.music.playing, level, mEnergy, this.vibe);
+      p.update(
+        dt,
+        effHype,
+        beat,
+        this.music.playing,
+        level,
+        mEnergy,
+        this.vibe,
+        this.camera.position,
+      );
     });
     const mid = this.music.playing ? this.music.mid : 0;
     // Mật độ khói quyết định beam rực cỡ nào — có khói beam mới hiện rõ
@@ -2813,6 +2871,12 @@ export class MemeDanceGame {
         ? 1
         : 0;
     this.groundFog.update(dt, fogQuiet, mEnergy, mood);
+    // Bảng tên: đồng bộ nội dung/phông từ settings (rẻ, bỏ qua nếu không đổi)
+    this.stageBanner.setText(
+      this.rules.stageBannerText,
+      this.rules.stageBannerStyle,
+    );
+    this.stageBanner.update(dt, beat, mEnergy);
     this.infoScreens.update(dt, this.music.progress);
     this.updateBanners(dt);
 
@@ -2846,11 +2910,6 @@ export class MemeDanceGame {
     // hết cỡ, drop thì bật nhảy; thi thoảng scratch đĩa như DJ thật
     if (this.music.playing && beat.index !== this.djLastBeat) {
       this.djLastBeat = beat.index;
-      if (this.djFrames.length > 1) {
-        this.djFrame = (this.djFrame + 1) % this.djFrames.length;
-        this.djSprite.material.map = this.djFrames[this.djFrame];
-        this.djSprite.material.needsUpdate = true;
-      }
       if (Math.random() < 0.22) this.djFacing = -this.djFacing;
       if (Math.random() < 0.3) this.djXTarget = (Math.random() - 0.5) * 1.7;
       // Scratch: nhạc có mid dày (vocal/synth) → 6% mỗi beat chạy tới một
@@ -2869,6 +2928,19 @@ export class MemeDanceGame {
       this.djScratchT += dt;
       if (this.djScratchT > 0.9) this.djScratchT = -1;
     }
+    // DJ vẫy tay theo nhạc: bước khung LIÊN TỤC qua bộ pose (mượt hơn hẳn kiểu
+    // 1 khung/phách), nhanh dần ở điệp khúc
+    if (this.music.playing && this.djFrames.length > 1) {
+      const fpb = 2.4 + sec * 1.6;
+      const nf = this.djFrames.length;
+      const idx =
+        (((Math.floor((beat.index + beat.pulse) * fpb) % nf) + nf) % nf) | 0;
+      if (idx !== this.djFrame) {
+        this.djFrame = idx;
+        this.djSprite.material.map = this.djFrames[idx];
+        this.djSprite.material.needsUpdate = true;
+      }
+    }
     this.djX += (this.djXTarget - this.djX) * Math.min(1, dt * 3.5);
     this.djFacingCur += (this.djFacing - this.djFacingCur) * Math.min(1, dt * 9);
     const djF =
@@ -2877,7 +2949,9 @@ export class MemeDanceGame {
           ? -0.08
           : 0.08
         : this.djFacingCur;
-    this.djSprite.scale.x = this.djW * djF;
+    // Pump nhẹ cả người theo kick — như đang "ăn" bass
+    const djPump = this.music.playing ? 1 + kick * 0.05 * (0.5 + sec) : 1;
+    this.djSprite.scale.set(this.djW * djF, 2.125 * djPump, 1);
     // Đoạn trầm: cúi về bàn mixer; điệp khúc: ngửa người về phía đám đông
     const djLeanT = !this.music.playing
       ? 0
@@ -2888,7 +2962,12 @@ export class MemeDanceGame {
           : 0;
     this.djLean += (djLeanT - this.djLean) * Math.min(1, dt * 4);
     const strongBeat = this.beatIndex % 4 === 0 ? 1.5 : 1;
-    this.djSprite.position.x = this.djX;
+    // Groove đưa người qua-lại theo swing 2 phách — chuyển động mượt liên tục
+    const djGroove = this.music.playing
+      ? Math.sin(((this.beatIndex % 2) + beat.pulse) * Math.PI) *
+        (0.1 + sec * 0.14)
+      : 0;
+    this.djSprite.position.x = this.djX + djGroove;
     // Nhún dịu ở verse, quẩy hết biên độ ở điệp khúc
     this.djSprite.position.y =
       this.djBaseY + kick * 0.3 * strongBeat * (0.55 + sec * 0.9);
@@ -3029,10 +3108,10 @@ export class MemeDanceGame {
           // - điệp khúc/drop: góc động (cận, DJ, cánh, trên) + cắt nhanh
           // - verse: đa dạng vừa phải
           const kinds: CamShot["kind"][] = hot
-            ? ["dj", "side", "close", "top", "medium"]
+            ? ["dj", "side", "close", "top", "medium", "low"]
             : calm
               ? ["wide", "crowd", "top", "medium"]
-              : ["wide", "medium", "side", "top", "crowd", "dj", "close"];
+              : ["wide", "medium", "side", "top", "crowd", "dj", "close", "low"];
           this.switchShot(shots, {
             cut: hot && Math.random() < 0.5,
             energy: mEnergy,
@@ -3090,8 +3169,9 @@ export class MemeDanceGame {
         shot.pos[2] + Math.sin(t * 0.07) * 0.35 * shot.drift,
       );
       if (this.camMoveMode === "push") {
-        // Đẩy máy từ từ về phía điểm nhìn (~1/5 quãng đường mỗi take)
-        this.camShotPos.lerp(this.camShotLook, takeEase * 0.2);
+        // Đẩy máy từ từ về phía điểm nhìn. Cận/trung cảnh bám người thì đẩy ÍT
+        // để không trườn sát mặt (zoom quá gần); góc rộng đẩy nhiều hơn cho đã
+        this.camShotPos.lerp(this.camShotLook, takeEase * (tracks ? 0.07 : 0.14));
       } else {
         // Slide ngang vuông góc trục nhìn, từ mép này sang mép kia của take
         const dx = this.camShotLook.x - this.camShotPos.x;

@@ -8,6 +8,7 @@ import {
   saveRules,
   GIFT_ACTION_META,
   TIKTOK_GIFTS,
+  type BannerStyle,
   type CameraMode,
   type GameRules,
   type GiftAction,
@@ -487,6 +488,36 @@ export default function AdminPage() {
                     <option value="auto">Tự do — chat lệnh để lên sàn</option>
                     <option value="all-floor">Tất cả lên sàn nhảy</option>
                     <option value="all-audience">Tất cả ở khán đài</option>
+                  </select>
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs text-white/70">
+                  🪧 Bảng tên sân khấu (trống = ẩn)
+                  <input
+                    value={rules.stageBannerText}
+                    onChange={(e) =>
+                      updateRules({ stageBannerText: e.target.value })
+                    }
+                    placeholder="stop1love1 - Đỗ Long"
+                    className={inputClass}
+                  />
+                </label>
+                <label className="text-xs text-white/70">
+                  Phông nghệ thuật
+                  <select
+                    value={rules.stageBannerStyle}
+                    onChange={(e) =>
+                      updateRules({
+                        stageBannerStyle: e.target.value as BannerStyle,
+                      })
+                    }
+                    className={inputClass}
+                  >
+                    <option value="neon">Neon (xanh–trắng–hồng)</option>
+                    <option value="script">Chữ viết tay (vàng ấm)</option>
+                    <option value="gold">Vàng kim khắc nổi</option>
+                    <option value="outline">Viền rỗng neon</option>
                   </select>
                 </label>
               </div>

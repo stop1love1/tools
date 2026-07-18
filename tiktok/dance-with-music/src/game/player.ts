@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { LiveUser } from "@/shared/live-events";
+import { CharacterRig } from "./rig";
 import { makeBubbleTexture, makeLabelTexture, type Skin } from "./skins";
 
 const BASE_H = 1.875;
@@ -318,6 +319,9 @@ export class Player {
   private dropT = 0;
   private badge: THREE.Mesh | null = null;
   private badgeUntil = 0;
+  /** Con rối cutout (tay/chân/đầu cử động + biểu cảm) — chỉ bật cho người
+   * tương tác nhiều & skin mặc định; null = dùng sprite phẳng như cũ. */
+  private rig: CharacterRig | null = null;
 
   constructor(user: LiveUser, skins: Skin[], position: THREE.Vector3) {
     this.user = user;
@@ -404,6 +408,43 @@ export class Player {
     this.skinIndex = this.skinIndex % skins.length;
     this.applyFrame();
     this.applyAspect();
+    // Skin đổi (vd nạp ảnh custom): dựng lại rig theo outfit mới, hoặc tự tắt
+    // nếu skin mới không có dữ liệu rig
+    if (this.rig) {
+      this.setRig(false);
+      this.setRig(true);
+    }
+  }
+
+  /**
+   * Bật/tắt con rối cutout (tay/chân/đầu cử động + biểu cảm). Chỉ dựng được cho
+   * skin mặc định (có `rig` spec) — skin ảnh custom bỏ qua. Bật thì ẩn sprite
+   * phẳng, tắt thì hiện lại.
+   */
+  setRig(on: boolean) {
+    if (on) {
+      if (this.rig) return;
+      const spec = this.currentSkin.rig;
+      if (!spec) return;
+      this.rig = new CharacterRig(spec, BASE_H, this.currentSkin.aspect);
+      this.group.add(this.rig.root);
+      this.sprite.visible = false;
+    } else {
+      if (!this.rig) return;
+      this.group.remove(this.rig.root);
+      this.rig.dispose();
+      this.rig = null;
+      this.sprite.visible = true;
+    }
+  }
+
+  get hasRig(): boolean {
+    return this.rig !== null;
+  }
+
+  /** Skin hiện tại có cắt được rig không (mặc định = có, ảnh custom = không). */
+  get canRig(): boolean {
+    return !!this.currentSkin.rig;
   }
 
   private applyAspect() {
@@ -443,6 +484,10 @@ export class Player {
     this.frame = 0;
     this.applyFrame();
     this.applyAspect();
+    if (this.rig) {
+      this.setRig(false);
+      this.setRig(true);
+    }
   }
 
   /** Màu tên theo mốc donate: 0💎 trắng → cao dần xanh/vàng/hồng/tím VIP. */
@@ -552,6 +597,7 @@ export class Player {
     level = 0,
     moodEnergy = 0.5,
     vibe?: MusicVibe,
+    camPos?: THREE.Vector3,
   ) {
     const now = performance.now();
     const t = now / 1000;
@@ -678,13 +724,16 @@ export class Player {
       // Phát khung LIÊN TỤC theo pha nhạc thay vì snap 2 khung/nhịp: bước đều
       // qua mọi khung của skin → vòng nhảy nhiều pose (mặc định) và GIF/sprite
       // nạp ngoài đều chạy uyển chuyển; đoạn cao trào (intensity) nhảy nhanh hơn.
-      const nf = this.currentSkin.frames.length;
-      const fpb = 2.5 + (vibe?.intensity ?? 0.5) * 1.5;
-      const nextFrame =
-        (((Math.floor((beat.index + beat.pulse) * fpb) % nf) + nf) % nf) | 0;
-      if (nextFrame !== this.frame) {
-        this.frame = nextFrame;
-        this.applyFrame();
+      // (Bỏ qua khi đang dùng rig — rig có mesh tay/chân riêng, không đổi frame.)
+      if (!this.rig) {
+        const nf = this.currentSkin.frames.length;
+        const fpb = 2.5 + (vibe?.intensity ?? 0.5) * 1.5;
+        const nextFrame =
+          (((Math.floor((beat.index + beat.pulse) * fpb) % nf) + nf) % nf) | 0;
+        if (nextFrame !== this.frame) {
+          this.frame = nextFrame;
+          this.applyFrame();
+        }
       }
 
       // Phách 1 của ô nhịp 4 nhún mạnh nhất, phách 3 vừa — tạo groove rõ rệt
@@ -858,18 +907,38 @@ export class Player {
     const smooth = Math.min(1, dt * 18);
     this.danceY += (y - this.danceY) * smooth;
     y = this.danceY;
-    this.smoothSX += (targetSX - this.smoothSX) * smooth;
-    this.smoothSY += (scaleY - this.smoothSY) * smooth;
-    this.smoothRot += (rot - this.smoothRot) * smooth;
-    this.sprite.material.rotation = this.smoothRot;
-    this.sprite.scale.set(
-      BASE_H * this.currentSkin.aspect * this.smoothSX,
-      BASE_H * this.smoothSY,
-      1,
-    );
-
     this.dimCurrent += (this.dimTarget - this.dimCurrent) * Math.min(1, dt * 6);
-    this.sprite.material.opacity = this.dimCurrent;
+    if (this.rig) {
+      // Con rối cutout: tay/chân/đầu là mesh riêng — điều khiển theo điệu; sprite
+      // phẳng đã ẩn. Vị trí/độ nảy của cả nhóm vẫn do phần dưới xử lý như cũ.
+      this.rig.update(dt, {
+        move: this.move,
+        pulse: beat.pulse,
+        beatIndex: beat.index,
+        intensity: vibe?.intensity ?? 0.5,
+        genre: vibe?.genre ?? "pop",
+        facing: dancing ? this.facing : 1,
+        camYaw: camPos
+          ? Math.atan2(
+              camPos.x - this.group.position.x,
+              camPos.z - this.group.position.z,
+            )
+          : 0,
+        opacity: this.dimCurrent,
+        dancing,
+      });
+    } else {
+      this.smoothSX += (targetSX - this.smoothSX) * smooth;
+      this.smoothSY += (scaleY - this.smoothSY) * smooth;
+      this.smoothRot += (rot - this.smoothRot) * smooth;
+      this.sprite.material.rotation = this.smoothRot;
+      this.sprite.scale.set(
+        BASE_H * this.currentSkin.aspect * this.smoothSX,
+        BASE_H * this.smoothSY,
+        1,
+      );
+      this.sprite.material.opacity = this.dimCurrent;
+    }
     this.label.material.opacity = this.dimCurrent;
 
     if (this.dropT < 1) {
@@ -955,6 +1024,7 @@ export class Player {
   }
 
   dispose() {
+    this.rig?.dispose();
     this.sprite.material.dispose();
     this.label.material.map?.dispose();
     this.label.material.dispose();

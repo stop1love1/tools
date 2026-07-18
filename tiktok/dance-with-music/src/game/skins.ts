@@ -4,6 +4,22 @@ export type Skin = {
   frames: THREE.Texture[];
   accent: string;
   aspect: number;
+  /** Chỉ skin mặc định (vẽ sẵn) mới có — dữ liệu để dựng con rối cutout. */
+  rig?: RigSpec;
+};
+
+/** Kích thước canvas gốc của nhân vật — rig dùng để quy đổi khớp sang toạ độ 3D. */
+export const SKIN_W = 256;
+export const SKIN_H = 320;
+
+export type Accessory = "none" | "cap" | "headphones" | "bow" | "party";
+export type Expression = "neutral" | "happy" | "wow" | "cool";
+
+/** Thông tin đủ để cắt/vẽ lại nhân vật thành các mảnh rời (đầu, thân, tay, chân). */
+export type RigSpec = {
+  shirt: string;
+  accessory: Accessory;
+  accent: string;
 };
 
 const FACE_COLOR = "#f3efe6";
@@ -23,8 +39,6 @@ const OUTFITS = [
 
 const W = 256;
 const H = 320;
-
-type Accessory = "none" | "cap" | "headphones" | "bow" | "party";
 
 function drawAccessory(
   ctx: CanvasRenderingContext2D,
@@ -300,9 +314,212 @@ export function generateSkins(): Skin[] {
           drawCharacter(ctx, outfit.shirt, face, l, r, accessory, outfit.accent),
         ),
       ),
+      rig: { shirt: outfit.shirt, accessory, accent: outfit.accent },
     });
   }
   return skins;
+}
+
+// ===================== CON RỐI CUTOUT (rig) =====================
+// Mỗi bộ phận vẽ trên canvas full 256×320, chỉ chứa phần của nó (còn lại trong
+// suốt). Xếp chồng các plane cùng cỡ ở cùng vị trí => giống hệt nhân vật liền
+// khối; nhưng mỗi mảnh là mesh riêng nên xoay được quanh khớp (vai/hông/cổ).
+const CX = 128;
+const BODY_TOP = 116 + 96 - 30; // = 182, khớp với drawCharacter
+
+/** Toạ độ khớp (canvas gốc) — rig quy đổi sang pivot 3D. */
+export const RIG_JOINTS = {
+  neck: [CX, BODY_TOP] as [number, number],
+  shoulderL: [CX - 38, BODY_TOP + 15] as [number, number],
+  shoulderR: [CX + 38, BODY_TOP + 15] as [number, number],
+  hipL: [CX - 16, BODY_TOP + 62] as [number, number],
+  hipR: [CX + 16, BODY_TOP + 62] as [number, number],
+};
+
+export type RigTextures = {
+  torso: THREE.Texture;
+  head: THREE.Texture;
+  faces: Record<Expression, THREE.Texture>;
+  armL: THREE.Texture;
+  armR: THREE.Texture;
+  legL: THREE.Texture;
+  legR: THREE.Texture;
+};
+
+function drawTorso(ctx: CanvasRenderingContext2D, shirt: string) {
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.fillStyle = shirt;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(CX - 42, BODY_TOP, 84, 66, 16);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawLeg(ctx: CanvasRenderingContext2D, side: number) {
+  const hx = CX + side * 16;
+  const legY = BODY_TOP + 62;
+  ctx.lineCap = "round";
+  ctx.strokeStyle = HAIR_COLOR;
+  ctx.lineWidth = 14;
+  ctx.beginPath();
+  ctx.moveTo(hx, legY);
+  ctx.lineTo(hx + side * 3, legY + 28);
+  ctx.stroke();
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.ellipse(hx + side * 7, legY + 32, 15, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawArm(ctx: CanvasRenderingContext2D, shirt: string, side: number) {
+  ctx.lineCap = "round";
+  ctx.strokeStyle =
+    shirt === "#f5f4f0" || shirt === "#e8e4da" ? "#d9d4c7" : shirt;
+  ctx.lineWidth = 13;
+  ctx.beginPath();
+  ctx.moveTo(CX + side * 38, BODY_TOP + 15);
+  ctx.lineTo(CX + side * 64, BODY_TOP + 50);
+  ctx.stroke();
+  ctx.fillStyle = FACE_COLOR;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(CX + side * 66, BODY_TOP + 54, 10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawHead(
+  ctx: CanvasRenderingContext2D,
+  accessory: Accessory,
+  accent: string,
+) {
+  const headCy = 116;
+  const headR = 96;
+  ctx.fillStyle = HAIR_COLOR;
+  ctx.beginPath();
+  ctx.arc(CX, headCy, headR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = FACE_COLOR;
+  ctx.beginPath();
+  ctx.arc(CX, headCy + 18, headR - 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = HAIR_COLOR;
+  ctx.beginPath();
+  ctx.ellipse(CX, headCy - 34, headR - 2, 52, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(CX - headR - 2, headCy - 14, 26, 74, 12);
+  ctx.roundRect(CX + headR - 24, headCy - 14, 26, 74, 12);
+  ctx.fill();
+  drawAccessory(ctx, accessory, accent);
+}
+
+function drawFace(ctx: CanvasRenderingContext2D, expr: Expression) {
+  const eyeY = 116 + 30;
+  ctx.lineCap = "round";
+  ctx.fillStyle = INK;
+  ctx.strokeStyle = INK;
+  if (expr === "neutral") {
+    ctx.beginPath();
+    ctx.arc(CX - 32, eyeY, 6, 0, Math.PI * 2);
+    ctx.arc(CX + 32, eyeY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(CX - 24, eyeY + 38);
+    ctx.quadraticCurveTo(CX, eyeY + 46, CX + 24, eyeY + 38);
+    ctx.stroke();
+  } else if (expr === "happy") {
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(CX - 44, eyeY + 2);
+    ctx.quadraticCurveTo(CX - 31, eyeY - 15, CX - 18, eyeY + 2);
+    ctx.moveTo(CX + 18, eyeY + 2);
+    ctx.quadraticCurveTo(CX + 31, eyeY - 15, CX + 44, eyeY + 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(CX - 28, eyeY + 30);
+    ctx.quadraticCurveTo(CX, eyeY + 60, CX + 28, eyeY + 30);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,110,110,0.4)";
+    ctx.beginPath();
+    ctx.ellipse(CX - 56, eyeY + 18, 12, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(CX + 56, eyeY + 18, 12, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (expr === "wow") {
+    ctx.beginPath();
+    ctx.arc(CX - 30, eyeY - 2, 7, 0, Math.PI * 2);
+    ctx.arc(CX + 30, eyeY - 2, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(CX, eyeY + 40, 15, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ff9d9d";
+    ctx.beginPath();
+    ctx.ellipse(CX, eyeY + 48, 8, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // cool — kính đen + cười khẩy
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.roundRect(CX - 52, eyeY - 14, 42, 24, 8);
+    ctx.roundRect(CX + 10, eyeY - 14, 42, 24, 8);
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(CX - 10, eyeY - 6);
+    ctx.lineTo(CX + 10, eyeY - 6);
+    ctx.stroke();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(CX - 16, eyeY + 36);
+    ctx.quadraticCurveTo(CX, eyeY + 44, CX + 20, eyeY + 34);
+    ctx.stroke();
+  }
+}
+
+const rigCache = new Map<string, RigTextures>();
+
+/** Dựng (và cache theo outfit) bộ texture các mảnh rời cho con rối cutout. */
+export function buildRigTextures(spec: RigSpec): RigTextures {
+  const key = `${spec.shirt}|${spec.accessory}|${spec.accent}`;
+  const cached = rigCache.get(key);
+  if (cached) return cached;
+  const exprs: Expression[] = ["neutral", "happy", "wow", "cool"];
+  const faces = {} as Record<Expression, THREE.Texture>;
+  for (const e of exprs) faces[e] = makeTexture((ctx) => drawFace(ctx, e));
+  const tex: RigTextures = {
+    torso: makeTexture((ctx) => drawTorso(ctx, spec.shirt)),
+    head: makeTexture((ctx) => drawHead(ctx, spec.accessory, spec.accent)),
+    faces,
+    armL: makeTexture((ctx) => drawArm(ctx, spec.shirt, -1)),
+    armR: makeTexture((ctx) => drawArm(ctx, spec.shirt, 1)),
+    legL: makeTexture((ctx) => drawLeg(ctx, -1)),
+    legR: makeTexture((ctx) => drawLeg(ctx, 1)),
+  };
+  // Các mảnh chỉ chiếm một phần khung 256×320, phần còn lại trong suốt. Mipmap
+  // sẽ gộp phần đã vẽ ra toàn khung khi nhân vật ở xa → hiện ô vuông mờ phía
+  // sau. Tắt mipmap (lọc tuyến tính) để vùng trong suốt luôn trong suốt.
+  for (const t of [
+    tex.torso,
+    tex.head,
+    tex.armL,
+    tex.armR,
+    tex.legL,
+    tex.legR,
+    ...Object.values(tex.faces),
+  ]) {
+    t.generateMipmaps = false;
+    t.minFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+  }
+  rigCache.set(key, tex);
+  return tex;
 }
 
 const ACCENTS = ["#fe2c55", "#25f4ee", "#ffc94d", "#7cc0ff", "#b18cff", "#5dffb0"];

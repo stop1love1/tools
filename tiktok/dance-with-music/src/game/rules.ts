@@ -78,6 +78,9 @@ export type ZoneMode = "auto" | "all-floor" | "all-audience";
 
 export type CameraMode = "sway" | "orbit" | "overview" | "manual";
 
+/** Phông chữ nghệ thuật cho bảng tên trên đỉnh khung sân khấu. */
+export type BannerStyle = "neon" | "script" | "gold" | "outline";
+
 export type GameRules = {
   cameraMode: CameraMode;
   zoneMode: ZoneMode;
@@ -93,7 +96,16 @@ export type GameRules = {
   /** Số lượt order nhạc (lên bàn DJ) tối đa cho mỗi bài. */
   djOrderPerSong: number;
   giftActions: GiftActionRule[];
+  /**
+   * Số vũ công tương tác nhiều nhất (theo điểm chat/tim/donate) được dựng thành
+   * con rối cutout — tay/chân cử động + biểu cảm mượt hơn. 0 = tắt hẳn (tất cả
+   * dùng sprite phẳng). Đặt thấp để nhẹ máy.
+   */
+  rigDancers: number;
   legendOverride: string;
+  /** Dòng chữ nghệ thuật trên đỉnh khung sân khấu (rỗng = ẩn). */
+  stageBannerText: string;
+  stageBannerStyle: BannerStyle;
 };
 
 export const DEFAULT_RULES: GameRules = {
@@ -120,7 +132,10 @@ export const DEFAULT_RULES: GameRules = {
     { min: 199, action: "dj", gift: "Sunglasses (Kính đen)" },
     { min: 500, action: "badge", gift: "Money Gun (Súng bắn tiền)" },
   ],
+  rigDancers: 10,
   legendOverride: "",
+  stageBannerText: "stop1love1 - Đỗ Long",
+  stageBannerStyle: "script",
 };
 
 const STORAGE_KEY = "md:rules";

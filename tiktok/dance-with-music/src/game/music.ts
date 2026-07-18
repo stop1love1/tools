@@ -140,7 +140,10 @@ export class MusicPlayer {
       const source = this.ctx.createMediaElementSource(this.audio);
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 2048;
-      this.analyser.smoothingTimeConstant = 0.6;
+      // Mượt THẤP để bắt transient kick tức thì (0.6 cũ làm onset trễ ~50ms →
+      // hiệu ứng nhấp sau tiếng nghe). Level/bass đã có EMA riêng phía dưới nên
+      // đèn không bị nhấp nháy loạn dù dữ liệu phổ thô hơn.
+      this.analyser.smoothingTimeConstant = 0.2;
       source.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
       this.freq = new Uint8Array(this.analyser.frequencyBinCount);
