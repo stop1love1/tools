@@ -4,7 +4,8 @@ import { CharacterRig } from "./rig";
 import { makeBubbleTexture, makeLabelTexture, type Skin } from "./skins";
 
 const BASE_H = 1.875;
-const BUBBLE_MS = 3200;
+// Bong bóng chat: to & lâu hơn cho dễ đọc trên màn dọc mobile (TikTok live)
+const BUBBLE_MS = 4600;
 
 const DANCE_START_MS = 30_000;
 const DANCE_EXTEND_MS = 15_000;
@@ -348,9 +349,9 @@ export class Player {
     this.label = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: texture, transparent: true }),
     );
-    const labelH = 0.42;
+    const labelH = 0.5;
     this.label.scale.set(labelH * aspect, labelH, 1);
-    this.label.position.y = BASE_H + 0.28;
+    this.label.position.y = BASE_H + 0.3;
 
     this.group.add(this.sprite, this.label);
     this.group.position.set(this.home.x, this.home.y + DROP_HEIGHT, this.home.z);
@@ -510,7 +511,7 @@ export class Player {
     this.label.material.map?.dispose();
     this.label.material.map = texture;
     this.label.material.needsUpdate = true;
-    const labelH = 0.42;
+    const labelH = 0.5;
     this.label.scale.set(labelH * aspect, labelH, 1);
   }
 
@@ -581,10 +582,10 @@ export class Player {
     );
     // Bong bóng chat phải sáng rõ dễ đọc — chỉ hạ nhẹ để không lóa bloom
     this.bubble.material.color.setScalar(0.9);
-    // To hơn hẳn cho dễ đọc; nâng cao hơn để không đè lên tên nhân vật
-    const h = 0.62;
+    // To hơn hẳn cho dễ đọc trên màn dọc; nâng cao hơn để không đè lên tên
+    const h = 0.82;
     this.bubble.scale.set(h * aspect, h, 1);
-    this.bubble.position.y = BASE_H + 0.95;
+    this.bubble.position.y = BASE_H + 1.08;
     this.group.add(this.bubble);
     this.bubbleUntil = performance.now() + BUBBLE_MS;
   }

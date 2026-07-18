@@ -1535,111 +1535,76 @@ export type DirectorCtx = {
 const FLAME_PATTERNS = 5;
 
 /**
- * "Người chạy pyro" ảo: mỗi beat đọc trạng thái nhạc rồi quyết định BẮN GÌ —
- * không bắn theo mốc cứng. Có quỹ năng lượng từng hệ (cạn khi bắn, hồi dần)
- * nên sau loạt lớn tự im một quãng dồn ấn tượng; biết KÌM ở đoạn buildup rồi
- * BUNG đúng cú drop/vào điệp khúc; chọn kiểu pháo hoa & pattern lửa xoay vòng
- * chống lặp; thỉnh thoảng cố tình bỏ nhịp cho đỡ máy móc.
+ * "Người chạy pyro" ảo — bản ỔN ĐỊNH: bắn ĐỀU theo nhịp và bám ĐOẠN nhạc
+ * (verse êm → im, điệp khúc/drop → bung) thay vì quỹ năng lượng + random gây
+ * thất thường. Không kìm-bung noisy, không bỏ nhịp ngẫu nhiên; cadence pháo
+ * hoa cố định + luôn nổ khi drop (có cooldown chống nổ chồng). Kiểu pháo hoa
+ * và pattern lửa xoay VÒNG tuần tự cho đa dạng mà đoán trước được.
  */
 export class PyroDirector {
-  private budget = { firework: 1, flame: 1, spark: 1, smoke: 1 };
-  private readonly recharge = {
-    firework: 0.14, // hồi chậm → pháo hoa thưa, không spam
-    flame: 0.5,
-    spark: 0.7,
-    smoke: 0.3,
-  };
   private lastType: FireworkType | null = null;
   private pattern = 0;
-  private patternUntil = 0; // giữ pattern lửa tới beat này rồi đổi
+  private patternUntil = 0; // giữ pattern lửa tới ô nhịp này rồi xoay tiếp
+  private lastFwBar = -999; // beat của loạt pháo hoa gần nhất (cooldown)
 
-  /** Gọi mỗi frame: hồi quỹ năng lượng các hệ. */
-  update(dt: number) {
-    this.budget.firework = Math.min(1, this.budget.firework + this.recharge.firework * dt);
-    this.budget.flame = Math.min(1, this.budget.flame + this.recharge.flame * dt);
-    this.budget.spark = Math.min(1, this.budget.spark + this.recharge.spark * dt);
-    this.budget.smoke = Math.min(1, this.budget.smoke + this.recharge.smoke * dt);
-  }
+  /** Không còn quỹ năng lượng — giữ chữ ký cho vòng update của game. */
+  update(_dt: number) {}
 
   /** Gọi mỗi beat MỚI → trả về danh sách cue cần thi hành. */
   cue(ctx: DirectorCtx): PyroCue[] {
     const cues: PyroCue[] = [];
-    const { beat, level, section, drop, energyRise, beatConfidence, mood } = ctx;
+    const { beat, level, section, drop, beatConfidence, mood } = ctx;
+    const bar = beat.index;
 
-    // Đoạn trầm/ballad: nhả CO2 thưa cho beam đèn ăn khói, bất kể beat rõ hay không
-    if (ctx.inQuietSection && beat.index % 2 === 0 && this.budget.smoke >= 0.2) {
-      cues.push({ kind: "smoke", strength: 0.22 });
-      this.budget.smoke -= 0.2;
+    // Chưa bắt được nhịp rõ → im, tránh bắn sai phách
+    if (level < 0.08 || beatConfidence < 0.35) return cues;
+
+    // Ngưỡng đoạn nhạc — liên tục, ổn định (không dùng buildup noisy nữa)
+    const energetic = section > 0.5; // verse mạnh trở lên: có lửa
+    const chorus = section > 0.68; // điệp khúc: thêm tia + CO2
+
+    // LỬA — trong đoạn mạnh, chạy pattern ĐỀU; xoay pattern tuần tự mỗi 8 ô
+    // nhịp (không random) nên đa dạng mà không giật
+    if (energetic) {
+      if (bar >= this.patternUntil) {
+        this.pattern = (this.pattern + 1) % FLAME_PATTERNS;
+        this.patternUntil = bar + 32;
+      }
+      this.flamePattern(this.pattern, ctx, cues);
     }
 
-    // Nhạc ambient / chưa bắt được nhịp → im, không bắn sai nhịp
-    if (level < 0.12 || beatConfidence < 0.45) return cues;
-
-    // Buildup: năng lượng đang leo nhanh mà chưa tới đỉnh → KÌM pháo/lửa
-    const building = energyRise > 0.05 && section < 0.85 && drop < 0.5;
-
-    // Điểm khoảnh khắc 0..1 — càng cao càng đáng "bung"
-    const score = Math.min(
-      1,
-      section * 0.4 + level * 0.4 + drop * 0.6 + Math.max(0, energyRise) * 1.2,
-    );
-
-    // Đổi pattern lửa mỗi 4 ô nhịp
-    if (beat.index >= this.patternUntil) {
-      this.pattern = Math.floor(Math.random() * FLAME_PATTERNS);
-      this.patternUntil = beat.index + 16;
+    // SPARKULAR mặt tiền — điệp khúc: mỗi phách một đợt tia, đều tay
+    if (chorus) {
+      cues.push({ kind: "spark", strength: 0.5 + level * 0.35 });
     }
 
-    // LỬA — chạy trong đoạn cao, không chạy khi đang kìm buildup
-    if (!building && section > 0.6 && this.budget.flame >= 0.2) {
-      if (this.flamePattern(this.pattern, ctx, cues)) this.budget.flame -= 0.22;
-    }
-
-    // SPARKULAR mặt tiền — rải suốt điệp khúc
-    if (
-      !building &&
-      section > 0.62 &&
-      this.budget.spark >= 0.15 &&
-      beatConfidence > 0.5
-    ) {
-      cues.push({ kind: "spark", strength: 0.45 + level * 0.35 });
-      this.budget.spark -= 0.18;
-    }
-
-    // CO2 nhấn — thưa, phách 1 của mỗi 2 ô nhịp
-    if (
-      !building &&
-      section > 0.7 &&
-      beat.index % 8 === 0 &&
-      this.budget.smoke >= 0.3
-    ) {
+    // CO2 nhấn — phách 1 mỗi 2 ô nhịp khi đoạn mạnh (đều, không tuỳ quỹ)
+    if (energetic && bar % 8 === 0) {
       cues.push({ kind: "smoke", strength: 0.5 + level * 0.4 });
-      this.budget.smoke -= 0.32;
     }
 
-    // PHÁO HOA — ngôi sao: chỉ bung khi điểm cao, còn quỹ, và không đang kìm.
-    // Cú drop lớn thì chắc chắn bắn; còn lại có xác suất bỏ qua cho đỡ nhàm.
-    if (!building && score > 0.72 && section > 0.75 && this.budget.firework >= 0.34) {
-      const mustFire = drop > 0.6;
-      if (mustFire || Math.random() < 0.55) {
-        const shells =
-          mustFire || score > 0.9 ? 2 + Math.floor(Math.random() * 2) : 1;
-        for (let s = 0; s < shells; s++) {
-          const type = Fireworks.randomType(this.lastType);
-          this.lastType = type;
-          cues.push({
-            kind: "firework",
-            type,
-            pos: new THREE.Vector3(
-              (Math.random() - 0.5) * 16,
-              3.5 + Math.random() * 2.5,
-              -7 + (Math.random() - 0.5) * 3,
-            ),
-            strength: 1.5 + level,
-            hue: (((mood.hue + (Math.random() - 0.5) * 0.2) % 1) + 1) % 1,
-          });
-        }
-        this.budget.firework = Math.max(0, this.budget.firework - 0.34 * shells);
+    // PHÁO HOA — cadence CHẮC CHẮN: định kỳ mỗi 8 ô nhịp trong điệp khúc VÀ
+    // luôn nổ khi drop; cooldown 4 phách chống nổ chồng. Không random bỏ nhịp.
+    const periodic = chorus && bar % 32 === 0;
+    const onDrop = drop > 0.5;
+    if ((periodic || onDrop) && bar - this.lastFwBar >= 4) {
+      this.lastFwBar = bar;
+      const big = onDrop || section > 0.85;
+      const shells = big ? 2 + (bar % 2) : 1; // 1..3 quả, xác định theo ô nhịp
+      for (let s = 0; s < shells; s++) {
+        const type = Fireworks.randomType(this.lastType);
+        this.lastType = type;
+        cues.push({
+          kind: "firework",
+          type,
+          pos: new THREE.Vector3(
+            (((bar + s) % 5) - 2) * 3.6, // rải vị trí xác định trái↔phải
+            3.5 + ((bar + s) % 3) * 0.8,
+            -7 + (((bar + s) % 3) - 1) * 1.5,
+          ),
+          strength: 1.4 + level,
+          hue: (((mood.hue + ((bar % 5) - 2) * 0.06) % 1) + 1) % 1,
+        });
       }
     }
 

@@ -842,7 +842,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       )}
 
       {showStats && (
-        <div className="absolute left-3 top-3 flex flex-col gap-1 font-mono text-[13px] text-white/80">
+        <div className="absolute left-3 top-3 flex flex-col gap-1 font-mono text-[16px] font-semibold text-white/90 [text-shadow:0_1px_3px_rgba(0,0,0,0.95)] portrait:left-4 portrait:top-4 portrait:gap-1.5 portrait:text-[22px]">
           <span>👀 {stats.viewerCount.toLocaleString("vi-VN")}</span>
           <span>❤️ {stats.totalLikes.toLocaleString("vi-VN")}</span>
           <span>💎 {stats.totalDiamonds.toLocaleString("vi-VN")}</span>
@@ -854,17 +854,19 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
           {buildLegend(rules).map((item) => (
             <span
               key={item.label}
-              className="flex items-center gap-1.5 rounded-full bg-black/60 py-0.5 pl-1 pr-2.5 text-[10px] font-bold uppercase tracking-wide text-white backdrop-blur"
+              className="flex items-center gap-1.5 rounded-full bg-black/60 py-1 pl-1.5 pr-3 text-[12px] font-bold uppercase tracking-wide text-white backdrop-blur portrait:gap-2 portrait:py-1.5 portrait:pl-2 portrait:pr-3.5 portrait:text-[15px]"
             >
               {item.image ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={item.image}
                   alt=""
-                  className="h-5 w-5 shrink-0 object-contain"
+                  className="h-6 w-6 shrink-0 object-contain portrait:h-8 portrait:w-8"
                 />
               ) : (
-                <span className="text-sm leading-none">{item.emoji}</span>
+                <span className="text-base leading-none portrait:text-xl">
+                  {item.emoji}
+                </span>
               )}
               {item.label}
             </span>

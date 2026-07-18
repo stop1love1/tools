@@ -55,6 +55,10 @@ const FLOOR_D = 19;
 const NEON_MH = [0x25f4ee, 0xfe2c55, 0xffc94d, 0x8a2be2];
 const MAX_PLAYERS = 220;
 const HYPE_DECAY_PER_S = 0.14;
+const DEG_R = Math.PI / 180;
+// Khung ngang tham chiếu mà các góc máy được thiết kế (16:9). Khung thực hẹp
+// hơn (dọc 9:16) sẽ được nới FOV để giữ nguyên bố cục ngang.
+const REF_ASPECT = 16 / 9;
 // TikTok không có event "rời live" — user im lặng quá lâu coi như đã thoát
 const IDLE_REMOVE_MS = 4 * 60_000;
 
@@ -104,11 +108,16 @@ const FRONT_SHOTS: CamShot[] = [
   OVERVIEW_SHOT,
   // Toàn cảnh chính diện — thấy cả khán giả lẫn sân khấu
   { pos: [0, 7, 25], look: [0, 1.7, -3], drift: 0.9, kind: "wide" },
+  // Establishing cao-chéo hai phía — bao trọn sân khấu + sàn + đám đông trong
+  // một khung sạch, không bị cột/loa che (đứng trong mép sàn, trên cao lùi xa)
+  { pos: [-13, 10, 20], look: [1, 1.3, -4], drift: 0.6, kind: "wide" },
+  { pos: [13, 10, 20], look: [-1, 1.3, -4], drift: 0.6, kind: "wide" },
   // Chếch trái/phải hạ thấp — có chiều sâu (đủ cao để vượt tường khán đài)
   { pos: [-7, 5.6, 21.5], look: [1.5, 1.8, -3], drift: 0.8, kind: "medium" },
   { pos: [7, 5.6, 21.5], look: [-1.5, 1.8, -3], drift: 0.8, kind: "medium" },
-  // POV giữa sàn nhảy (TRƯỚC khán đài) nhìn lên sân khấu — không vướng ghế
-  { pos: [0, 2.7, 7.5], look: [0, 2.4, -6], drift: 0.5, kind: "crowd" },
+  // POV đám đông NÂNG CAO (trên đầu người) & lùi ra — nhìn lên sân khấu qua
+  // biển người, không bị vũ công tiền cảnh che khuất
+  { pos: [0, 3.6, 11.5], look: [0, 2, -5], drift: 0.5, kind: "crowd" },
   // Crane chéo góc cao trái/phải nhìn xuống toàn sàn
   { pos: [-11, 13.5, 12], look: [1.5, 0.5, -2], drift: 0.5, kind: "top" },
   { pos: [11, 13.5, 12], look: [-1.5, 0.5, -2], drift: 0.5, kind: "top" },
@@ -119,13 +128,15 @@ const FRONT_SHOTS: CamShot[] = [
   // Cross ngang tầm sân khấu, ra xa thêm nữa — profile hai phía, thoáng cột/loa
   { pos: [-20.5, 4.2, -0.5], look: [4, 2, -6], drift: 0.6, kind: "side" },
   { pos: [20.5, 4.2, -0.5], look: [-4, 2, -6], drift: 0.6, kind: "side" },
-  // Góc THẤP ngước lên (hero) — nhấc cao hơn chút cho chuyên nghiệp, đỡ bị
-  // vũ công tiền cảnh che; nhìn hắt lên sân khấu trên nền đèn
-  { pos: [0, 1.2, 7.5], look: [0, 3.3, -9], drift: 0.5, kind: "low" },
-  { pos: [-3.8, 1.25, 6], look: [1.3, 3.1, -9], drift: 0.5, kind: "low" },
-  { pos: [3.8, 1.25, 6], look: [-1.3, 3.1, -9], drift: 0.5, kind: "low" },
-  // POV của DJ: máy sau bàn DJ, trên cao, CHÚC XUỐNG bao quát đám đông
-  { pos: [0, 4.3, -11.2], look: [0, 0, 3], drift: 0.4, kind: "dj" },
+  // Góc THẤP ngước lên (hero) — máy đặt ở MÉP TRƯỚC sàn (ít người trước mặt),
+  // nhấc lên ~1.7m để nét nhìn vượt đầu vũ công, hắt lên diễn viên trên sân
+  // khấu cao (chủ thể ở trên biển người nên không bị che)
+  { pos: [0, 1.7, 9], look: [0, 3.4, -9], drift: 0.45, kind: "low" },
+  { pos: [-4.5, 1.7, 8.5], look: [1.4, 3.2, -9], drift: 0.45, kind: "low" },
+  { pos: [4.5, 1.7, 8.5], look: [-1.4, 3.2, -9], drift: 0.45, kind: "low" },
+  // POV của DJ: máy sau bàn DJ trên cao, ngắm CAO hơn (không chúc sát sàn) để
+  // bao trọn biển người phía trước cho đẹp, không lấy phải chân/khuất
+  { pos: [0, 4.8, -11.5], look: [0, 1.2, 4], drift: 0.4, kind: "dj" },
   // Cận cảnh giữa sàn — khung ngắm bám một vũ công thật, nhưng máy đặt LÙI
   // ra để lấy cả người (không zoom sát mặt), kiểu ống kính trung-cận
   { pos: [-7, 3, 9.5], look: [0, 2, -1], drift: 0.4, kind: "close" },
@@ -2835,11 +2846,12 @@ export class MemeDanceGame {
     // Đoạn trầm/breakdown hoặc bài buồn: khói haze mỏng bò chậm quanh sân
     // khấu — beam đèn hiện rõ trong khói đúng chất club thật
     if (this.music.playing) {
-      // Đoạn trầm (theo z-score của chính bài) hoặc bài buồn → haze dày hơn
+      // Haze dày dần LIÊN TỤC theo độ trầm của đoạn (1 - section) + bài buồn,
+      // thay vì bật/tắt theo ngưỡng nhị phân (gây chập chờn). density của
+      // SmokeJets tan chậm nên khói luôn liền mạch.
+      const quietAmt = Math.max(0, 1 - this.music.section * 1.4);
       const hazeRate =
-        (this.music.inQuietSection || this.music.section < 0.35 ? 2.4 : 0) +
-        (1 - valence) * (1 - mEnergy) * 1.6 +
-        0.1;
+        quietAmt * 2.4 + (1 - valence) * (1 - mEnergy) * 1.6 + 0.12;
       if (Math.random() < hazeRate * dt) this.smokeJets.puff();
     } else if (this.showcaseMode || this.demoRunning) {
       // Trang preview/demo chưa bật nhạc: xoay vòng lửa → CO2 → pháo hoa
@@ -2863,13 +2875,12 @@ export class MemeDanceGame {
     this.smokeJets.update(dt);
     this.frontSparks.update(dt);
     this.pyroDirector.update(dt);
-    // Sương sàn: chỉ hiện đoạn trầm/ballad (hoặc chưa phát nhạc), loãng khi mạnh
-    const fogQuiet =
-      !this.music.playing ||
-      this.music.inQuietSection ||
-      this.music.section < 0.35
-        ? 1
-        : 0;
+    // Sương sàn: mật độ LIÊN TỤC theo độ trầm (1 - section) thay vì bật/tắt
+    // theo ngưỡng (gây chập chờn) — dày ở verse/đoạn lắng, loãng dần vào điệp
+    // khúc. GroundFog còn làm mượt thêm bên trong nên fade rất êm.
+    const fogQuiet = !this.music.playing
+      ? 0.7
+      : Math.max(0, 1 - this.music.section * 1.4);
     this.groundFog.update(dt, fogQuiet, mEnergy, mood);
     // Bảng tên: đồng bộ nội dung/phông từ settings (rẻ, bỏ qua nếu không đổi)
     this.stageBanner.setText(
@@ -3108,7 +3119,7 @@ export class MemeDanceGame {
           // - điệp khúc/drop: góc động (cận, DJ, cánh, trên) + cắt nhanh
           // - verse: đa dạng vừa phải
           const kinds: CamShot["kind"][] = hot
-            ? ["dj", "side", "close", "top", "medium", "low"]
+            ? ["wide", "dj", "side", "close", "top", "medium", "low"]
             : calm
               ? ["wide", "crowd", "top", "medium"]
               : ["wide", "medium", "side", "top", "crowd", "dj", "close", "low"];
@@ -3232,7 +3243,16 @@ export class MemeDanceGame {
     const punch = kick * level * (2 + mEnergy * 2.5) + drop * 2;
     // Focus: ống kính cố định 46° + KHÔNG punch → khung ổn định, không zoom sát
     // thêm khi nhân vật đang có action (grow/podium)
-    const targetFov = focusingCam ? 46 : this.camBaseFov - punch;
+    const baseVFov = focusingCam ? 46 : this.camBaseFov - punch;
+    // Bù khung DỌC (TikTok 9:16): FOV của three.js là FOV DỌC — khung càng hẹp
+    // ngang thì tầm nhìn ngang càng bị bóp, cắt mất hai bên sân khấu. Giữ NGUYÊN
+    // khung NGANG như thiết kế cho 16:9 rồi suy ngược FOV dọc theo aspect thực;
+    // chặn trần 94° để khung siêu dọc không méo fisheye.
+    const hFov = 2 * Math.atan(Math.tan((baseVFov / 2) * DEG_R) * REF_ASPECT);
+    let targetFov =
+      (2 * Math.atan(Math.tan(hFov / 2) / Math.max(0.4, this.camera.aspect))) /
+      DEG_R;
+    targetFov = Math.min(Math.max(targetFov, baseVFov), 94);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 10);
     this.camera.updateProjectionMatrix();
     this.composer.render();
