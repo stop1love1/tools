@@ -20,10 +20,12 @@ import {
   type FloorPattern,
   Fireworks,
   FlameJets,
+  GroundFog,
   LedWall,
   LightBeams,
   lerpHue,
   makeGlowTexture,
+  PyroDirector,
   SmokeJets,
   SpeakerStack,
 } from "./effects";
@@ -213,6 +215,11 @@ export class MemeDanceGame {
     ],
     "spark",
   );
+  // "Người chạy pyro" ảo: quyết định bắn pháo hoa/lửa/khói thông minh theo nhạc
+  private pyroDirector = new PyroDirector();
+  private pyroLastSection = 0; // section beat trước → tính độ leo (buildup)
+  // Sương mù mỏng sát sàn, chỉ hiện đoạn trầm/ballad
+  private groundFog = new GroundFog(FLOOR_W, FLOOR_D);
   // Cột đèn rọi trời quanh venue — quét chậm trong loop
   private beacons: THREE.Mesh[] = [];
   // Hai màn hình FOH: trái = đang phát, phải = playlist (canvas texture)
@@ -410,6 +417,7 @@ export class MemeDanceGame {
       this.flames.group,
       this.smokeJets.group,
       this.frontSparks.group,
+      this.groundFog.group,
     );
     this.stageGroup.add(
       this.ledWall.mesh,
@@ -2569,47 +2577,37 @@ export class MemeDanceGame {
       } else if (section < 0.6) {
         this.inClimax = false;
       }
-      // Beat mờ mịt (đoạn ambient, nhạc không rõ nhịp) → pyro im để không
-      // bắn sai nhịp — như người vận hành thận trọng khi chưa bắt được bài
-      if (this.inClimax && level > 0.12 && this.music.beatConfidence > 0.45) {
-        // Sparkular mặt tiền chạy suốt điệp khúc — mỗi phách một đợt tia
-        this.frontSparks.fire(0.45 + level * 0.3);
-        if (beat.index % 16 === 0) {
-          this.pyroPattern = Math.floor(Math.random() * 3);
+      // PYRO DIRECTOR quyết định bắn gì mỗi beat theo năng lượng nhạc — biết
+      // kìm ở buildup, dồn cho khoảnh khắc mạnh, chọn kiểu/vị trí đa dạng và
+      // không bắn máy móc. energyRise = độ leo section so với beat trước.
+      const energyRise = section - this.pyroLastSection;
+      this.pyroLastSection = section;
+      const cues = this.pyroDirector.cue({
+        beat,
+        level,
+        section,
+        drop,
+        energyRise,
+        inClimax: this.inClimax,
+        inQuietSection: this.music.inQuietSection,
+        beatConfidence: this.music.beatConfidence,
+        mood,
+        flameCount: this.flames.count,
+      });
+      for (const c of cues) {
+        if (c.kind === "firework") {
+          this.fireworks.spawn(c.pos, 1, { type: c.type, hue: c.hue });
+        } else if (c.kind === "flame") {
+          this.flames.fire(c.strength, c.which);
+        } else if (c.kind === "spark") {
+          this.frontSparks.fire(c.strength);
+        } else {
+          this.smokeJets.blast(c.strength);
         }
-        const n = this.flames.count;
-        if (this.pyroPattern === 0) {
-          // Lửa đuổi vòng quanh sàn — mỗi phách một vòi kế tiếp
-          this.flames.fire(0.7 + level * 0.4, [beat.index % n]);
-        } else if (this.pyroPattern === 1) {
-          // Từ giữa (mép sân khấu) tỏa ra hai bên theo cặp, mỗi 2 phách
-          if (beat.index % 2 === 0) {
-            const pairs = [
-              [2, 3],
-              [1, 4],
-              [0, 5],
-            ];
-            this.flames.fire(
-              0.8 + level * 0.4,
-              pairs[(beat.index >> 1) % pairs.length],
-            );
-          }
-        } else if (beat.index % 4 === 0) {
-          // Cả dàn dậm đúng phách 1 của mỗi ô nhịp
-          this.flames.fire(0.9 + level * 0.5);
-        }
-        if (beat.index % 8 === 0) this.smokeJets.blast(0.5 + level * 0.4);
-        // Blinder trắng ấm chớp về khán giả đúng phách 1 điệp khúc
-        if (beat.index % 4 === 0) this.blinderFlash = 1;
-        // Điệp khúc thật căng: pháo hoa nổ sau sân khấu mỗi 4 ô nhịp
-        if (beat.index % 16 === 8 && section > 0.8) {
-          this.fireworks.spawn(
-            new THREE.Vector3((Math.random() - 0.5) * 12, 4.5, -7),
-            2,
-          );
-        }
-      } else if (this.music.inQuietSection && beat.index % 2 === 0) {
-        this.smokeJets.blast(0.22);
+      }
+      // Blinder trắng ấm chớp về khán giả đúng phách 1 điệp khúc
+      if (this.inClimax && level > 0.12 && beat.index % 4 === 0) {
+        this.blinderFlash = 1;
       }
       // Mỗi câu 8 beat đổi "look" — verse luân phiên moving head ↔ beam
       if (beat.index % 8 === 0) this.lookMode = (this.lookMode + 1) % 2;
@@ -2806,6 +2804,15 @@ export class MemeDanceGame {
     this.flames.update(dt);
     this.smokeJets.update(dt);
     this.frontSparks.update(dt);
+    this.pyroDirector.update(dt);
+    // Sương sàn: chỉ hiện đoạn trầm/ballad (hoặc chưa phát nhạc), loãng khi mạnh
+    const fogQuiet =
+      !this.music.playing ||
+      this.music.inQuietSection ||
+      this.music.section < 0.35
+        ? 1
+        : 0;
+    this.groundFog.update(dt, fogQuiet, mEnergy, mood);
     this.infoScreens.update(dt, this.music.progress);
     this.updateBanners(dt);
 

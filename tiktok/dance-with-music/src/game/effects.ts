@@ -35,6 +35,30 @@ export function makeGlowTexture(): THREE.Texture {
   return glowTexture;
 }
 
+let fogTexture: THREE.Texture | null = null;
+/** Texture sương loang lổ mềm — nhiều mảng mờ chồng nhau, lặp kín để pan UV. */
+export function makeFogTexture(): THREE.Texture {
+  if (fogTexture) return fogTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 256;
+  const ctx = canvas.getContext("2d")!;
+  for (let i = 0; i < 42; i++) {
+    const x = Math.random() * 256;
+    const y = Math.random() * 256;
+    const r = 30 + Math.random() * 70;
+    const a = 0.05 + Math.random() * 0.12;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(255,255,255,${a})`);
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 256, 256);
+  }
+  fogTexture = new THREE.CanvasTexture(canvas);
+  fogTexture.wrapS = fogTexture.wrapT = THREE.RepeatWrapping;
+  fogTexture.repeat.set(2, 2);
+  return fogTexture;
+}
+
 /** Kiểu hoạ tiết sàn nhảy — director đổi luân phiên theo câu nhạc cho đỡ chán. */
 export type FloorPattern =
   | "ring" // vòng tròn lan từ tâm ra mép (cổ điển)
@@ -602,83 +626,211 @@ export class ClubLights {
 const PARTICLES_PER_BURST = 140;
 const BURST_LIFE = 1.6;
 
+/**
+ * Kiểu nổ pháo hoa — director chọn xoay vòng cho đỡ lặp:
+ *  burst   = cầu hạt tỏa đều (cổ điển)
+ *  willow  = liễu rủ, hạt nặng vàng ấm rơi chậm buông xuống
+ *  ring    = nổ thành vòng phẳng nghiêng
+ *  crackle = nổ xong cuối đời tách ra lấp lánh lần hai
+ *  comet   = sao chổi vọt lên kéo đuôi rồi nổ nhỏ ở đỉnh (2 tầng)
+ */
+export type FireworkType = "burst" | "willow" | "ring" | "crackle" | "comet";
+
+const FIREWORK_TYPES: FireworkType[] = [
+  "burst",
+  "willow",
+  "ring",
+  "crackle",
+  "comet",
+];
+
 type Burst = {
   points: THREE.Points;
   velocities: Float32Array;
   age: number;
+  life: number; // tổng thời gian sống (theo kiểu)
+  type: FireworkType;
+  gravity: number;
+  count: number;
+  exploded: boolean; // comet: đã nổ ở đỉnh chưa
+  crackled: boolean; // crackle: đã bung lấp lánh lần hai chưa
 };
 
 export class Fireworks {
   readonly group = new THREE.Group();
   private bursts: Burst[] = [];
 
-  spawn(origin: THREE.Vector3, count = 1) {
+  /** Chọn kiểu ngẫu nhiên, tránh lặp lại kiểu vừa bắn. */
+  static randomType(exclude?: FireworkType | null): FireworkType {
+    let t: FireworkType;
+    do {
+      t = FIREWORK_TYPES[Math.floor(Math.random() * FIREWORK_TYPES.length)];
+    } while (t === exclude && FIREWORK_TYPES.length > 1);
+    return t;
+  }
+
+  /** count quả; opts.type để ép kiểu, opts.hue để lấy màu theo tâm trạng bài. */
+  spawn(
+    origin: THREE.Vector3,
+    count = 1,
+    opts: { type?: FireworkType; hue?: number } = {},
+  ) {
     for (let b = 0; b < count; b++) {
-      const positions = new Float32Array(PARTICLES_PER_BURST * 3);
-      const velocities = new Float32Array(PARTICLES_PER_BURST * 3);
-      const center = origin
-        .clone()
-        .add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 3,
-            2.5 + Math.random() * 2.5,
-            (Math.random() - 0.5) * 2,
-          ),
-        );
-      for (let i = 0; i < PARTICLES_PER_BURST; i++) {
-        positions[i * 3] = center.x;
-        positions[i * 3 + 1] = center.y;
-        positions[i * 3 + 2] = center.z;
+      this.spawnShell(origin, opts.type ?? Fireworks.randomType(), opts.hue);
+    }
+  }
+
+  private spawnShell(origin: THREE.Vector3, type: FireworkType, hue?: number) {
+    const n = type === "comet" ? 90 : PARTICLES_PER_BURST;
+    const positions = new Float32Array(n * 3);
+    const velocities = new Float32Array(n * 3);
+    const center = origin
+      .clone()
+      .add(
+        new THREE.Vector3(
+          (Math.random() - 0.5) * 3,
+          2.5 + Math.random() * 2.5,
+          (Math.random() - 0.5) * 2,
+        ),
+      );
+    // Comet xuất phát thấp hơn rồi vọt lên, nổ ở giữa đời
+    if (type === "comet") center.y -= 2.2;
+
+    const baseHue = hue ?? Math.random();
+    let gravity = 4.5;
+    let life = BURST_LIFE;
+    const color = new THREE.Color();
+    if (type === "willow") {
+      gravity = 6.8;
+      life = 2.6;
+      color.setHSL(0.11 + Math.random() * 0.03, 0.9, 0.62); // vàng ấm cố định
+    } else if (type === "ring") {
+      gravity = 3.2;
+      life = 1.5;
+      color.setHSL(baseHue, 0.95, 0.62);
+    } else if (type === "crackle") {
+      gravity = 4;
+      life = 1.9;
+      color.setHSL(baseHue, 0.9, 0.66);
+    } else if (type === "comet") {
+      gravity = 4.5;
+      life = 2.2;
+      color.setHSL(baseHue, 0.95, 0.66);
+    } else {
+      color.setHSL(baseHue, 0.95, 0.62);
+    }
+
+    const ringTilt = Math.random() * Math.PI;
+    for (let i = 0; i < n; i++) {
+      positions[i * 3] = center.x + (Math.random() - 0.5) * 0.1;
+      // Comet: rải hạt thành cột dọc → nhìn như vệt sao chổi có đuôi
+      positions[i * 3 + 1] =
+        type === "comet" ? center.y - (i / n) * 1.8 : center.y;
+      positions[i * 3 + 2] = center.z + (Math.random() - 0.5) * 0.1;
+      if (type === "comet") {
+        velocities[i * 3] = (Math.random() - 0.5) * 0.5;
+        velocities[i * 3 + 1] = 9 + Math.random() * 1.5;
+        velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
+      } else if (type === "ring") {
+        // Vòng trong mặt phẳng XZ rồi nghiêng quanh trục X
+        const a = (i / n) * Math.PI * 2;
+        const speed = 3 + Math.random() * 0.6;
+        const rx = Math.cos(a) * speed;
+        const rz = Math.sin(a) * speed;
+        velocities[i * 3] = rx;
+        velocities[i * 3 + 1] =
+          -rz * Math.sin(ringTilt) + (Math.random() - 0.5) * 0.4;
+        velocities[i * 3 + 2] = rz * Math.cos(ringTilt);
+      } else {
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
-        const speed = 2.2 + Math.random() * 2.4;
+        const speed =
+          type === "willow" ? 1.8 + Math.random() * 1.4 : 2.2 + Math.random() * 2.4;
         velocities[i * 3] = Math.sin(phi) * Math.cos(theta) * speed;
         velocities[i * 3 + 1] = Math.cos(phi) * speed;
         velocities[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * speed;
       }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new THREE.BufferAttribute(positions, 3),
-      );
-      const material = new THREE.PointsMaterial({
-        color: new THREE.Color().setHSL(Math.random(), 0.95, 0.62),
-        size: 0.14,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const points = new THREE.Points(geometry, material);
-      points.frustumCulled = false;
-      this.group.add(points);
-      this.bursts.push({ points, velocities, age: 0 });
     }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+      color,
+      size: type === "willow" ? 0.16 : 0.14,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const points = new THREE.Points(geometry, material);
+    points.frustumCulled = false;
+    this.group.add(points);
+    this.bursts.push({
+      points,
+      velocities,
+      age: 0,
+      life,
+      type,
+      gravity,
+      count: n,
+      exploded: type !== "comet",
+      crackled: false,
+    });
   }
 
   update(dt: number) {
     for (let b = this.bursts.length - 1; b >= 0; b--) {
       const burst = this.bursts[b];
       burst.age += dt;
-      if (burst.age >= BURST_LIFE) {
+      if (burst.age >= burst.life) {
         this.group.remove(burst.points);
         burst.points.geometry.dispose();
         (burst.points.material as THREE.Material).dispose();
         this.bursts.splice(b, 1);
         continue;
       }
+      const n = burst.count;
+      const vel = burst.velocities;
       const positions = burst.points.geometry.getAttribute(
         "position",
       ) as THREE.BufferAttribute;
       const array = positions.array as Float32Array;
-      for (let i = 0; i < PARTICLES_PER_BURST; i++) {
-        burst.velocities[i * 3 + 1] -= 4.5 * dt;
-        array[i * 3] += burst.velocities[i * 3] * dt;
-        array[i * 3 + 1] += burst.velocities[i * 3 + 1] * dt;
-        array[i * 3 + 2] += burst.velocities[i * 3 + 2] * dt;
+
+      // Comet: tới đỉnh (giữa đời) thì cột hạt bung ra thành cầu nổ
+      if (!burst.exploded && burst.age >= 0.55) {
+        burst.exploded = true;
+        for (let i = 0; i < n; i++) {
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.acos(2 * Math.random() - 1);
+          const speed = 2 + Math.random() * 2.2;
+          vel[i * 3] = Math.sin(phi) * Math.cos(theta) * speed;
+          vel[i * 3 + 1] = Math.cos(phi) * speed + 1;
+          vel[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * speed;
+        }
+      }
+      // Crackle: về cuối đời phần lớn hạt được đá thêm một cú → lấp lánh lần hai
+      if (
+        burst.type === "crackle" &&
+        !burst.crackled &&
+        burst.age >= burst.life * 0.55
+      ) {
+        burst.crackled = true;
+        for (let i = 0; i < n; i++) {
+          if (Math.random() < 0.6) {
+            vel[i * 3] += (Math.random() - 0.5) * 5;
+            vel[i * 3 + 1] += (Math.random() - 0.5) * 5;
+            vel[i * 3 + 2] += (Math.random() - 0.5) * 5;
+          }
+        }
+      }
+
+      for (let i = 0; i < n; i++) {
+        vel[i * 3 + 1] -= burst.gravity * dt;
+        array[i * 3] += vel[i * 3] * dt;
+        array[i * 3 + 1] += vel[i * 3 + 1] * dt;
+        array[i * 3 + 2] += vel[i * 3 + 2] * dt;
       }
       positions.needsUpdate = true;
       (burst.points.material as THREE.PointsMaterial).opacity =
-        1 - burst.age / BURST_LIFE;
+        1 - burst.age / burst.life;
     }
   }
 }
@@ -1301,5 +1453,250 @@ export class Confetti {
     (
       this.points.geometry.getAttribute("position") as THREE.BufferAttribute
     ).needsUpdate = true;
+  }
+}
+
+/**
+ * Lớp sương mù mỏng bò SÁT mặt sàn — chỉ hiện ở đoạn trầm/ballad để tạo
+ * không khí mơ màng, đủ mờ cho beam đèn ăn khói mà KHÔNG che chân vũ công.
+ * Cao trào thì tự tan gần hết. Vài mặt phẳng chồng nhau pan UV chậm cho có
+ * chuyển động cuộn nhẹ, rẻ hơn nhiều so với phun hạt.
+ */
+export class GroundFog {
+  readonly group = new THREE.Group();
+  private layers: THREE.Mesh[] = [];
+  private amount = 0; // độ hiện hữu đã làm mượt 0..1
+  private color = new THREE.Color();
+
+  constructor(width: number, depth: number) {
+    const tex = makeFogTexture();
+    for (let i = 0; i < 3; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex.clone(), // mỗi lớp pan UV riêng
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        fog: false,
+      });
+      mat.map!.needsUpdate = true;
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(width * 1.35, depth * 1.35),
+        mat,
+      );
+      // Xoay nằm ngang, nâng thấp sát sàn (gạch cao ~0.1)
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.y = 0.14 + i * 0.16;
+      this.group.add(mesh);
+      this.layers.push(mesh);
+    }
+  }
+
+  /** quiet 0..1 (đoạn trầm), energy 0..1 — sương dày khi trầm, loãng khi mạnh. */
+  update(dt: number, quiet: number, energy: number, mood?: Mood) {
+    const target = quiet * Math.max(0, 1 - energy * 1.3);
+    this.amount += (target - this.amount) * Math.min(1, dt * 0.6);
+    const t = performance.now() / 1000;
+    this.color.setHSL(mood?.hue ?? 0.6, 0.15, 0.7);
+    for (let i = 0; i < this.layers.length; i++) {
+      const mat = this.layers[i].material as THREE.MeshBasicMaterial;
+      // Rất mờ, cap thấp dần theo lớp trên
+      mat.opacity = this.amount * (0.17 - i * 0.03);
+      mat.color.copy(this.color);
+      if (mat.map) {
+        const dir = i % 2 === 0 ? 1 : -1;
+        mat.map.offset.x = Math.sin(t * 0.03 + i) * 0.12;
+        mat.map.offset.y = t * 0.012 * dir;
+      }
+    }
+  }
+}
+
+/** Cue do PyroDirector phát ra mỗi beat, game.ts thi hành lên các hệ hiệu ứng. */
+export type PyroCue =
+  | { kind: "firework"; type: FireworkType; pos: THREE.Vector3; strength: number; hue: number }
+  | { kind: "flame"; strength: number; which?: number[] }
+  | { kind: "spark"; strength: number }
+  | { kind: "smoke"; strength: number };
+
+export type DirectorCtx = {
+  beat: Beat;
+  level: number;
+  section: number;
+  drop: number;
+  energyRise: number; // độ leo năng lượng gần đây (dò buildup)
+  inClimax: boolean;
+  inQuietSection: boolean;
+  beatConfidence: number;
+  mood: Mood;
+  flameCount: number;
+};
+
+const FLAME_PATTERNS = 5;
+
+/**
+ * "Người chạy pyro" ảo: mỗi beat đọc trạng thái nhạc rồi quyết định BẮN GÌ —
+ * không bắn theo mốc cứng. Có quỹ năng lượng từng hệ (cạn khi bắn, hồi dần)
+ * nên sau loạt lớn tự im một quãng dồn ấn tượng; biết KÌM ở đoạn buildup rồi
+ * BUNG đúng cú drop/vào điệp khúc; chọn kiểu pháo hoa & pattern lửa xoay vòng
+ * chống lặp; thỉnh thoảng cố tình bỏ nhịp cho đỡ máy móc.
+ */
+export class PyroDirector {
+  private budget = { firework: 1, flame: 1, spark: 1, smoke: 1 };
+  private readonly recharge = {
+    firework: 0.14, // hồi chậm → pháo hoa thưa, không spam
+    flame: 0.5,
+    spark: 0.7,
+    smoke: 0.3,
+  };
+  private lastType: FireworkType | null = null;
+  private pattern = 0;
+  private patternUntil = 0; // giữ pattern lửa tới beat này rồi đổi
+
+  /** Gọi mỗi frame: hồi quỹ năng lượng các hệ. */
+  update(dt: number) {
+    this.budget.firework = Math.min(1, this.budget.firework + this.recharge.firework * dt);
+    this.budget.flame = Math.min(1, this.budget.flame + this.recharge.flame * dt);
+    this.budget.spark = Math.min(1, this.budget.spark + this.recharge.spark * dt);
+    this.budget.smoke = Math.min(1, this.budget.smoke + this.recharge.smoke * dt);
+  }
+
+  /** Gọi mỗi beat MỚI → trả về danh sách cue cần thi hành. */
+  cue(ctx: DirectorCtx): PyroCue[] {
+    const cues: PyroCue[] = [];
+    const { beat, level, section, drop, energyRise, beatConfidence, mood } = ctx;
+
+    // Đoạn trầm/ballad: nhả CO2 thưa cho beam đèn ăn khói, bất kể beat rõ hay không
+    if (ctx.inQuietSection && beat.index % 2 === 0 && this.budget.smoke >= 0.2) {
+      cues.push({ kind: "smoke", strength: 0.22 });
+      this.budget.smoke -= 0.2;
+    }
+
+    // Nhạc ambient / chưa bắt được nhịp → im, không bắn sai nhịp
+    if (level < 0.12 || beatConfidence < 0.45) return cues;
+
+    // Buildup: năng lượng đang leo nhanh mà chưa tới đỉnh → KÌM pháo/lửa
+    const building = energyRise > 0.05 && section < 0.85 && drop < 0.5;
+
+    // Điểm khoảnh khắc 0..1 — càng cao càng đáng "bung"
+    const score = Math.min(
+      1,
+      section * 0.4 + level * 0.4 + drop * 0.6 + Math.max(0, energyRise) * 1.2,
+    );
+
+    // Đổi pattern lửa mỗi 4 ô nhịp
+    if (beat.index >= this.patternUntil) {
+      this.pattern = Math.floor(Math.random() * FLAME_PATTERNS);
+      this.patternUntil = beat.index + 16;
+    }
+
+    // LỬA — chạy trong đoạn cao, không chạy khi đang kìm buildup
+    if (!building && section > 0.6 && this.budget.flame >= 0.2) {
+      if (this.flamePattern(this.pattern, ctx, cues)) this.budget.flame -= 0.22;
+    }
+
+    // SPARKULAR mặt tiền — rải suốt điệp khúc
+    if (
+      !building &&
+      section > 0.62 &&
+      this.budget.spark >= 0.15 &&
+      beatConfidence > 0.5
+    ) {
+      cues.push({ kind: "spark", strength: 0.45 + level * 0.35 });
+      this.budget.spark -= 0.18;
+    }
+
+    // CO2 nhấn — thưa, phách 1 của mỗi 2 ô nhịp
+    if (
+      !building &&
+      section > 0.7 &&
+      beat.index % 8 === 0 &&
+      this.budget.smoke >= 0.3
+    ) {
+      cues.push({ kind: "smoke", strength: 0.5 + level * 0.4 });
+      this.budget.smoke -= 0.32;
+    }
+
+    // PHÁO HOA — ngôi sao: chỉ bung khi điểm cao, còn quỹ, và không đang kìm.
+    // Cú drop lớn thì chắc chắn bắn; còn lại có xác suất bỏ qua cho đỡ nhàm.
+    if (!building && score > 0.72 && section > 0.75 && this.budget.firework >= 0.34) {
+      const mustFire = drop > 0.6;
+      if (mustFire || Math.random() < 0.55) {
+        const shells =
+          mustFire || score > 0.9 ? 2 + Math.floor(Math.random() * 2) : 1;
+        for (let s = 0; s < shells; s++) {
+          const type = Fireworks.randomType(this.lastType);
+          this.lastType = type;
+          cues.push({
+            kind: "firework",
+            type,
+            pos: new THREE.Vector3(
+              (Math.random() - 0.5) * 16,
+              3.5 + Math.random() * 2.5,
+              -7 + (Math.random() - 0.5) * 3,
+            ),
+            strength: 1.5 + level,
+            hue: (((mood.hue + (Math.random() - 0.5) * 0.2) % 1) + 1) % 1,
+          });
+        }
+        this.budget.firework = Math.max(0, this.budget.firework - 0.34 * shells);
+      }
+    }
+
+    return cues;
+  }
+
+  /** Sinh cue lửa theo pattern; trả về true nếu có bắn phách này. */
+  private flamePattern(p: number, ctx: DirectorCtx, cues: PyroCue[]): boolean {
+    const { beat, level } = ctx;
+    const n = ctx.flameCount;
+    const str = 0.7 + level * 0.5;
+    switch (p) {
+      case 0: // đuổi vòng quanh sàn
+        cues.push({ kind: "flame", strength: str, which: [beat.index % n] });
+        return true;
+      case 1: // từ giữa tỏa ra hai bên theo cặp, mỗi 2 phách
+        if (beat.index % 2 === 0) {
+          const pairs = [
+            [2, 3],
+            [1, 4],
+            [0, 5],
+          ];
+          cues.push({
+            kind: "flame",
+            strength: str,
+            which: pairs[(beat.index >> 1) % pairs.length].filter((x) => x < n),
+          });
+          return true;
+        }
+        return false;
+      case 2: // cả dàn dậm phách 1 của mỗi ô nhịp
+        if (beat.index % 4 === 0) {
+          cues.push({ kind: "flame", strength: str + 0.2 });
+          return true;
+        }
+        return false;
+      case 3: // bắn lẻ một vòi ngẫu nhiên (mới)
+        if (beat.index % 2 === 0) {
+          cues.push({
+            kind: "flame",
+            strength: str,
+            which: [Math.floor(Math.random() * n)],
+          });
+          return true;
+        }
+        return false;
+      default: {
+        // sóng từ hai đầu dồn vào giữa (mới)
+        if (beat.index % 2 === 0) {
+          const step = (beat.index >> 1) % Math.ceil(n / 2);
+          const which = [step, n - 1 - step].filter(
+            (x, i, a) => a.indexOf(x) === i,
+          );
+          cues.push({ kind: "flame", strength: str, which });
+          return true;
+        }
+        return false;
+      }
+    }
   }
 }
