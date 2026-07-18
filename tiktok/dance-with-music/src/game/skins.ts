@@ -24,7 +24,6 @@ const OUTFITS = [
 const W = 256;
 const H = 320;
 
-type Pose = "idle" | "arms-up";
 type Accessory = "none" | "cap" | "headphones" | "bow" | "party";
 
 function drawAccessory(
@@ -90,11 +89,17 @@ function drawAccessory(
   }
 }
 
+/**
+ * Vẽ nhân vật với "độ giơ" của từng tay 0..1 (0 = buông thõng, 1 = giơ cao).
+ * Nội suy liên tục giữa hai cực nên sinh được nhiều pose cho một vòng nhảy
+ * uyển chuyển, mà vẫn giữ nguyên phong cách meme sẵn có.
+ */
 function drawCharacter(
   ctx: CanvasRenderingContext2D,
   shirt: string,
   face: number,
-  pose: Pose,
+  lRaise: number,
+  rRaise: number,
   accessory: Accessory = "none",
   accent = "#fe2c55",
 ) {
@@ -105,6 +110,7 @@ function drawCharacter(
   const cx = 128;
   const headCy = 116;
   const headR = 96;
+  const avg = (lRaise + rRaise) / 2;
 
   const bodyTop = headCy + headR - 30;
   ctx.fillStyle = shirt;
@@ -118,45 +124,48 @@ function drawCharacter(
   ctx.strokeStyle = HAIR_COLOR;
   ctx.lineWidth = 14;
   const legY = bodyTop + 62;
-  const spread = pose === "arms-up" ? 24 : 16;
+  const spread = 16 + avg * 8;
+  // Dồn trọng tâm nhẹ theo bên tay giơ cao hơn — như đang bước theo nhịp
+  const step = (rRaise - lRaise) * 4;
   ctx.beginPath();
   ctx.moveTo(cx - spread, legY);
-  ctx.lineTo(cx - spread - 3, legY + 28);
+  ctx.lineTo(cx - spread - 3 + step, legY + 28);
   ctx.moveTo(cx + spread, legY);
-  ctx.lineTo(cx + spread + 3, legY + 28);
+  ctx.lineTo(cx + spread + 3 + step, legY + 28);
   ctx.stroke();
   ctx.fillStyle = "#000";
   ctx.beginPath();
-  ctx.ellipse(cx - spread - 7, legY + 32, 15, 8, 0, 0, Math.PI * 2);
-  ctx.ellipse(cx + spread + 7, legY + 32, 15, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx - spread - 7 + step, legY + 32, 15, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + spread + 7 + step, legY + 32, 15, 8, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // Cánh tay: nội suy đầu tay giữa buông thõng (raise 0) và giơ cao (raise 1)
+  const shoulderY = bodyTop + 15;
+  const laX = cx - (64 + lRaise * 14);
+  const laY = bodyTop + (50 - lRaise * 84);
+  const raX = cx + (64 + rRaise * 14);
+  const raY = bodyTop + (50 - rRaise * 84);
   ctx.strokeStyle = shirt === "#f5f4f0" || shirt === "#e8e4da" ? "#d9d4c7" : shirt;
   ctx.lineWidth = 13;
   ctx.beginPath();
-  if (pose === "arms-up") {
-    ctx.moveTo(cx - 38, bodyTop + 16);
-    ctx.lineTo(cx - 78, bodyTop - 34);
-    ctx.moveTo(cx + 38, bodyTop + 16);
-    ctx.lineTo(cx + 78, bodyTop - 34);
-  } else {
-    ctx.moveTo(cx - 38, bodyTop + 14);
-    ctx.lineTo(cx - 64, bodyTop + 50);
-    ctx.moveTo(cx + 38, bodyTop + 14);
-    ctx.lineTo(cx + 64, bodyTop + 50);
-  }
+  ctx.moveTo(cx - 38, shoulderY);
+  ctx.lineTo(laX, laY);
+  ctx.moveTo(cx + 38, shoulderY);
+  ctx.lineTo(raX, raY);
   ctx.stroke();
   ctx.fillStyle = FACE_COLOR;
   ctx.strokeStyle = INK;
   ctx.lineWidth = 3;
-  const handY = pose === "arms-up" ? bodyTop - 38 : bodyTop + 54;
-  const handX = pose === "arms-up" ? 80 : 66;
+  const lhX = cx - (66 + lRaise * 14);
+  const lhY = bodyTop + (54 - lRaise * 92);
+  const rhX = cx + (66 + rRaise * 14);
+  const rhY = bodyTop + (54 - rRaise * 92);
   ctx.beginPath();
-  ctx.arc(cx - handX, handY, 10, 0, Math.PI * 2);
+  ctx.arc(lhX, lhY, 10, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.beginPath();
-  ctx.arc(cx + handX, handY, 10, 0, Math.PI * 2);
+  ctx.arc(rhX, rhY, 10, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
@@ -240,8 +249,9 @@ function drawCharacter(
     ctx.stroke();
   }
 
-  if (pose === "arms-up") {
-    ctx.fillStyle = "rgba(255,110,110,0.35)";
+  // Càng quẩy (tay giơ càng cao) má càng ửng hồng
+  if (avg > 0.45) {
+    ctx.fillStyle = `rgba(255,110,110,${((avg - 0.45) * 0.6).toFixed(3)})`;
     ctx.beginPath();
     ctx.ellipse(cx - 56, eyeY + 16, 12, 7, 0, 0, Math.PI * 2);
     ctx.ellipse(cx + 56, eyeY + 16, 12, 7, 0, 0, Math.PI * 2);
@@ -263,6 +273,18 @@ function makeTexture(draw: (ctx: CanvasRenderingContext2D) => void) {
   return texture;
 }
 
+// Vòng nhảy: mỗi khung là [độ giơ tay trái, phải]. Khung 0 = đứng yên (buông
+// thõng) — dùng khi không nhảy; các khung sau vung tay so le rồi về, tạo một
+// vòng groove liên tục uyển chuyển khi phát nối tiếp.
+const DANCE_CYCLE: [number, number][] = [
+  [0.0, 0.0], // idle — đứng yên
+  [0.7, 0.15], // vung tay trái lên
+  [1.0, 0.5], // trái cao, phải nhấc
+  [0.5, 1.0], // đổi bên: phải cao
+  [0.15, 0.7], // phải vung, trái hạ
+  [0.35, 0.35], // chụm về gần idle rồi lặp
+];
+
 export function generateSkins(): Skin[] {
   const skins: Skin[] = [];
   const accessories: Accessory[] = ["none", "cap", "headphones", "bow", "party"];
@@ -273,14 +295,11 @@ export function generateSkins(): Skin[] {
     skins.push({
       accent: outfit.accent,
       aspect: W / H,
-      frames: [
+      frames: DANCE_CYCLE.map(([l, r]) =>
         makeTexture((ctx) =>
-          drawCharacter(ctx, outfit.shirt, face, "idle", accessory, outfit.accent),
+          drawCharacter(ctx, outfit.shirt, face, l, r, accessory, outfit.accent),
         ),
-        makeTexture((ctx) =>
-          drawCharacter(ctx, outfit.shirt, face, "arms-up", accessory, outfit.accent),
-        ),
-      ],
+      ),
     });
   }
   return skins;

@@ -293,7 +293,6 @@ export class Player {
   // Đi dạo quanh chỗ đứng: đang nhảy trên sàn thì thi thoảng dời vài bước
   private roamOffset = new THREE.Vector3();
   private roamTarget = new THREE.Vector3();
-  private halfBeatSwapped = false;
   private danceY = 0;
   private smoothSX = 1;
   private smoothSY = 1;
@@ -578,9 +577,6 @@ export class Player {
     if (dancing) {
       if (beat.index !== this.lastBeat) {
         this.lastBeat = beat.index;
-        this.frame = (this.frame + 1) % this.currentSkin.frames.length;
-        this.applyFrame();
-        this.halfBeatSwapped = false;
         this.moveBeatsLeft -= 1;
         const prevMove = this.move;
         if (this.forcedMove) {
@@ -679,9 +675,15 @@ export class Player {
           this.roamTarget.set(Math.cos(a) * r, 0, Math.sin(a) * r * 0.7);
         }
       }
-      if (!this.halfBeatSwapped && beat.pulse > 0.5) {
-        this.halfBeatSwapped = true;
-        this.frame = (this.frame + 1) % this.currentSkin.frames.length;
+      // Phát khung LIÊN TỤC theo pha nhạc thay vì snap 2 khung/nhịp: bước đều
+      // qua mọi khung của skin → vòng nhảy nhiều pose (mặc định) và GIF/sprite
+      // nạp ngoài đều chạy uyển chuyển; đoạn cao trào (intensity) nhảy nhanh hơn.
+      const nf = this.currentSkin.frames.length;
+      const fpb = 2.5 + (vibe?.intensity ?? 0.5) * 1.5;
+      const nextFrame =
+        (((Math.floor((beat.index + beat.pulse) * fpb) % nf) + nf) % nf) | 0;
+      if (nextFrame !== this.frame) {
+        this.frame = nextFrame;
         this.applyFrame();
       }
 
