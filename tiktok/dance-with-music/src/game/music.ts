@@ -467,14 +467,23 @@ export class MusicPlayer {
         this.lastOnset = now;
         this.beatIndex++;
       } else {
-        this.lastOnset += (now - this.lastOnset) * 0.35;
+        // Kéo grid bám sát onset thật hơn (0.35 → 0.5) để phách hình khớp
+        // đúng tiếng, không trễ lại phía sau
+        this.lastOnset += (now - this.lastOnset) * 0.5;
       }
     }
   }
 
+  // Bù trễ còn lại của chuỗi phân tích→hiển thị (cửa sổ FFT ~46ms + đèn ease):
+  // đẩy PHA sớm lên chút để hiệu ứng loé đúng lúc nghe thấy kick, không sau
+  // một nhịp hình. Nhỏ (~40ms) nên phần tử tức thời cũng không thấy sớm rõ.
+  private static readonly BEAT_LEAD = 0.04;
+
   getBeat(): Beat {
     const now = performance.now() / 1000;
-    const pulse = Math.min(0.999, (now - this.lastOnset) / this.interval);
-    return { index: this.beatIndex, pulse };
+    let ph =
+      (now - this.lastOnset + MusicPlayer.BEAT_LEAD) / this.interval;
+    ph -= Math.floor(ph); // giữ trong [0,1) sau khi đẩy pha
+    return { index: this.beatIndex, pulse: Math.min(0.999, ph) };
   }
 }
