@@ -26,13 +26,17 @@ GENRE_GROOVE[genre] = {
 
 Giá trị dự kiến (tinh chỉnh sau khi xem app):
 
-| genre  | amp | bob | swing | timeFeel | peak |
-|--------|-----|-----|-------|----------|------|
-| ballad | 0.5 | 0.4 | 0.0   | half     | 0.5  |
-| pop    | 0.75| 0.8 | 0.03  | straight | 0.5  |
-| hiphop | 0.85| 1.1 | 0.07  | straight | 0.40 |
-| rock   | 1.0 | 1.0 | 0.025 | straight | 0.45 |
-| edm    | 1.0 | 1.2 | 0.0   | straight | 0.35 |
+| genre  | amp  | bob  | swing | timeFeel | peak |
+|--------|------|------|-------|----------|------|
+| ballad | 0.5  | 0.4  | 0.0   | half     | 0.55 |
+| pop    | 0.78 | 0.9  | 0.03  | straight | 0.47 |
+| hiphop | 0.9  | 1.25 | 0.06  | straight | 0.40 |
+| rock   | 1.05 | 1.1  | 0.02  | straight | 0.42 |
+| edm    | 1.05 | 1.35 | 0.0   | straight | 0.32 |
+
+Tăng độ tương phản so với bản đầu (giá trị nhẹ dễ chìm trong cảnh đông): edm
+attack sắc hơn (peak 0.35→0.32) và nhún nặng hơn (bob 1.2→1.35); hiphop lay-back
++ bob rõ hơn; ballad lên chậm–xuống muộn (peak 0.5→0.55) cho cảm giác trôi.
 
 ## Bốn cải thiện
 

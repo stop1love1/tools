@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import type {
   ActivityEvent,
   ChatEvent,
@@ -160,6 +161,61 @@ const FOV_BY_KIND: Record<CamShot["kind"], number> = {
   crowd: 60,
   wide: 62,
 };
+// Lớp "chất phim" ở CUỐI chuỗi hậu kỳ: gộp viền tối (vignette) + hạt film grain
+// + quầng sắc rìa (chromatic aberration) + dải đen letterbox trong MỘT pass toàn
+// màn cho nhẹ GPU. Cường độ quầng sắc được đẩy nhẹ theo drop/kick trong loop.
+const FILMIC_SHADER = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    uTime: { value: 0 },
+    uAberr: { value: 0.0016 },
+    uVignette: { value: 0.42 },
+    uGrain: { value: 0.045 },
+    uBar: { value: 0.035 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform float uAberr;
+    uniform float uVignette;
+    uniform float uGrain;
+    uniform float uBar;
+    varying vec2 vUv;
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+    void main() {
+      // Dải đen trên/dưới — khung hình kiểu "rạp"
+      if (vUv.y < uBar || vUv.y > 1.0 - uBar) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+      }
+      vec2 dir = vUv - 0.5;
+      float d = dot(dir, dir);
+      // Quầng sắc: tách kênh R/B lệch dần về phía rìa khung
+      vec2 off = dir * d * uAberr * 25.0;
+      vec3 col;
+      col.r = texture2D(tDiffuse, vUv + off).r;
+      col.g = texture2D(tDiffuse, vUv).g;
+      col.b = texture2D(tDiffuse, vUv - off).b;
+      // Viền tối bốn góc — dồn mắt vào giữa khung
+      float vig = smoothstep(0.85, 0.20, length(dir));
+      col *= mix(1.0, vig, uVignette);
+      // Hạt phim động rất mảnh
+      float g = hash(vUv * vec2(1280.0, 720.0) + fract(uTime) * 100.0) - 0.5;
+      col += g * uGrain;
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+};
+
 const STAGE_H = 0.9;
 const AUDIENCE_Y = -0.35;
 const AUDIENCE_Z0 = FLOOR_D / 2 + 0.5;
@@ -274,6 +330,9 @@ export class MemeDanceGame {
     melodyTrend: 0,
     melodyHeight: 0.5,
     intensity: 0.5,
+    kick: 0,
+    snare: 0,
+    beatConfidence: 0.5,
   };
   // Đồng diễn: cả sàn cùng nhảy theo đội hình (đồng loạt / sóng lan /
   // gọi-đáp 2 nửa / canon so le hàng); kích hoạt khi vào điệp khúc, khi drop,
@@ -346,7 +405,7 @@ export class MemeDanceGame {
   private camLastBeat = -1;
   private camCut = false;
   private camGlide = 0.55;
-  private camMoveMode: "push" | "slide" = "push";
+  private camMoveMode: "push" | "slide" | "arc" = "push";
   // Chủ thể cận cảnh: vũ công auto camera đang bám khung
   private camSubject: Player | null = null;
   // Admin khóa góc: đạo diễn tự động tạm ngưng, chỉ đổi khi admin bấm
@@ -365,6 +424,12 @@ export class MemeDanceGame {
   // không nghiêng máy, không rung tay liên tục; động lực đến từ cắt cảnh theo
   // nhịp + punch-zoom theo kick + bám chủ thể thật.
   private camBaseFov = 58;
+  // Chất điện ảnh — hậu kỳ + động lực máy:
+  private filmic!: ShaderPass; // vignette/grain/aberration/letterbox
+  private shakeAmp = 0; // biên độ rung xung khi drop, tắt dần
+  private rollAngle = 0; // góc nghiêng máy (Dutch) hiện tại, rad
+  private prevDrop = 0; // theo dõi mép lên của drop để kích rung
+  private camWhipT = 0; // đếm ngược thời lượng lia nhanh (whip-pan)
 
   private spotlightPlayer: Player | null = null;
   private spotlightUntil = 0;
@@ -418,6 +483,9 @@ export class MemeDanceGame {
       0.82,
     );
     this.composer.addPass(this.bloom);
+    // Lớp chất phim CHỐT chuỗi (render ra màn hình)
+    this.filmic = new ShaderPass(FILMIC_SHADER);
+    this.composer.addPass(this.filmic);
 
     this.scene.add(this.stageGroup);
     this.skins = generateSkins();
@@ -1984,13 +2052,19 @@ export class MemeDanceGame {
     this.camCut = !!opts.cut;
     // Nhạc căng lướt nhanh dứt khoát, nhạc êm trôi chậm rãi
     this.camGlide = 0.3 + opts.energy * 0.6;
-    this.camMoveMode = Math.random() < 0.6 ? "push" : "slide";
     // Cận/trung cảnh: bám một CHỦ THỂ thật để khung luôn có người, không ngắm
     // trúng chỗ trống. Góc rộng/trên/cánh giữ điểm ngắm sân khấu cố định.
-    this.camSubject =
-      pick.s.kind === "close" || pick.s.kind === "medium"
-        ? this.pickHeroSubject()
-        : null;
+    const tracking = pick.s.kind === "close" || pick.s.kind === "medium";
+    this.camSubject = tracking ? this.pickHeroSubject() : null;
+    // Chuyển động trong take: cận/trung có thêm cú LIA VÒNG CUNG quanh chủ thể
+    // (arc) kiểu quay phim MV; còn lại đẩy máy (push) hoặc trượt ngang (slide).
+    const r = Math.random();
+    this.camMoveMode =
+      tracking && r < 0.5 ? "arc" : r < 0.75 ? "push" : "slide";
+    // Whip-pan: thi thoảng (nhạc căng, không phải hard cut) lia CỰC nhanh sang
+    // góc mới thay vì lerp êm — nhịp cắt giật gân hơn.
+    this.camWhipT =
+      !opts.cut && opts.energy > 0.6 && Math.random() < 0.35 ? 0.28 : 0;
   }
 
   /**
@@ -2005,6 +2079,11 @@ export class MemeDanceGame {
     if (front.length)
       return front[Math.floor(Math.random() * front.length)];
     return this.pickActiveDancer();
+  }
+
+  /** Nạp một cú rung xung cho máy (biên độ 0..~0.7) — dùng khi drop/vào điệp khúc. */
+  private addShake(amt: number) {
+    this.shakeAmp = Math.min(0.7, Math.max(this.shakeAmp, amt));
   }
 
   /** Cắt thẳng sang góc toàn cảnh — phản xạ của cameraman khi drop/vào điệp khúc. */
@@ -2601,6 +2680,15 @@ export class MemeDanceGame {
     this.vibe.intensity = this.music.playing
       ? Math.min(1, Math.max(this.music.section, effHype * 0.7) + drop * 0.3)
       : 0.35;
+    // Tiếng thật cho vũ công bật theo (kick phách 1&3, snare/hi-hat backbeat
+    // 2&4) + tin cậy beat để accent giòn khi chắc, dịu khi mờ.
+    this.vibe.kick = level;
+    this.vibe.snare = this.music.playing
+      ? Math.min(1, this.music.mid * 0.4 + this.music.high * 0.6)
+      : 0;
+    this.vibe.beatConfidence = this.music.playing
+      ? this.music.beatConfidence
+      : 0.5;
 
     // Mỗi beat mới: đèn moving head quét sang mốc mới + đồng diễn 32-beat
     if (this.music.playing && beat.index !== this.lastLoopBeat) {
@@ -2627,6 +2715,7 @@ export class MemeDanceGame {
         // DJ bật nhảy ăn mừng, cả sàn vào đồng diễn năng lượng cao ngay
         // (không chờ hẹn giờ) — khoảnh khắc bùng khớp đúng câu nhạc
         this.cutToWide();
+        this.addShake(0.5); // cú va đón khoảnh khắc bung điệp khúc
         this.djJumpT = 0;
         this.startChoreo(beat.index + 1, Math.max(0.75, section));
         // Vào điệp khúc: sàn nhảy sang hoạ tiết động + loé một phát đón cú bung
@@ -2875,13 +2964,22 @@ export class MemeDanceGame {
     this.smokeJets.update(dt);
     this.frontSparks.update(dt);
     this.pyroDirector.update(dt);
-    // Sương sàn: mật độ LIÊN TỤC theo độ trầm (1 - section) thay vì bật/tắt
-    // theo ngưỡng (gây chập chờn) — dày ở verse/đoạn lắng, loãng dần vào điệp
-    // khúc. GroundFog còn làm mượt thêm bên trong nên fade rất êm.
-    const fogQuiet = !this.music.playing
-      ? 0.7
-      : Math.max(0, 1 - this.music.section * 1.4);
-    this.groundFog.update(dt, fogQuiet, mEnergy, mood);
+    // Sương sàn: dày cho nhạc TRẦM / BALLAD / BUỒN, loãng dần khi sôi động.
+    //  · Nền theo độ trầm cấu trúc (1 - section) — dày ở verse/đoạn lắng.
+    //  · Ballad = năng lượng thấp; buồn = valence thấp → CẢ HAI chủ động dâng
+    //    sương lên sàn dù section không quá thấp (ballad buồn ≈ phủ kín).
+    // GroundFog làm mượt bên trong nên fade rất êm, không chập chờn.
+    let fogTarget: number;
+    if (!this.music.playing) {
+      fogTarget = 0.5;
+    } else {
+      const quiet = Math.max(0, 1 - this.music.section * 1.3);
+      const ballad = Math.max(0, 1 - mEnergy * 1.4);
+      const sad = Math.max(0, 1 - valence);
+      const moodFog = ballad * (0.5 + sad * 0.5);
+      fogTarget = Math.min(1, Math.max(quiet * 0.6, moodFog));
+    }
+    this.groundFog.update(dt, fogTarget, mood);
     // Bảng tên: đồng bộ nội dung/phông từ settings (rẻ, bỏ qua nếu không đổi)
     this.stageBanner.setText(
       this.rules.stageBannerText,
@@ -3111,8 +3209,12 @@ export class MemeDanceGame {
       if (beat.index !== this.camLastBeat) {
         this.camLastBeat = beat.index;
         this.takeBeats++;
-        if (this.takeBeats >= this.takeLen && beat.index % 8 === 0) {
-          const hot = sectionNow > 0.7;
+        const hot = sectionNow > 0.7;
+        // Điệp khúc/drop: cho phép cắt trên PHÁCH LẺ (bội số 4) để nhịp dựng
+        // bám cả tiếng snare (backbeat) — dựng giật gân hơn; đoạn khác giữ
+        // ranh giới câu nhạc (bội số 8) cho thong thả.
+        const cutGrid = hot ? 4 : 8;
+        if (this.takeBeats >= this.takeLen && beat.index % cutGrid === 0) {
           const calm = sectionNow < 0.4;
           // Nhóm góc theo không khí đoạn nhạc:
           // - trầm/intro: góc rộng, đám đông, trên cao — dựng cảnh thong thả
@@ -3179,7 +3281,18 @@ export class MemeDanceGame {
         shot.pos[1] + Math.sin(t * 0.09) * 0.2 * shot.drift,
         shot.pos[2] + Math.sin(t * 0.07) * 0.35 * shot.drift,
       );
-      if (this.camMoveMode === "push") {
+      if (this.camMoveMode === "arc") {
+        // Lia VÒNG CUNG quanh chủ thể: xoay vị trí máy quanh điểm ngắm theo
+        // trục Y suốt take — chủ thể luôn giữa khung mà hậu cảnh cuộn qua, kiểu
+        // quay phim MV. Biên độ theo drift để không chóng mặt.
+        const ang = (takeEase * 2 - 1) * 0.5 * shot.drift;
+        const ox = this.camShotPos.x - this.camShotLook.x;
+        const oz = this.camShotPos.z - this.camShotLook.z;
+        const ca = Math.cos(ang);
+        const sa = Math.sin(ang);
+        this.camShotPos.x = this.camShotLook.x + ox * ca - oz * sa;
+        this.camShotPos.z = this.camShotLook.z + ox * sa + oz * ca;
+      } else if (this.camMoveMode === "push") {
         // Đẩy máy từ từ về phía điểm nhìn. Cận/trung cảnh bám người thì đẩy ÍT
         // để không trườn sát mặt (zoom quá gần); góc rộng đẩy nhiều hơn cho đã
         this.camShotPos.lerp(this.camShotLook, takeEase * (tracks ? 0.07 : 0.14));
@@ -3199,8 +3312,15 @@ export class MemeDanceGame {
       this.camPos.copy(this.camShotPos);
       this.camLook.copy(this.camShotLook);
     } else {
+      // Whip-pan: trong ~0.28s đầu take, lia CỰC nhanh (glide cao) rồi trả về
+      // tốc độ êm thường lệ — cú quăng máy sang góc mới đầy năng lượng.
+      let glide = this.camGlide;
+      if (this.camWhipT > 0) {
+        this.camWhipT = Math.max(0, this.camWhipT - dt);
+        glide = 4.5;
+      }
       // Làm mượt kiểu hàm mũ (độc lập FPS) — lia máy êm, không khựng/giật
-      const camK = 1 - Math.exp(-dt * this.camGlide * 3.2);
+      const camK = 1 - Math.exp(-dt * glide * 3.2);
       this.camPos.lerp(this.camShotPos, camK);
       this.camLook.lerp(this.camShotLook, camK);
     }
@@ -3231,8 +3351,38 @@ export class MemeDanceGame {
       this.camera.position.copy(this.camPos);
       this.lookTarget.copy(this.camLook);
     }
-    // Khung CHẮC, chân trời thẳng — không rung tay, không nghiêng máy.
     this.camera.lookAt(this.lookTarget);
+
+    // ĐỘNG LỰC MÁY — chỉ khi ĐẠO DIỄN TỰ ĐỘNG (không áp lên thủ công/toàn cảnh
+    // cố định để admin quan sát ổn định):
+    //  · Rung XUNG khi drop: cú va vật lý, tắt rất nhanh (~0.15s) rồi khung
+    //    trở lại chắc — không phải rung tay liên tục.
+    //  · Nghiêng máy (Dutch roll) rất nhẹ lúc cao trào cho đã, tự về 0 khi lắng.
+    if (!this.freeCam && !fixedView) {
+      const dRise = drop - this.prevDrop;
+      if (dRise > 0.22) this.addShake(dRise * 0.9);
+      this.shakeAmp *= Math.exp(-dt * 6);
+      if (this.shakeAmp > 0.001) {
+        const s = this.shakeAmp;
+        this.camera.position.x += Math.sin(t * 47.0) * 0.12 * s;
+        this.camera.position.y += Math.sin(t * 41.0 + 1.3) * 0.1 * s;
+        this.camera.position.z += Math.sin(t * 53.0 + 2.1) * 0.06 * s;
+      }
+      const climax = Math.min(1, sectionNow * 0.6 + drop * 0.7);
+      const rollTarget = Math.sin(t * 0.35) * 0.05 * climax + this.shakeAmp * 0.06;
+      this.rollAngle += (rollTarget - this.rollAngle) * Math.min(1, dt * 3);
+    } else {
+      this.shakeAmp = 0;
+      this.rollAngle += (0 - this.rollAngle) * Math.min(1, dt * 3);
+    }
+    this.prevDrop = drop;
+    // Nghiêng quanh trục nhìn (local Z) = Dutch angle; áp SAU lookAt để giữ chắc
+    if (Math.abs(this.rollAngle) > 0.0005) this.camera.rotateZ(this.rollAngle);
+
+    // Chất phim: hạt grain động + quầng sắc đẩy nhẹ theo drop/kick cho dồn nhịp
+    this.filmic.uniforms.uTime.value = t;
+    this.filmic.uniforms.uAberr.value =
+      0.0016 + drop * 0.003 + kick * level * 0.0018;
 
     // Bloom "thở" theo kick của bass, bùng thêm khi drop; giữ mức thấp để
     // không lóa — glow chỉ nhấn nhá chứ không rửa trắng cả khung hình
@@ -3295,6 +3445,7 @@ export class MemeDanceGame {
     el.removeEventListener("wheel", this.onWheel);
     el.removeEventListener("dblclick", this.onDblClick);
     this.reset();
+    this.composer.dispose();
     this.renderer.dispose();
   }
 }

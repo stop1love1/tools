@@ -1495,16 +1495,15 @@ export class GroundFog {
     }
   }
 
-  /** quiet 0..1 (đoạn trầm), energy 0..1 — sương dày khi trầm, loãng khi mạnh. */
-  update(dt: number, quiet: number, energy: number, mood?: Mood) {
-    const target = quiet * Math.max(0, 1 - energy * 1.3);
+  /** target 0..1 — mật độ sương mong muốn (game.ts đã tính theo nhạc/mood). */
+  update(dt: number, target: number, mood?: Mood) {
     this.amount += (target - this.amount) * Math.min(1, dt * 0.6);
     const t = performance.now() / 1000;
     this.color.setHSL(mood?.hue ?? 0.6, 0.15, 0.7);
     for (let i = 0; i < this.layers.length; i++) {
       const mat = this.layers[i].material as THREE.MeshBasicMaterial;
-      // Rất mờ, cap thấp dần theo lớp trên
-      mat.opacity = this.amount * (0.17 - i * 0.03);
+      // Mờ, cap thấp dần theo lớp trên — nâng nhẹ để ballad/buồn nhìn rõ sương
+      mat.opacity = this.amount * (0.22 - i * 0.04);
       mat.color.copy(this.color);
       if (mat.map) {
         const dir = i % 2 === 0 ? 1 : -1;

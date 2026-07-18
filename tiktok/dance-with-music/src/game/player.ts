@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { LiveUser } from "@/shared/live-events";
-import { CharacterRig } from "./rig";
+import { CharacterRig, GENRE_GROOVE } from "./rig";
 import { makeBubbleTexture, makeLabelTexture, type Skin } from "./skins";
 
 const BASE_H = 1.875;
@@ -144,7 +144,27 @@ export type MusicVibe = {
    * bùng. Quyết định biên độ nhún VÀ độ "dữ" của điệu được bốc ra.
    */
   intensity: number;
+  /** Năng lượng kick/bass tức thời 0..1 — cú "pop" phách 1&3 bật theo tiếng thật. */
+  kick: number;
+  /** Năng lượng snare/hi-hat tức thời 0..1 — cú "pop" backbeat 2&4 bật theo tiếng thật. */
+  snare: number;
+  /** Tin cậy beat 0..1 — chắc thì accent giòn/đầy, mờ thì dịu tránh nhún sai phách. */
+  beatConfidence: number;
 };
+
+/**
+ * Đường cong độ nảy trong một cung nhún, lệch đỉnh theo `peak` (0..1):
+ * - peak = 0.5 → hệt `sin(phase·π)` cũ (an toàn, không đổi hành vi mặc định).
+ * - peak < 0.5 → attack sắc kiểu lò xo (edm): vọt lên nhanh, hạ chậm.
+ * - peak > 0.5 → lên mềm, xuống muộn (ballad).
+ * Cung tam giác (đỉnh tại `peak`) được làm mượt bằng nửa sin nên vẫn tròn trịa.
+ */
+export function grooveCurve(phase: number, peak: number): number {
+  const p = phase <= 0 ? 0 : phase >= 1 ? 1 : phase;
+  const pk = peak <= 0.02 ? 0.02 : peak >= 0.98 ? 0.98 : peak;
+  const x = p < pk ? p / pk : 1 - (p - pk) / (1 - pk);
+  return Math.sin(Math.max(0, x) * (Math.PI / 2));
+}
 
 /**
  * "Độ dữ" của mỗi điệu 0 (êm, lắc lư) .. 1 (bốc, bật nhảy). Dùng để bốc điệu
@@ -737,11 +757,21 @@ export class Player {
         }
       }
 
+      // Chất nhịp theo thể loại: swing/lay-back, half-time, hình cung nhún.
+      const groove = GENRE_GROOVE[vibe?.genre ?? "pop"] ?? GENRE_GROOVE.pop;
+      const conf = vibe?.beatConfidence ?? 0.5;
+      // Lay-back: dịch pha trễ chút → đỉnh nhún rơi SAU phách (hiphop groove);
+      // edm swing=0 dính grid tuyệt đối.
+      let gpulse = beat.pulse - groove.swing;
+      if (gpulse < 0) gpulse += 1;
+
       // Phách 1 của ô nhịp 4 nhún mạnh nhất, phách 3 vừa — tạo groove rõ rệt
       const accent =
         beat.index % 4 === 0 ? 1.25 : beat.index % 2 === 0 ? 1.1 : 1;
       // Nhạc buồn/êm nhún dịu lại, nhạc dữ dội quẩy hết biên độ;
-      // giai điệu đang lên (nốt thăng) thì bật cao thêm chút cho tới khúc
+      // giai điệu đang lên (nốt thăng) thì bật cao thêm chút cho tới khúc.
+      // Nhịp không chắc (beatConfidence thấp) dịu biên độ lại — tránh nhún dứt
+      // khoát trên phách có thể sai.
       const amp =
         (0.2 + hype * 0.22 + level * 0.22 + this.hopBoost) *
         this.ampScale *
@@ -749,14 +779,21 @@ export class Player {
         (0.72 + moodEnergy * 0.5) *
         // Tương phản verse↔điệp khúc: đoạn trầm nhún dịu, đoạn bùng quẩy hết cỡ
         (0.62 + (vibe?.intensity ?? 0.5) * 0.72) *
-        (1 + (vibe?.melodyTrend ?? 0) * 0.18);
-      const hopPhase =
+        (1 + (vibe?.melodyTrend ?? 0) * 0.18) *
+        (0.78 + conf * 0.22);
+      // Ballad (timeFeel "half"): trải MỘT cung nhún qua 2 phách — thong thả,
+      // không giật từng phách. Các điệu bật đôi giữ 2 nhún/phách như cũ.
+      const doubleHop =
         this.move === "double-bounce" ||
         this.move === "charleston" ||
-        this.move === "pogo"
-          ? Math.min(1, (beat.pulse % 0.5) * 3.4)
-          : Math.min(1, beat.pulse * 1.7);
-      y = Math.sin(hopPhase * Math.PI) * amp;
+        this.move === "pogo";
+      const hopPhase = doubleHop
+        ? Math.min(1, (gpulse % 0.5) * 3.4)
+        : groove.timeFeel === "half"
+          ? Math.min(1, (((beat.index % 2) + gpulse) / 2) * 1.4)
+          : Math.min(1, gpulse * 1.7);
+      // Hình cung nhún lệch đỉnh theo thể loại: edm attack sắc, ballad mềm muộn.
+      y = grooveCurve(hopPhase, groove.peak) * amp;
       if (this.move === "squat") {
         const s = Math.sin(Math.min(1, beat.pulse * 1.5) * Math.PI);
         y *= 0.4;
@@ -882,6 +919,13 @@ export class Player {
         const mt = vibe.melodyTrend;
         scaleY *= 1 + Math.max(0, mt) * 0.05 - Math.max(0, -mt) * 0.03;
         rot += mt * 0.03 * this.sideDir;
+        // Cú "pop" bật theo TIẾNG THẬT: đầu phách nảy thêm theo kick (phách 1&3)
+        // hay snare/hi-hat (backbeat 2&4) đang thực sự kêu to cỡ nào — không chỉ
+        // dậm theo lưới nhịp. Nhịp chắc thì pop sắc & mạnh, mờ thì nhẹ. Cộng
+        // thêm (không nhân vào cung nhún) để không xẹp giữa nhịp.
+        const sound = beat.index % 2 === 1 ? vibe.snare : vibe.kick;
+        const pop = Math.max(0, 1 - beat.pulse * (2.4 + conf * 2.2));
+        y += pop * sound * (0.18 + conf * 0.16) * groove.bob * this.ampScale;
       }
       this.sideOffset +=
         (this.sideTarget - this.sideOffset) * Math.min(1, dt * 7);
@@ -926,6 +970,7 @@ export class Player {
             )
           : 0,
         opacity: this.dimCurrent,
+        beatConfidence: vibe?.beatConfidence ?? 0.5,
         dancing,
       });
     } else {

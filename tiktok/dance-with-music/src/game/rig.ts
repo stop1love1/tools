@@ -12,23 +12,45 @@ import {
 /** Tín hiệu điều khiển con rối mỗi frame (Player tính rồi truyền xuống). */
 export type RigDrive = {
   move: DanceMove;
-  pulse: number; // 0..1 trong ô nhịp
+  pulse: number; // 0..1 trong ô nhịp (ĐÃ dịch swing theo thể loại)
   beatIndex: number;
   intensity: number; // năng lượng đoạn nhạc 0..1
   genre: MusicGenre; // thể loại → chất động tác (ballad mềm ↔ rock/edm mạnh)
   facing: number; // ±1 (moonwalk/spin lật mặt)
   camYaw: number; // billboard: xoay cả cụm hướng camera
   opacity: number; // độ mờ (theo dim/spotlight)
+  beatConfidence: number; // 0..1 tin cậy beat: chắc → gật giòn, mờ → dịu lại
   dancing: boolean;
 };
 
-/** Chất động tác theo thể loại: amp = biên độ, bob = độ nhún phách. */
-const GENRE_FEEL: Record<MusicGenre, { amp: number; bob: number }> = {
-  ballad: { amp: 0.5, bob: 0.4 },
-  pop: { amp: 0.75, bob: 0.8 },
-  hiphop: { amp: 0.85, bob: 1.1 },
-  rock: { amp: 1.0, bob: 1.0 },
-  edm: { amp: 1.0, bob: 1.2 },
+/**
+ * Chất nhịp theo thể loại — không chỉ khác biên độ mà khác cả *timing* và
+ * *hình dạng* động tác:
+ * - amp: biên độ động tác; bob: độ nhún/gật phách.
+ * - swing: 0 = dính grid tuyệt đối (edm); + = lay-back trễ phách (hiphop groove).
+ * - timeFeel: "half" = ballad trải một cung nhún qua 2 phách (thong thả, không
+ *   giật từng phách); "straight" = nhún mỗi phách như cũ.
+ * - peak: vị trí đỉnh đường cong nhún 0..1. 0.5 = sin đối xứng (hệt hành vi cũ);
+ *   <0.5 = attack sắc kiểu lò xo (edm); >0.5 = lên mềm, xuống muộn (ballad).
+ */
+export type GrooveFeel = {
+  amp: number;
+  bob: number;
+  swing: number;
+  timeFeel: "straight" | "half";
+  peak: number;
+};
+export const GENRE_GROOVE: Record<MusicGenre, GrooveFeel> = {
+  // ballad: mềm nhất, cung nhún lên chậm–xuống muộn (peak>0.5) cho cảm giác trôi
+  ballad: { amp: 0.5, bob: 0.4, swing: 0.0, timeFeel: "half", peak: 0.55 },
+  // pop: bám phách, chớm bật (peak hơi sớm) — vui tươi mà không giật
+  pop: { amp: 0.78, bob: 0.9, swing: 0.03, timeFeel: "straight", peak: 0.47 },
+  // hiphop: groove lay-back rõ (trễ phách) + nhún nặng (bob cao), bounce đục
+  hiphop: { amp: 0.9, bob: 1.25, swing: 0.06, timeFeel: "straight", peak: 0.4 },
+  // rock: dồn, mạnh, gần dính grid; đỉnh sớm cho cú nhún có lực
+  rock: { amp: 1.05, bob: 1.1, swing: 0.02, timeFeel: "straight", peak: 0.42 },
+  // edm: dính grid tuyệt đối, attack SẮC nhất (peak sớm) — bật lò xo four-on-floor
+  edm: { amp: 1.05, bob: 1.35, swing: 0.0, timeFeel: "straight", peak: 0.32 },
 };
 
 type Pose = {
@@ -197,13 +219,14 @@ const IDLE_POSE: Pose = {
  *   phách rồi giãn) — cảm giác "ăn" nhịp thay vì lắc lư liên tục.
  */
 function poseFor(d: RigDrive): Pose {
-  const { move, pulse, intensity, beatIndex, genre } = d;
-  const gf = GENRE_FEEL[genre] ?? GENRE_FEEL.pop;
+  const { move, pulse, intensity, beatIndex, genre, beatConfidence } = d;
+  const gf = GENRE_GROOVE[genre] ?? GENRE_GROOVE.pop;
   const amp = gf.amp * (0.6 + intensity * 0.5);
   // Swing chậm: một chu kỳ qua-lại trải đều 2 phách (đỡ loạn hơn mỗi-phách)
   const swing = Math.sin(((beatIndex % 2) + pulse) * Math.PI);
-  // Nhấn đúng phách: đỉnh ở đầu phách (pulse=0) rồi tắt dần
-  const beatHit = Math.max(0, 1 - pulse * 2);
+  // Nhấn đúng phách: đỉnh ở đầu phách (pulse=0) rồi tắt dần. Nhịp CHẮC thì gằm
+  // giòn (tắt nhanh, ăn phách rõ); nhịp MỜ thì gật dịu tránh nhấn sai chỗ.
+  const beatHit = Math.max(0, 1 - pulse * (2 + beatConfidence * 1.6));
 
   const g: Pose = {
     armL: swing * 0.32 * amp,
