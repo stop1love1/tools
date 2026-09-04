@@ -11,6 +11,16 @@ import type {
   LikeEvent,
   LiveUser,
 } from "@/shared/live-events";
+import {
+  BEAT_CUT_MIN_CONFIDENCE,
+  type CamShot,
+  FOV_BY_KIND,
+  pickNextShot,
+  RECENT_SHOTS,
+  type ShotKind,
+  shouldCut,
+  takeLengthBeats,
+} from "./camera-director";
 import { normalizeComment, parseCommand } from "./commands";
 import { DEFAULT_RULES, type GameRules } from "./rules";
 import {
@@ -91,12 +101,6 @@ const GENRE_LIGHT: Record<
 
 // Danh sách góc máy "điện ảnh". drift = biên độ trôi nhẹ quanh vị trí;
 // kind = loại khung hình để đạo diễn chọn theo không khí đoạn nhạc.
-type CamShot = {
-  pos: [number, number, number];
-  look: [number, number, number];
-  drift: number;
-  kind: "wide" | "medium" | "crowd" | "top" | "side" | "close" | "dj" | "low";
-};
 // Góc toàn cảnh: máy đặt CAO và LÙI XA sau khán đài, nhìn bao trọn sân khấu
 // + sàn nhảy + khán đài bậc thang trong một khung (dùng cho chế độ "overview"
 // và khi cameraman cắt wide lúc drop). Cao đủ để vượt tường sau khán đài.
@@ -150,18 +154,6 @@ const ORBIT_SHOTS: CamShot[] = [
   { pos: [-12, 4.2, 1.5], look: [4, 2.1, -6.5], drift: 0.7, kind: "close" },
   { pos: [12, 4.2, 1.5], look: [-4, 2.1, -6.5], drift: 0.7, kind: "close" },
 ];
-// Ống kính theo loại khung — chất điện ảnh: cận cảnh dùng "tele" (FOV hẹp) nén
-// hậu cảnh, ấm cúng; toàn cảnh dùng "wide" (FOV rộng) cho hoành tráng
-const FOV_BY_KIND: Record<CamShot["kind"], number> = {
-  close: 52, // cận cảnh vẫn ấm nhưng không zoom sát mặt nữa
-  dj: 50,
-  side: 52,
-  medium: 56,
-  top: 56,
-  low: 58, // góc thấp ngước lên — hơi rộng cho hoành tráng
-  crowd: 60,
-  wide: 62,
-};
 // Lớp "chất phim" ở CUỐI chuỗi hậu kỳ: gộp viền tối (vignette) + hạt film grain
 // + quầng sắc rìa (chromatic aberration) + dải đen letterbox trong MỘT pass toàn
 // màn cho nhẹ GPU. Cường độ quầng sắc được đẩy nhẹ theo drop/kick trong loop.
@@ -206,16 +198,37 @@ const FILMIC_SHADER = {
       col.r = texture2D(tDiffuse, vUv + off).r;
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv - off).b;
-      // Viền tối bốn góc — dồn mắt vào giữa khung
+      // Corner falloff, pulling the eye to the middle of the frame
       float vig = smoothstep(0.85, 0.20, length(dir));
       col *= mix(1.0, vig, uVignette);
-      // Hạt phim động rất mảnh
+      // Fine moving film grain. Real emulsion grain is far more visible in the
+      // shadows than in the highlights, and weighting it that way is most of
+      // what separates "filmic" from "noisy" — flat grain just dirties the
+      // bright stage lights.
       float g = hash(vUv * vec2(1280.0, 720.0) + fract(uTime) * 100.0) - 0.5;
-      col += g * uGrain;
+      float lum = dot(col, vec3(0.299, 0.587, 0.114));
+      col += g * uGrain * mix(1.0, 0.3, smoothstep(0.05, 0.6, lum));
       gl_FragColor = vec4(col, 1.0);
     }
   `,
 };
+
+const clamp = (v: number, lo: number, hi: number) =>
+  v < lo ? lo : v > hi ? hi : v;
+/**
+ * How far, in world units, a tracking shot may slide from its authored
+ * position to keep a roaming subject framed. Beyond this the shot would leave
+ * the angle it was designed for and start finding pillars and speakers.
+ */
+const REFRAME_MAX = 3.5;
+/**
+ * Manual orbit feel. A drag delta becomes velocity via ORBIT_IMPULSE, which
+ * then decays at ORBIT_DAMPING per second. Total travel per input is
+ * delta * IMPULSE / DAMPING, so keeping the two equal preserves the old 1:1
+ * sensitivity exactly and the change is purely the added glide (~1/9 s).
+ */
+const ORBIT_IMPULSE = 9;
+const ORBIT_DAMPING = 9;
 
 const STAGE_H = 0.9;
 const AUDIENCE_Y = -0.35;
@@ -404,10 +417,15 @@ export class MemeDanceGame {
   // Đạo diễn camera: take hiện tại (đếm theo beat), kiểu chuyển cảnh,
   // chuyển động dolly trong take (push-in/slide)
   private shotIdx = 0;
-  private prevShotIdx = -1;
+  // Recently used shots, most recent first — keeps the edit from ping-ponging
+  // between the same two angles.
+  private recentShots: number[] = [];
   private takeT = 0;
   private takeBeats = 0;
   private takeLen = 16;
+  // Seconds this take is expected to run, so in-take motion can be paced to
+  // the take actually being cut rather than to a fixed constant.
+  private takeSecTarget = 6;
   private camLastBeat = -1;
   private camCut = false;
   private camGlide = 0.55;
@@ -421,6 +439,10 @@ export class MemeDanceGame {
   private fcYaw = 0;
   private fcPitch = 0.4;
   private fcRadius = 24;
+  // Angular/radial velocity for the manual orbit, so a drag coasts to a stop
+  private fcYawVel = 0;
+  private fcPitchVel = 0;
+  private fcRadiusVel = 0;
   private fcTarget = new THREE.Vector3(0, 2, -2);
   private camPos = new THREE.Vector3(0, 12.5, 29);
   private camLook = new THREE.Vector3(0, 1.8, -4);
@@ -2032,56 +2054,50 @@ export class MemeDanceGame {
   }
 
   /**
-   * Đổi sang góc máy mới — tránh lặp 2 shot gần nhất VÀ cùng kiểu khung liên
-   * tiếp (để nhịp cắt đa dạng như cameraman thật), lọc theo loại khung.
+   * Move to a new angle. Shot choice follows the editing grammar in
+   * camera-director; this method only applies the result and sets up how the
+   * camera behaves for the length of the take.
    */
   private switchShot(
     shots: CamShot[],
-    opts: { kinds?: CamShot["kind"][]; cut?: boolean; energy: number },
+    opts: { kinds?: ShotKind[]; cut?: boolean; energy: number },
   ) {
-    const curKind = shots[this.shotIdx % shots.length]?.kind;
-    const inKinds = (s: CamShot) => !opts.kinds || opts.kinds.includes(s.kind);
-    // Ưu tiên: khác index gần đây + khác KIỂU góc hiện tại + trong nhóm cho phép
-    let candidates = shots
-      .map((s, i) => ({ s, i }))
-      .filter(
-        ({ s, i }) =>
-          i !== this.shotIdx &&
-          i !== this.prevShotIdx &&
-          s.kind !== curKind &&
-          inKinds(s),
-      );
-    if (!candidates.length) {
-      candidates = shots
-        .map((s, i) => ({ s, i }))
-        .filter(({ s, i }) => i !== this.shotIdx && inKinds(s));
-    }
-    if (!candidates.length) {
-      candidates = shots
-        .map((s, i) => ({ s, i }))
-        .filter(({ i }) => i !== this.shotIdx);
-    }
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    this.prevShotIdx = this.shotIdx;
-    this.shotIdx = pick.i;
+    const idx = pickNextShot(shots, {
+      curKind: shots[this.shotIdx % shots.length]?.kind,
+      recent: this.recentShots,
+      kinds: opts.kinds,
+    });
+    if (idx < 0) return;
+    this.recentShots.unshift(this.shotIdx);
+    if (this.recentShots.length > RECENT_SHOTS) this.recentShots.length = RECENT_SHOTS;
+    this.shotIdx = idx;
+    const shot = shots[idx];
     this.takeT = 0;
     this.takeBeats = 0;
     this.camCut = !!opts.cut;
-    // Nhạc căng lướt nhanh dứt khoát, nhạc êm trôi chậm rãi
+    // Tense music glides in fast and decisively, calm music drifts across
     this.camGlide = 0.3 + opts.energy * 0.6;
-    // Cận/trung cảnh: bám một CHỦ THỂ thật để khung luôn có người, không ngắm
-    // trúng chỗ trống. Góc rộng/trên/cánh giữ điểm ngắm sân khấu cố định.
-    const tracking = pick.s.kind === "close" || pick.s.kind === "medium";
+    // Close/medium frames follow a real subject so the frame always has
+    // someone in it. Wide/top/side keep their fixed aim at the stage.
+    const tracking = shot.kind === "close" || shot.kind === "medium";
     this.camSubject = tracking ? this.pickHeroSubject() : null;
-    // Chuyển động trong take: cận/trung có thêm cú LIA VÒNG CUNG quanh chủ thể
-    // (arc) kiểu quay phim MV; còn lại đẩy máy (push) hoặc trượt ngang (slide).
+    // In-take movement. Arcing around the subject is the signature MV move, so
+    // tracking shots lean on it, but wide and side frames get it too at lower
+    // amplitude — previously they could only push or slide.
     const r = Math.random();
+    const arcable = tracking || shot.kind === "side" || shot.kind === "wide";
     this.camMoveMode =
-      tracking && r < 0.5 ? "arc" : r < 0.75 ? "push" : "slide";
-    // Whip-pan: thi thoảng (nhạc căng, không phải hard cut) lia CỰC nhanh sang
-    // góc mới thay vì lerp êm — nhịp cắt giật gân hơn.
+      arcable && r < (tracking ? 0.5 : 0.3) ? "arc" : r < 0.75 ? "push" : "slide";
+    // Whip-pan: occasionally (tense music, not a hard cut) throw the camera
+    // across instead of easing, for a more urgent edit.
     this.camWhipT =
       !opts.cut && opts.energy > 0.6 && Math.random() < 0.35 ? 0.28 : 0;
+  }
+
+  /** Expected seconds for the current take, used to pace in-take motion. */
+  private setTakeLen(beats: number) {
+    this.takeLen = beats;
+    this.takeSecTarget = Math.max(1.5, beats * this.music.beatSeconds);
   }
 
   /**
@@ -2110,7 +2126,7 @@ export class MemeDanceGame {
     const shots =
       this.rules.cameraMode === "orbit" ? ORBIT_SHOTS : FRONT_SHOTS;
     this.switchShot(shots, { kinds: ["wide", "top"], cut: true, energy: 1 });
-    this.takeLen = 8;
+    this.setTakeLen(8);
   }
 
   /**
@@ -2127,21 +2143,47 @@ export class MemeDanceGame {
     this.fcPitch = Math.asin(
       Math.max(-1, Math.min(1, off.y / this.fcRadius)),
     );
+    this.fcYawVel = 0;
+    this.fcPitchVel = 0;
+    this.fcRadiusVel = 0;
     this.camGlide = 1.6;
   }
 
-  /** Admin xoay camera quanh sân khấu theo mọi hướng (yaw ngang, pitch dọc). */
+  /**
+   * Admin orbits the camera around the stage. The drag feeds angular velocity
+   * rather than the angle itself, so the move carries a little after the mouse
+   * stops — a hard 1:1 mapping feels sticky on a heavy scene. Damping is
+   * applied per frame in `applyFreeCamInertia`.
+   */
   orbitCamera(dYaw: number, dPitch: number) {
     this.enterFreeCam();
-    this.fcYaw += dYaw;
-    // Chặn chúc quá thấp (xuyên xuống dưới sàn) và lật qua đỉnh
-    this.fcPitch = Math.max(-0.1, Math.min(1.45, this.fcPitch + dPitch));
+    this.fcYawVel += dYaw * ORBIT_IMPULSE;
+    this.fcPitchVel += dPitch * ORBIT_IMPULSE;
   }
 
-  /** Admin phóng to / thu xa (dolly theo bán kính). */
+  /** Admin dollies in/out along the orbit radius. */
   zoomCamera(dRadius: number) {
     this.enterFreeCam();
-    this.fcRadius = Math.max(5, Math.min(52, this.fcRadius + dRadius));
+    this.fcRadiusVel += dRadius * ORBIT_IMPULSE;
+  }
+
+  /**
+   * Integrate and damp the free-camera velocities. Called once per frame while
+   * the free camera is active; the clamps live here so they hold whether the
+   * motion came from a drag or from leftover inertia.
+   */
+  private applyFreeCamInertia(dt: number) {
+    this.fcYaw += this.fcYawVel * dt;
+    this.fcPitch = clamp(this.fcPitch + this.fcPitchVel * dt, -0.1, 1.45);
+    this.fcRadius = clamp(this.fcRadius + this.fcRadiusVel * dt, 5, 52);
+    // Exponential decay, framerate independent. Stop dead at the pitch and
+    // radius limits so velocity doesn't sit there pushing against the clamp.
+    const decay = Math.exp(-dt * ORBIT_DAMPING);
+    this.fcYawVel *= decay;
+    this.fcPitchVel *= decay;
+    this.fcRadiusVel *= decay;
+    if (this.fcPitch <= -0.1 || this.fcPitch >= 1.45) this.fcPitchVel = 0;
+    if (this.fcRadius <= 5 || this.fcRadius >= 52) this.fcRadiusVel = 0;
   }
 
   /** Admin dời điểm ngắm (pan ngang/dọc) — quan sát khu vực khác. */
@@ -2151,10 +2193,13 @@ export class MemeDanceGame {
     this.fcTarget.y = Math.max(-1, Math.min(10, this.fcTarget.y + dy));
   }
 
-  /** Trả camera về chế độ đạo diễn tự động. */
+  /** Hand the camera back to the automatic director. */
   unlockCamera() {
     this.cameraLocked = false;
     this.freeCam = false;
+    this.fcYawVel = 0;
+    this.fcPitchVel = 0;
+    this.fcRadiusVel = 0;
   }
 
   /** HUD gọi khi đổi bài — cập nhật màn hình "đang phát" trên bàn FOH. */
@@ -3238,43 +3283,61 @@ export class MemeDanceGame {
     if (fixedView) {
       // Không tự đổi góc
     } else if (this.music.playing) {
-      if (beat.index !== this.camLastBeat) {
+      const newBeat = beat.index !== this.camLastBeat;
+      if (newBeat) {
         this.camLastBeat = beat.index;
         this.takeBeats++;
-        const hot = sectionNow > 0.7;
-        // Điệp khúc/drop: cho phép cắt trên PHÁCH LẺ (bội số 4) để nhịp dựng
-        // bám cả tiếng snare (backbeat) — dựng giật gân hơn; đoạn khác giữ
-        // ranh giới câu nhạc (bội số 8) cho thong thả.
-        const cutGrid = hot ? 4 : 8;
-        if (this.takeBeats >= this.takeLen && beat.index % cutGrid === 0) {
-          const calm = sectionNow < 0.4;
-          // Nhóm góc theo không khí đoạn nhạc:
-          // - trầm/intro: góc rộng, đám đông, trên cao — dựng cảnh thong thả
-          // - điệp khúc/drop: góc động (cận, DJ, cánh, trên) + cắt nhanh
-          // - verse: đa dạng vừa phải
-          const kinds: CamShot["kind"][] = hot
-            ? ["wide", "dj", "side", "close", "top", "medium", "low"]
-            : calm
-              ? ["wide", "crowd", "top", "medium"]
-              : ["wide", "medium", "side", "top", "crowd", "dj", "close", "low"];
-          this.switchShot(shots, {
-            cut: hot && Math.random() < 0.5,
-            energy: mEnergy,
-            kinds,
-          });
-          // Độ dài take: điệp khúc cắt nhanh (kiểu MV), verse vừa, trầm dài vừa
-          // phải (không để đứng một góc quá lâu). Lệch ±2 beat cho tự nhiên.
-          const jitter = Math.floor(Math.random() * 5) - 2;
-          this.takeLen = (hot ? 8 : calm ? 18 : 14) + jitter;
-        }
+      }
+      const hot = sectionNow > 0.7;
+      // Chorus/drop: allow cuts on the odd beats (multiples of 4) so the edit
+      // rides the snare too; elsewhere hold to phrase boundaries (8).
+      const cutGrid = hot ? 4 : 8;
+      // On a trusted grid the cut is beat-driven and only evaluated on a new
+      // beat; when confidence is low shouldCut falls back to elapsed time, so
+      // it has to be checked every frame.
+      const conf = this.music.beatConfidence;
+      const trusted = conf >= BEAT_CUT_MIN_CONFIDENCE;
+      if (
+        (trusted ? newBeat : true) &&
+        shouldCut({
+          takeBeats: this.takeBeats,
+          takeLen: this.takeLen,
+          takeSeconds: this.takeT,
+          beatSeconds: this.music.beatSeconds,
+          beatIndex: beat.index,
+          cutGrid,
+          beatConfidence: conf,
+        })
+      ) {
+        const calm = sectionNow < 0.4;
+        // Frame sizes allowed by the mood of the section:
+        // - quiet/intro: wide, crowd, high — unhurried scene setting
+        // - chorus/drop: the dynamic angles, cut fast
+        // - verse: moderately varied
+        const kinds: ShotKind[] = hot
+          ? ["wide", "dj", "side", "close", "top", "medium", "low"]
+          : calm
+            ? ["wide", "crowd", "top", "medium"]
+            : ["wide", "medium", "side", "top", "crowd", "dj", "close", "low"];
+        this.switchShot(shots, {
+          cut: hot && Math.random() < 0.5,
+          energy: mEnergy,
+          kinds,
+        });
+        // ±2 beats of jitter so the cut rhythm doesn't become metronomic.
+        const jitter = Math.floor(Math.random() * 5) - 2;
+        this.setTakeLen(
+          takeLengthBeats(shots[this.shotIdx].kind, sectionNow, jitter),
+        );
       }
     } else if (this.takeT >= 13) {
-      // Chưa phát nhạc: fallback đổi góc theo thời gian
+      // No music yet: fall back to changing angle on a timer
       this.switchShot(shots, { energy: 0.4 });
-      this.takeLen = 16;
+      this.setTakeLen(16);
     }
     if (this.freeCam) {
-      // Camera tự do: dựng vị trí từ toạ độ cầu quanh điểm ngắm (mọi hướng)
+      this.applyFreeCamInertia(dt);
+      // Free camera: build the position from spherical coords around the aim
       const cp = Math.cos(this.fcPitch);
       const sp = Math.sin(this.fcPitch);
       this.camShotPos.set(
@@ -3292,32 +3355,43 @@ export class MemeDanceGame {
           ? OVERVIEW_SHOT
           : shots[this.shotIdx % shots.length];
       this.camBaseFov = FOV_BY_KIND[shot.kind];
-      // Dolly trong take: ease mượt suốt ~11s, kèm rung thở rất nhẹ
-      const takeProg = Math.min(1, this.takeT / 11);
+      // In-take dolly, paced to the take actually being cut. The old fixed 11s
+      // was unrelated to takeLen (4-9s of beats), so short takes only ran half
+      // the move and long ones finished early and sat still.
+      const takeProg = Math.min(1, this.takeT / this.takeSecTarget);
       const takeEase = takeProg * takeProg * (3 - 2 * takeProg);
       this.camShotLook.set(shot.look[0], shot.look[1], shot.look[2]);
-      // Cận/trung cảnh: khung ngắm bám CHỦ THỂ thật (chiều cao theo cỡ nhân
-      // vật) thay vì điểm cố định — luôn có người trong khung
+      // Close/medium aim at a real subject (height scaled to the character)
+      // rather than a fixed point, so the frame always holds someone.
       const tracks = shot.kind === "close" || shot.kind === "medium";
+      // How far the subject has wandered from the point this shot was framed
+      // for. The camera follows a fraction of it, so composition survives a
+      // roaming dancer without the angle leaving its designed position.
+      let reframeX = 0;
+      let reframeZ = 0;
       if (tracks && this.camSubject && this.camSubject.onFloor) {
         const g = this.camSubject.group;
         const sp = g.position;
         const h = 1.15 * Math.max(0.6, g.scale.y || 1);
         this.camShotLook.set(sp.x, sp.y + h, sp.z);
+        reframeX = clamp(sp.x - shot.look[0], -REFRAME_MAX, REFRAME_MAX) * 0.55;
+        reframeZ = clamp(sp.z - shot.look[2], -REFRAME_MAX, REFRAME_MAX) * 0.35;
       } else if (!tracks) {
         this.camSubject = null;
       }
-      // Trôi rất nhẹ, tần số THẤP (thở) — không rung. Bỏ dao động nhanh cũ.
+      // Very light low-frequency drift (breathing), not shake.
       this.camShotPos.set(
-        shot.pos[0] + Math.sin(t * 0.13) * 0.4 * shot.drift,
+        shot.pos[0] + Math.sin(t * 0.13) * 0.4 * shot.drift + reframeX,
         shot.pos[1] + Math.sin(t * 0.09) * 0.2 * shot.drift,
-        shot.pos[2] + Math.sin(t * 0.07) * 0.35 * shot.drift,
+        shot.pos[2] + Math.sin(t * 0.07) * 0.35 * shot.drift + reframeZ,
       );
       if (this.camMoveMode === "arc") {
-        // Lia VÒNG CUNG quanh chủ thể: xoay vị trí máy quanh điểm ngắm theo
-        // trục Y suốt take — chủ thể luôn giữa khung mà hậu cảnh cuộn qua, kiểu
-        // quay phim MV. Biên độ theo drift để không chóng mặt.
-        const ang = (takeEase * 2 - 1) * 0.5 * shot.drift;
+        // Arc around the aim point over the take: the subject stays centred
+        // while the background sweeps past. Amplitude follows drift so it
+        // never gets dizzying, and non-tracking frames arc less because they
+        // sit further out, where the same angle covers much more ground.
+        const ang =
+          (takeEase * 2 - 1) * (tracks ? 0.5 : 0.22) * shot.drift;
         const ox = this.camShotPos.x - this.camShotLook.x;
         const oz = this.camShotPos.z - this.camShotLook.z;
         const ca = Math.cos(ang);
@@ -3411,10 +3485,16 @@ export class MemeDanceGame {
     // Nghiêng quanh trục nhìn (local Z) = Dutch angle; áp SAU lookAt để giữ chắc
     if (Math.abs(this.rollAngle) > 0.0005) this.camera.rotateZ(this.rollAngle);
 
-    // Chất phim: hạt grain động + quầng sắc đẩy nhẹ theo drop/kick cho dồn nhịp
+    // Filmic layer breathing with the music. Aberration and grain lift on the
+    // drop; the vignette closes in as the section builds, which tightens the
+    // frame on a chorus without touching the lens.
     this.filmic.uniforms.uTime.value = t;
     this.filmic.uniforms.uAberr.value =
       0.0016 + drop * 0.003 + kick * level * 0.0018;
+    this.filmic.uniforms.uVignette.value =
+      0.42 + sectionNow * 0.13 + drop * 0.1;
+    this.filmic.uniforms.uGrain.value =
+      0.045 + mEnergy * 0.012 + drop * 0.02;
 
     // Bloom "thở" theo kick của bass, bùng thêm khi drop; giữ mức thấp để
     // không lóa — glow chỉ nhấn nhá chứ không rửa trắng cả khung hình

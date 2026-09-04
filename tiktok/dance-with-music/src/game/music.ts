@@ -491,6 +491,11 @@ export class MusicPlayer {
    */
   beatOffset = 0;
 
+  /** Current beat period in seconds, from the tracked tempo. */
+  get beatSeconds(): number {
+    return this.interval;
+  }
+
   getBeat(): Beat {
     const now = performance.now() / 1000;
     const ph =

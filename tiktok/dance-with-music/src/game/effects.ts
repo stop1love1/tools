@@ -624,7 +624,9 @@ export class ClubLights {
   }
 }
 
-const PARTICLES_PER_BURST = 140;
+// Quả pháo giờ nở rộng gấp mấy lần nên cần nhiều hạt hơn, không thì mặt cầu
+// thưa ra và chỉ còn lác đác đốm sáng.
+const PARTICLES_PER_BURST = 240;
 const BURST_LIFE = 1.6;
 
 /**
@@ -645,6 +647,18 @@ const FIREWORK_TYPES: FireworkType[] = [
   "comet",
 ];
 
+/**
+ * Texture đốm sáng dùng chung cho MỌI quả pháo. Không có `map` thì three.js vẽ
+ * mỗi hạt thành một Ô VUÔNG đặc — quả pháo trông như mớ confetti vuông chứ
+ * không phải tia lửa. Tạo lười vì `makeGlowTexture` cần `document`, mà module
+ * này bị import cả ở phía server lúc build.
+ */
+let sparkGlow: THREE.Texture | null = null;
+function getSparkGlow(): THREE.Texture {
+  if (!sparkGlow) sparkGlow = makeGlowTexture();
+  return sparkGlow;
+}
+
 type Burst = {
   points: THREE.Points;
   velocities: Float32Array;
@@ -660,6 +674,12 @@ type Burst = {
 export class Fireworks {
   readonly group = new THREE.Group();
   private bursts: Burst[] = [];
+  /** Cú loé ở tâm quả pháo lúc bung — pháo thật soi sáng cả vùng trời quanh nó. */
+  private flash = new THREE.PointLight(0xffffff, 0, 42, 2);
+
+  constructor() {
+    this.group.add(this.flash);
+  }
 
   /** Chọn kiểu ngẫu nhiên, tránh lặp lại kiểu vừa bắn. */
   static randomType(exclude?: FireworkType | null): FireworkType {
@@ -685,17 +705,21 @@ export class Fireworks {
     const n = type === "comet" ? 90 : PARTICLES_PER_BURST;
     const positions = new Float32Array(n * 3);
     const velocities = new Float32Array(n * 3);
+    // Nổ CAO hẳn trên giàn truss. Trước đây chỉ cộng 2.5–5 nên quả pháo bung
+    // ngay ngang tầm màn LED, lọt thỏm vào giữa sân khấu thay vì ở trên trời.
     const center = origin
       .clone()
       .add(
         new THREE.Vector3(
-          (Math.random() - 0.5) * 3,
-          2.5 + Math.random() * 2.5,
-          (Math.random() - 0.5) * 2,
+          (Math.random() - 0.5) * 9,
+          // Màn LED cao 10.4 — tâm quả phải đủ cao để nửa dưới của chùm hạt
+          // (bán kính nở ~6) vẫn nằm trên nóc giàn chứ không trùm vào tường
+          9.5 + Math.random() * 4.5,
+          (Math.random() - 0.5) * 4,
         ),
       );
     // Comet xuất phát thấp hơn rồi vọt lên, nổ ở giữa đời
-    if (type === "comet") center.y -= 2.2;
+    if (type === "comet") center.y -= 5;
 
     const baseHue = hue ?? Math.random();
     // Trọng lực NHẸ để pháo nở & lơ lửng trên trời rồi tắt, không mưa sao rơi
@@ -733,12 +757,12 @@ export class Fireworks {
       positions[i * 3 + 2] = center.z + (Math.random() - 0.5) * 0.1;
       if (type === "comet") {
         velocities[i * 3] = (Math.random() - 0.5) * 0.5;
-        velocities[i * 3 + 1] = 9 + Math.random() * 1.5;
+        velocities[i * 3 + 1] = 15 + Math.random() * 3;
         velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
       } else if (type === "ring") {
         // Vòng trong mặt phẳng XZ rồi nghiêng quanh trục X
         const a = (i / n) * Math.PI * 2;
-        const speed = 3 + Math.random() * 0.6;
+        const speed = 8 + Math.random() * 1.4;
         const rx = Math.cos(a) * speed;
         const rz = Math.sin(a) * speed;
         velocities[i * 3] = rx;
@@ -748,18 +772,30 @@ export class Fireworks {
       } else {
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
+        // Có lực cản nên bán kính nở ≈ v/k. Tốc độ cũ (2.2–4.6) chỉ cho quả
+        // pháo rộng ~2.7 đơn vị, tức nhỉnh hơn một nhân vật (cao 1.875) — nhìn
+        // ra cục sáng chứ không ra pháo hoa.
         const speed =
-          type === "willow" ? 1.8 + Math.random() * 1.4 : 2.2 + Math.random() * 2.4;
+          type === "willow" ? 5 + Math.random() * 3 : 7 + Math.random() * 5;
         velocities[i * 3] = Math.sin(phi) * Math.cos(theta) * speed;
         velocities[i * 3 + 1] = Math.cos(phi) * speed;
         velocities[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * speed;
       }
     }
+    // Quả nào bung ngay (không phải comet đang bay lên) thì loé sáng ở tâm
+    if (type !== "comet") {
+      this.flash.color.copy(color);
+      this.flash.position.copy(center);
+      this.flash.intensity = Math.min(240, this.flash.intensity + 150);
+    }
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     const material = new THREE.PointsMaterial({
       color,
-      size: type === "willow" ? 0.16 : 0.14,
+      // Cỡ hạt lệch nhau chút giữa các quả cho đỡ đều tăm tắp
+      size: (type === "willow" ? 0.34 : 0.3) + Math.random() * 0.1,
+      map: getSparkGlow(),
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
@@ -781,6 +817,8 @@ export class Fireworks {
   }
 
   update(dt: number) {
+    // Cú loé lúc bung tắt rất nhanh, như ánh chớp của quả pháo thật
+    this.flash.intensity *= Math.max(0, 1 - dt * 9);
     for (let b = this.bursts.length - 1; b >= 0; b--) {
       const burst = this.bursts[b];
       burst.age += dt;
@@ -804,11 +842,17 @@ export class Fireworks {
         for (let i = 0; i < n; i++) {
           const theta = Math.random() * Math.PI * 2;
           const phi = Math.acos(2 * Math.random() - 1);
-          const speed = 2 + Math.random() * 2.2;
+          const speed = 6 + Math.random() * 4.5;
           vel[i * 3] = Math.sin(phi) * Math.cos(theta) * speed;
           vel[i * 3 + 1] = Math.cos(phi) * speed + 1;
           vel[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * speed;
         }
+        // Comet nổ ở đỉnh: loé tại chỗ nó vừa tới, không phải chỗ xuất phát
+        this.flash.color.copy(
+          (burst.points.material as THREE.PointsMaterial).color,
+        );
+        this.flash.position.set(array[0], array[1], array[2]);
+        this.flash.intensity = Math.min(240, this.flash.intensity + 150);
       }
       // Crackle: về cuối đời phần lớn hạt được đá thêm một cú → lấp lánh lần hai
       if (
@@ -826,15 +870,24 @@ export class Fireworks {
         }
       }
 
+      // Lực cản không khí: hạt vọt ra thật nhanh rồi hãm lại và lơ lửng —
+      // chính nhịp "bung rồi treo" này mới ra dáng pháo hoa. Không có nó thì
+      // hạt bay đều một mạch, nhìn như vụn sáng trôi ngang.
+      const drag = Math.max(0, 1 - dt * (burst.type === "willow" ? 0.8 : 1.4));
       for (let i = 0; i < n; i++) {
-        vel[i * 3 + 1] -= burst.gravity * dt;
+        vel[i * 3] *= drag;
+        vel[i * 3 + 1] = vel[i * 3 + 1] * drag - burst.gravity * dt;
+        vel[i * 3 + 2] *= drag;
         array[i * 3] += vel[i * 3] * dt;
         array[i * 3 + 1] += vel[i * 3 + 1] * dt;
         array[i * 3 + 2] += vel[i * 3 + 2] * dt;
       }
       positions.needsUpdate = true;
-      (burst.points.material as THREE.PointsMaterial).opacity =
-        1 - burst.age / burst.life;
+      // Giữ sáng gần hết đời rồi tắt gấp, thay vì mờ tuyến tính ngay từ đầu
+      (burst.points.material as THREE.PointsMaterial).opacity = Math.pow(
+        1 - burst.age / burst.life,
+        0.55,
+      );
     }
   }
 }
@@ -859,6 +912,16 @@ export class FlameJets {
   private points: THREE.Points;
   private cursor = 0;
   private color = new THREE.Color();
+  /**
+   * Trạng thái CHÁY của từng vòi. Vòi pyro thật cháy liên tục non một giây chứ
+   * không nổ một phát: nhả trọn loạt hạt tại một điểm ở cùng một thời điểm thì
+   * chúng chồng lên nhau theo kiểu additive và ra một QUẢ CẦU sáng, không ra
+   * cột lửa. Giữ thời gian cháy còn lại + cường độ rồi rắc hạt dần mỗi frame.
+   */
+  private burnLeft: Float32Array;
+  private burnStr: Float32Array;
+  /** Phần lẻ số hạt chưa nhả được của frame trước (rate × dt hiếm khi tròn). */
+  private emitAcc: Float32Array;
 
   /** "flame" = cột lửa cam bùng; "spark" = tia lửa vàng-trắng mảnh phụt cao
    *  như máy sparkular đặt trước sân khấu thật. */
@@ -892,6 +955,9 @@ export class FlameJets {
       port.position.set(s.x, s.y + 0.32, s.z);
       this.group.add(box, port);
     }
+    this.burnLeft = new Float32Array(this.nozzles.length);
+    this.burnStr = new Float32Array(this.nozzles.length);
+    this.emitAcc = new Float32Array(this.nozzles.length);
     for (let i = 0; i < FLAME_MAX; i++) this.positions[i * 3 + 1] = -50;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute(
@@ -902,9 +968,9 @@ export class FlameJets {
     this.points = new THREE.Points(
       geometry,
       new THREE.PointsMaterial({
-        // Camera đứng xa ~30 đơn vị — hạt phải to cỡ này mới thấy rõ;
-        // tia spark mảnh hơn cột lửa
-        size: style === "spark" ? 0.45 : 0.8,
+        // Hạt nhỏ nhưng NHIỀU và rải đều dọc thân cột → ra hình cột lửa. Cỡ
+        // hạt to (0.8) như trước làm vài chục hạt gộp thành một khối tròn.
+        size: style === "spark" ? 0.3 : 0.5,
         map: makeGlowTexture(),
         vertexColors: true,
         transparent: true,
@@ -930,59 +996,92 @@ export class FlameJets {
     return this.nozzles.length;
   }
 
-  /** strength ~0.6 (nhẹ) → 1.6 (drop); which: index các vòi, bỏ trống = tất cả. */
+  /**
+   * Châm các vòi cháy trong một khoảng thời gian; hạt do `update()` rắc dần.
+   * strength ~0.6 (nhẹ) → 1.6 (drop); which: index các vòi, bỏ trống = tất cả.
+   */
   fire(strength = 1, which?: number[]) {
     const idxs = which ?? this.nozzles.map((_, i) => i);
-    const per = Math.round(24 * Math.min(2, strength));
-    // Đặt đèn lóe tại trung tâm các vòi vừa bắn
-    let ax = 0;
-    let ay = 0;
-    let az = 0;
-    let cnt = 0;
+    const s = Math.min(2, strength);
+    const spark = this.style === "spark";
+    // Tia sparkular cháy lâu hơn cột lửa gas một chút, đúng như máy thật
+    const burn = spark ? 0.7 + s * 0.45 : 0.5 + s * 0.35;
     for (const n of idxs) {
-      const noz = this.nozzles[n];
-      if (!noz) continue;
-      ax += noz.x;
-      ay += noz.y;
-      az += noz.z;
-      cnt++;
+      if (!this.nozzles[n]) continue;
+      // Bắn chồng lên loạt đang cháy thì nối dài chứ không cắt ngang
+      this.burnLeft[n] = Math.max(this.burnLeft[n], burn);
+      this.burnStr[n] = Math.max(this.burnStr[n], s);
     }
-    if (cnt) {
-      this.flash.position.set(ax / cnt, ay / cnt + 1.6, az / cnt);
-      this.flash.intensity = Math.min(
-        130,
-        this.flash.intensity + 50 * strength,
-      );
-    }
-    for (const n of idxs) {
-      const nozzle = this.nozzles[n];
-      if (!nozzle) continue;
-      const spark = this.style === "spark";
-      for (let k = 0; k < per; k++) {
-        const i = this.cursor;
-        this.cursor = (this.cursor + 1) % FLAME_MAX;
-        this.positions[i * 3] = nozzle.x + (Math.random() - 0.5) * 0.22;
-        this.positions[i * 3 + 1] = nozzle.y;
-        this.positions[i * 3 + 2] = nozzle.z + (Math.random() - 0.5) * 0.22;
-        // Spark: tia mảnh phụt cao và thẳng; flame: cột lửa tỏa rộng hơn
-        this.velocities[i * 3] = (Math.random() - 0.5) * (spark ? 0.5 : 1.2);
-        this.velocities[i * 3 + 1] = spark
-          ? (9 + Math.random() * 4) * (0.75 + strength * 0.3)
-          : (6.5 + Math.random() * 3.5) * (0.7 + strength * 0.4);
-        this.velocities[i * 3 + 2] =
-          (Math.random() - 0.5) * (spark ? 0.5 : 1.2);
-        this.maxLife[i] = this.life[i] = spark
-          ? 0.5 + Math.random() * 0.35
-          : 0.45 + Math.random() * 0.3;
-      }
+  }
+
+  /** Rắc `k` hạt từ vòi `n` với cường độ `s`. */
+  private emit(n: number, k: number, s: number) {
+    const nozzle = this.nozzles[n];
+    const spark = this.style === "spark";
+    for (let j = 0; j < k; j++) {
+      const i = this.cursor;
+      this.cursor = (this.cursor + 1) % FLAME_MAX;
+      this.positions[i * 3] = nozzle.x + (Math.random() - 0.5) * 0.22;
+      this.positions[i * 3 + 1] = nozzle.y;
+      this.positions[i * 3 + 2] = nozzle.z + (Math.random() - 0.5) * 0.22;
+      // Spark: tia mảnh phụt cao và thẳng; flame: cột lửa tỏa rộng hơn
+      this.velocities[i * 3] = (Math.random() - 0.5) * (spark ? 0.5 : 1.2);
+      this.velocities[i * 3 + 1] = spark
+        ? (9 + Math.random() * 4) * (0.75 + s * 0.3)
+        : (6.5 + Math.random() * 3.5) * (0.7 + s * 0.4);
+      this.velocities[i * 3 + 2] = (Math.random() - 0.5) * (spark ? 0.5 : 1.2);
+      this.maxLife[i] = this.life[i] = spark
+        ? 0.5 + Math.random() * 0.35
+        : 0.45 + Math.random() * 0.3;
     }
   }
 
   update(dt: number) {
     const t = performance.now() / 1000;
-    // Đèn lóe tắt nhanh như ánh lửa thật
-    this.flash.intensity *= Math.max(0, 1 - dt * 7);
-    let any = false;
+
+    // 1) Các vòi đang cháy: rắc hạt đều tay suốt thời gian cháy
+    const spark = this.style === "spark";
+    const rate = spark ? 90 : 70;
+    const rateStr = spark ? 50 : 40;
+    let burnSum = 0;
+    let fx = 0;
+    let fy = 0;
+    let fz = 0;
+    for (let n = 0; n < this.nozzles.length; n++) {
+      if (this.burnLeft[n] <= 0) continue;
+      const s = this.burnStr[n];
+      this.burnLeft[n] -= dt;
+      this.emitAcc[n] += (rate + rateStr * s) * dt;
+      const k = Math.floor(this.emitAcc[n]);
+      if (k > 0) {
+        this.emitAcc[n] -= k;
+        this.emit(n, k, s);
+      }
+      if (this.burnLeft[n] <= 0) {
+        this.burnLeft[n] = 0;
+        this.burnStr[n] = 0;
+        this.emitAcc[n] = 0;
+      }
+      const noz = this.nozzles[n];
+      burnSum += s;
+      fx += noz.x * s;
+      fy += noz.y * s;
+      fz += noz.z * s;
+    }
+    // Đèn lóe bám theo cụm vòi đang cháy, sáng suốt loạt rồi tắt nhanh
+    if (burnSum > 0) {
+      this.flash.position.set(
+        fx / burnSum,
+        fy / burnSum + 1.6,
+        fz / burnSum,
+      );
+      const target = Math.min(130, 55 * burnSum);
+      this.flash.intensity += (target - this.flash.intensity) * Math.min(1, dt * 14);
+    } else {
+      this.flash.intensity *= Math.max(0, 1 - dt * 7);
+    }
+
+    let any = burnSum > 0;
     for (let i = 0; i < FLAME_MAX; i++) {
       if (this.life[i] <= 0) continue;
       any = true;
