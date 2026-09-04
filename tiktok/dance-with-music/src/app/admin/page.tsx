@@ -68,7 +68,7 @@ export default function AdminPage() {
     setRules(loadRules());
     setUsername(localStorage.getItem("md:admin-user") ?? "");
     const bus = openBus((msg: BusMessage) => {
-      // Preview (hoặc tab khác) đổi luật chơi → cập nhật form admin ngay
+      // Preview (or another tab) changed the rules → refresh the admin form
       if (msg.t === "rules") {
         setRules(msg.rules);
         saveRules(msg.rules);

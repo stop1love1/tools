@@ -29,7 +29,7 @@ export type TikTokGift = {
   name: string;
   emoji: string;
   diamonds: number;
-  /** Ảnh quà chính chủ từ CDN TikTok — thiếu thì fallback emoji. */
+  /** Official gift image from TikTok's CDN; falls back to the emoji. */
   image?: string;
 };
 
@@ -78,7 +78,7 @@ export type ZoneMode = "auto" | "all-floor" | "all-audience";
 
 export type CameraMode = "sway" | "orbit" | "overview" | "manual";
 
-/** Phông chữ nghệ thuật cho bảng tên trên đỉnh khung sân khấu. */
+/** Display font for the banner across the top of the stage frame. */
 export type BannerStyle = "neon" | "script" | "gold" | "outline";
 
 export type GameRules = {
@@ -93,17 +93,17 @@ export type GameRules = {
   autoBpm: number;
   beatSensitivity: number;
   commandsEnabled: boolean;
-  /** Số lượt order nhạc (lên bàn DJ) tối đa cho mỗi bài. */
+  /** Maximum DJ-booth song requests allowed per track. */
   djOrderPerSong: number;
   giftActions: GiftActionRule[];
   /**
-   * Số vũ công tương tác nhiều nhất (theo điểm chat/tim/donate) được dựng thành
-   * con rối cutout — tay/chân cử động + biểu cảm mượt hơn. 0 = tắt hẳn (tất cả
-   * dùng sprite phẳng). Đặt thấp để nhẹ máy.
+   * How many of the most engaged dancers (by chat/like/donate score) get built
+   * as cutout puppets, with moving limbs and smoother expressions. 0 disables
+   * it entirely (everyone stays a flat sprite). Keep it low on weak machines.
    */
   rigDancers: number;
   legendOverride: string;
-  /** Dòng chữ nghệ thuật trên đỉnh khung sân khấu (rỗng = ẩn). */
+  /** Banner text across the top of the stage frame (empty = hidden). */
   stageBannerText: string;
   stageBannerStyle: BannerStyle;
 };
@@ -166,7 +166,7 @@ export function saveRules(rules: GameRules) {
 
 export type LegendItem = { emoji: string; label: string; image?: string };
 
-/** Bảng lệnh trên màn hình: chỉ liệt kê các mốc quà donate (gọn cho overlay). */
+/** On-screen legend: lists only the gift tiers, to stay compact as an overlay. */
 export function buildLegend(r: GameRules): LegendItem[] {
   const custom = (r.legendOverride ?? "").trim();
   if (custom) {

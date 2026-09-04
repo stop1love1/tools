@@ -29,7 +29,7 @@ function formatTime(sec: number): string {
 export class NowPlayingScreen {
   readonly mesh: THREE.Mesh;
   paused = false;
-  /** Nickname người order bài — hiện dưới tên bài khi có người order. */
+  /** Requester's nickname, shown under the title when someone ordered it. */
   orderedBy: string | null = null;
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;

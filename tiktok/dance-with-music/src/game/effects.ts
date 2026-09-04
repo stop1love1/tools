@@ -1381,6 +1381,99 @@ export class Hearts {
   }
 }
 
+type MemePop = {
+  sprite: THREE.Sprite;
+  vy: number;
+  spin: number;
+  size: number;
+  sway: number;
+  age: number;
+  life: number;
+};
+
+/**
+ * Meme bung lên theo phách: mượn chính texture nhân vật đang có trên sàn, bắn
+ * ra hai mép sàn ở phách mạnh của đoạn cao trào rồi bay lên, xoay và tan dần.
+ * Bám mép trái/phải nên khung dọc TikTok (nhân vật ở giữa) không bị che.
+ */
+export class MemePops {
+  readonly group = new THREE.Group();
+  private textures: THREE.Texture[] = [];
+  private pops: MemePop[] = [];
+  private static readonly MAX = 28;
+
+  /** Đổi kho ảnh dùng để bung (gọi lại mỗi khi nạp bộ skin mới). */
+  setTextures(textures: THREE.Texture[]) {
+    this.textures = textures;
+  }
+
+  /** Bung `count` ảnh. `intensity` 0..1 quyết định cỡ và độ vọt cao. */
+  burst(count: number, intensity = 0.6) {
+    if (!this.textures.length) return;
+    const n = Math.min(count, MemePops.MAX - this.pops.length);
+    for (let i = 0; i < n; i++) {
+      const map = this.textures[
+        Math.floor(Math.random() * this.textures.length)
+      ];
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false }),
+      );
+      const size = 1.1 + intensity * 1.5 + Math.random() * 0.5;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      sprite.center.set(0.5, 0.5);
+      sprite.scale.set(size, size, 1);
+      sprite.position.set(
+        side * (9 + Math.random() * 4),
+        0.8 + Math.random() * 1.6,
+        -2 + Math.random() * 8,
+      );
+      this.group.add(sprite);
+      this.pops.push({
+        sprite,
+        vy: 2.4 + intensity * 2.2 + Math.random() * 1.2,
+        spin: (Math.random() - 0.5) * 3.2,
+        size,
+        sway: Math.random() * Math.PI * 2,
+        age: 0,
+        life: 1.5 + Math.random() * 0.7,
+      });
+    }
+  }
+
+  update(dt: number, beat: Beat) {
+    // Đúng đầu phách thì phóng to giật một cái rồi co về — ảnh "nảy" theo tiếng
+    const punch = 1 + Math.max(0, 1 - beat.pulse * 4) * 0.22;
+    const t = performance.now() / 1000;
+    for (let i = this.pops.length - 1; i >= 0; i--) {
+      const p = this.pops[i];
+      p.age += dt;
+      if (p.age >= p.life) {
+        this.group.remove(p.sprite);
+        p.sprite.material.dispose();
+        this.pops.splice(i, 1);
+        continue;
+      }
+      const k = p.age / p.life;
+      p.sprite.position.y += p.vy * (1 - k * 0.55) * dt;
+      p.sprite.position.x += Math.sin(t * 2.4 + p.sway) * 0.8 * dt;
+      p.sprite.material.rotation += p.spin * dt;
+      // Bung to lúc mới ra rồi giữ cỡ, cộng cú giật theo phách
+      const grow = Math.min(1, p.age / 0.14);
+      const s = p.size * grow * punch;
+      p.sprite.scale.set(s, s, 1);
+      p.sprite.material.opacity = Math.min(1, (1 - k) * 2.2);
+    }
+  }
+
+  dispose() {
+    for (const p of this.pops) {
+      this.group.remove(p.sprite);
+      p.sprite.material.dispose();
+    }
+    this.pops = [];
+  }
+}
+
 const CONFETTI_MAX = 400;
 
 export class Confetti {

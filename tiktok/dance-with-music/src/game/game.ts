@@ -26,6 +26,7 @@ import {
   LightBeams,
   lerpHue,
   makeGlowTexture,
+  MemePops,
   PyroDirector,
   SmokeJets,
   SpeakerStack,
@@ -244,6 +245,8 @@ export class MemeDanceGame {
   private disposed = false;
 
   private skins: Skin[] = [];
+  /** Bộ đầu nấm vẽ sẵn (có rig) — ảnh meme nạp thêm được nối vào sau bộ này. */
+  private defaultSkins: Skin[] = [];
   private players = new Map<string, Player>();
   private danceSlotsFree: THREE.Vector3[] = [];
   private audienceSlotsFree: THREE.Vector3[] = [];
@@ -260,6 +263,9 @@ export class MemeDanceGame {
   private speakers: SpeakerStack[];
   private fireworks = new Fireworks();
   private confetti = new Confetti();
+  private memePops = new MemePops();
+  /** Nhịp gần nhất đã bung meme — chặn bung lại nhiều lần trong cùng một phách. */
+  private lastMemePopBeat = -1;
   // Vành đai pyro BAO QUANH sàn diễn (không dồn về bàn DJ): lửa ở hai đầu
   // mép sân khấu + dọc hai bên sàn nhảy; thứ tự vòi xếp trái → phải để các
   // pattern "đuổi vòng quanh" chạy đúng chiều
@@ -489,7 +495,11 @@ export class MemeDanceGame {
 
     this.scene.add(this.stageGroup);
     this.skins = generateSkins();
+    // Giữ riêng bộ đầu nấm vẽ sẵn: nạp ảnh meme là NỐI vào bộ này, và dựng lại
+    // bằng generateSkins() lần nữa thì tốn thêm một bộ canvas y hệt
+    this.defaultSkins = this.skins;
     this.preuploadSkins(this.skins);
+    this.memePops.setTextures(this.skins.map((s) => s.frames[0]));
     this.buildStage();
     this.buildSlots();
 
@@ -507,6 +517,7 @@ export class MemeDanceGame {
       this.clubLights.group,
       this.fireworks.group,
       this.confetti.points,
+      this.memePops.group,
       this.flames.group,
       this.smokeJets.group,
       this.frontSparks.group,
@@ -1944,11 +1955,17 @@ export class MemeDanceGame {
 
   async useCustomSkins(urls: string[]) {
     if (!urls.length) return;
-    const custom = await loadCustomSkins(urls);
-    if (!custom.length || this.disposed) return;
-    this.preuploadSkins(custom);
+    const loaded = await loadCustomSkins(urls);
+    if (!loaded.length || this.disposed) return;
+    this.preuploadSkins(loaded);
+    // ẢNH THẬT LÀ CHÍNH. 蘑菇头 là meme ghép mặt người thật, nét vẽ canvas không
+    // bao giờ ra đúng cái mặt đó — nên bộ vẽ sẵn chỉ bù vào khi ảnh quá ít
+    // (dưới 12 skin) để sàn còn đủ mặt khác nhau, và bù ở CUỐI danh sách.
+    const custom =
+      loaded.length >= 12 ? loaded : [...loaded, ...this.defaultSkins];
     this.skins = custom;
     this.players.forEach((p) => p.setSkins(custom));
+    this.memePops.setTextures(loaded.map((s) => s.frames[0]));
     const dj = custom[3 % custom.length];
     this.djDefaultMap = dj.frames[0];
     this.djDefaultFrames = dj.frames;
@@ -2932,6 +2949,21 @@ export class MemeDanceGame {
     this.speakers[1].update(dt, effHype, beat);
     this.fireworks.update(dt);
     this.confetti.update(dt, effHype);
+    // Meme bung theo phách mạnh — chỉ ở đoạn đã bốc, và thưa dần khi nhạc lắng
+    // để khung hình dọc không bị ảnh che kín lúc đang verse
+    if (
+      this.music.playing &&
+      beat.index !== this.lastMemePopBeat &&
+      beat.index % 4 === 0 &&
+      this.vibe.intensity > 0.6
+    ) {
+      this.lastMemePopBeat = beat.index;
+      const heat = this.vibe.intensity + drop * 0.5;
+      if (Math.random() < heat * 0.55) {
+        this.memePops.burst(1 + Math.round(heat * 2), this.vibe.intensity);
+      }
+    }
+    this.memePops.update(dt, beat);
     // Đoạn trầm/breakdown hoặc bài buồn: khói haze mỏng bò chậm quanh sân
     // khấu — beam đèn hiện rõ trong khói đúng chất club thật
     if (this.music.playing) {
@@ -3445,6 +3477,7 @@ export class MemeDanceGame {
     el.removeEventListener("wheel", this.onWheel);
     el.removeEventListener("dblclick", this.onDblClick);
     this.reset();
+    this.memePops.dispose();
     this.composer.dispose();
     this.renderer.dispose();
   }

@@ -8,7 +8,7 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-/* Thanh cuộn mảnh cho panel Cài đặt — thumb gradient cyan→hồng theo brand */
+/* Slim scrollbar for the Settings panel; cyan→pink brand gradient thumb */
 .nice-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;

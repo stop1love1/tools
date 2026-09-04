@@ -2,9 +2,9 @@ import { type NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// Proxy same-origin sang Go gateway (/api/data/*) để trình duyệt không phải
-// gọi cross-origin — tránh lỗi CORS/"Failed to fetch" khi gateway đổi port
-// (port 8080 hay bị Apache/XAMPP chiếm) hoặc khi truy cập qua domain.
+// Same-origin proxy to the Go gateway (/api/data/*) so the browser never makes
+// a cross-origin call. Avoids CORS / "Failed to fetch" when the gateway moves
+// port (8080 is often taken by Apache/XAMPP) or when reached via a domain.
 
 let cachedBase: string | null = null;
 

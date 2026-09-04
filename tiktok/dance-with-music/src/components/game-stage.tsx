@@ -48,13 +48,15 @@ const TONE_CLASS = {
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/30 hover:border-white/25 focus:border-cyan-300/70 focus:bg-black/40 disabled:opacity-50";
 
-// Trạng thái khôi phục nhạc sau reload — biến module vì GameStage chỉ mount
-// một lần mỗi trang và React Compiler không cho gán ref dùng chéo giữa effect
+// Music restore state after a reload. Module-level because GameStage mounts
+// once per page and React Compiler disallows assigning a ref shared across
+// effects.
 let resumeAtSeconds = 0;
 let playItemLatest: (index: number) => void = () => {};
 let addOrderedLatest: (nickname: string, query: string) => void = () => {};
 
-// Suy thumbnail YouTube ngay từ URL/ID để hiện ảnh mà không cần chờ resolve
+// Derive the YouTube thumbnail straight from the URL/ID so an image shows
+// without waiting for the resolver
 function youtubeThumb(input: string): string | undefined {
   const m =
     input.match(
@@ -96,7 +98,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   const [showLegend, setShowLegend] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [demoRunning, setDemoRunning] = useState(false);
-  // Bù nhịp thủ công (ms) — canh dancer/đèn khớp tiếng thật. Hiện tạm khi chỉnh.
+  // Manual beat offset (ms) to align dancers/lights with what's heard. Shown
+  // briefly while being adjusted.
   const [beatSync, setBeatSync] = useState(0);
   const [showBeatSync, setShowBeatSync] = useState(false);
   const beatSyncHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -106,11 +109,11 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     input: string;
     title: string;
     kind: "file" | "url";
-    /** Ảnh thumbnail của bài (YouTube/TikTok) — suy từ URL hoặc do resolver trả về. */
+    /** Track thumbnail (YouTube/TikTok), from the URL or the resolver. */
     thumb?: string;
-    /** Nickname người order — bài do khán giả yêu cầu qua quà tặng. */
+    /** Requester's nickname, for tracks a viewer ordered with a gift. */
     orderedBy?: string;
-    /** Link audio đã phân giải (cache trong phiên) — bấm phát là chạy ngay. */
+    /** Resolved audio link, cached for the session so play starts instantly. */
     media?: string;
   };
   const [showChatTest, setShowChatTest] = useState(false);
@@ -138,7 +141,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     const game = new MemeDanceGame(canvas);
     game.rules = loadRules();
     gameRef.current = game;
-    // Khôi phục mức bù nhịp đã canh lần trước
+    // Restore the beat offset dialled in last session
     const savedSync = Number(localStorage.getItem("md:beatSync") ?? 0);
     if (Number.isFinite(savedSync) && savedSync !== 0) {
       game.setBeatSyncMs(savedSync);
@@ -180,7 +183,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
           kind: "file" as const,
         }));
       } catch {
-        // API lỗi vẫn phải hiện các URL đã lưu
+        // Still show the saved URLs even if the API failed
       }
       let saved: PlaylistItem[] = [];
       try {
@@ -193,7 +196,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       const list = [...files, ...saved];
       setPlaylist(list);
       playlistRef.current = list;
-      // Tự phát lại bài đang nghe dở trước khi reload (đúng vị trí đang nghe)
+      // Resume the track that was playing before the reload, at its position
       try {
         const m = JSON.parse(
           localStorage.getItem("md:music") ?? "null",
@@ -212,8 +215,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   }, []);
 
   const persistPlaylist = (list: PlaylistItem[]) => {
-    // Bài order của khán giả là tạm thời — không lưu vào playlist cố định.
-    // Bỏ link media đã phân giải vì nó hết hạn sau vài giờ.
+    // Viewer-ordered tracks are transient and never saved to the permanent
+    // playlist. Drop the resolved media link too — it expires in a few hours.
     localStorage.setItem(
       "md:playlist",
       JSON.stringify(
@@ -245,7 +248,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       }
       if (e.key === "s" || e.key === "S") setShowSettings((v) => !v);
       if (e.key === "Escape") setShowSettings(false);
-      // Canh nhịp live: , / . nhích ∓10ms, phím 0 đặt lại. Cho khớp tiếng thật.
+      // Live beat trim: , / . nudge by ∓10ms, 0 resets. Matches what's heard.
       if (e.key === "," || e.key === "." || e.key === "0") {
         const g = gameRef.current;
         if (!g) return;
@@ -279,7 +282,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     setRules(next);
     saveRules(next);
     if (gameRef.current) gameRef.current.rules = next;
-    // Đồng bộ sang trang admin + các tab khác (preview đổi → admin thấy ngay)
+    // Sync to the admin page and other tabs, so a preview change shows there
     broadcast({ t: "rules", rules: next });
   };
 
@@ -299,9 +302,9 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       giftActions: rules.giftActions.filter((_, i) => i !== index),
     });
 
-  // Phát lệnh lên bus để các tab game khác (và trang admin) đồng bộ theo.
-  // BroadcastChannel không dội về tab gửi, tab nhận chỉ thực thi không phát
-  // tiếp — nên không tạo vòng lặp.
+  // Broadcast the command so other game tabs (and admin) follow. No loop is
+  // possible: BroadcastChannel doesn't echo to the sender, and receivers
+  // execute without re-broadcasting.
   const busSendRef = useRef<(cmd: AdminCommand) => void>(() => {});
   const broadcast = (cmd: AdminCommand) => busSendRef.current(cmd);
 
@@ -386,7 +389,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   const pendingPlayRef = useRef<number | null>(null);
   const [needsGesture, setNeedsGesture] = useState(false);
 
-  // Lưu định kỳ bài + vị trí đang nghe để reload trang không mất nhạc
+  // Periodically persist track + position so a page reload keeps the music
   useEffect(() => {
     const timer = setInterval(() => {
       const game = gameRef.current;
@@ -421,8 +424,8 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
   const resolveMedia = async (
     input: string,
   ): Promise<{ media: string; title: string; thumb?: string }> => {
-    // Gọi same-origin — Next.js proxy /api/data/* sang Go gateway (tự dò port),
-    // tránh CORS và không phụ thuộc gateway nằm ở port nào
+    // Same-origin call: Next.js proxies /api/data/* to the Go gateway and
+    // discovers its port, so there's no CORS and no hard-coded port
     const apiBase = "";
     let media = input;
     let thumb: string | undefined;
@@ -443,7 +446,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       title = meta?.music?.title || meta?.author?.nickname || "TikTok audio";
       thumb = meta?.video?.cover || undefined;
     } else if (!isDirectMedia) {
-      // Không phải link → coi là tên bài, tìm trên YouTube qua yt-dlp
+      // Not a link → treat it as a title and search YouTube via yt-dlp
       const target = /^[a-z][a-z0-9+.-]*:/i.test(input)
         ? input
         : `ytsearch1:${input}`;
@@ -461,7 +464,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     return { media: `/api/stream?url=${encodeURIComponent(media)}`, title, thumb };
   };
 
-  /** Cập nhật một bài trong playlist (cả state lẫn ref, đồng bộ ngay). */
+  /** Update one playlist entry in both state and ref, kept in sync. */
   const patchItem = (index: number, patch: Partial<PlaylistItem>) => {
     const list = playlistRef.current.map((p, i) =>
       i === index ? { ...p, ...patch } : p,
@@ -470,7 +473,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     setPlaylist(list);
   };
 
-  /** Phân giải link nếu chưa có cache — trả về link audio phát được ngay. */
+  /** Resolve the link unless cached; returns a directly playable audio URL. */
   const ensureResolved = async (
     index: number,
   ): Promise<{ media: string; title: string }> => {
@@ -504,7 +507,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       try {
         await game.playMusic(media, title, item.orderedBy ?? null);
       } catch (err) {
-        // Link cache hết hạn → phân giải lại một lần rồi phát lại
+        // Cached link expired → resolve once more and retry playback
         const blocked = err instanceof DOMException && err.name === "NotAllowedError";
         if (!cached || blocked) throw err;
         patchItem(index, { media: undefined });
@@ -517,7 +520,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
         game.music.seekTo(resumeAtSeconds);
         resumeAtSeconds = 0;
       }
-      // Nạp sẵn link bài kế tiếp — bấm next/hết bài là chạy tức thì
+      // Prefetch the next track's link so next/track-end starts instantly
       const nextIdx = (index + 1) % playlistRef.current.length;
       if (nextIdx !== index) {
         const next = playlistRef.current[nextIdx];
@@ -542,7 +545,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
       setMusicError(message || "Không phát được URL này");
     }
   };
-  // Bài do khán giả order: chèn ngay sau bài đang phát để lên sóng kế tiếp
+  // Viewer-ordered track: insert right after the current one so it plays next
   const addOrderedSong = (nickname: string, query: string) => {
     const list = [...playlistRef.current];
     const at =
@@ -556,7 +559,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     });
     setPlaylist(list);
     playlistRef.current = list;
-    // Không phát ngay — bài hiện tại chạy xong sẽ tự chuyển sang bài order
+    // Don't cut in; the current track finishes and rolls into the ordered one
   };
 
   useEffect(() => {
@@ -564,7 +567,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     addOrderedLatest = addOrderedSong;
   });
 
-  // Lưu ngay trước khi trang đóng/reload để không mất vị trí đang nghe
+  // Save just before unload/reload so the playback position isn't lost
   useEffect(() => {
     const save = () => {
       const game = gameRef.current;
@@ -658,7 +661,7 @@ export function GameStage({ preview = false }: { preview?: boolean }) {
     game.onSongRequest = (nickname, query) => addOrderedLatest(nickname, query);
   }, []);
 
-  // Đồng bộ 2 màn hình FOH trong game: trái "đang phát", phải "playlist"
+  // Feed the two in-game FOH screens: "now playing" left, "playlist" right
   useEffect(() => {
     const game = gameRef.current;
     if (!game) return;

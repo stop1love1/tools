@@ -1,7 +1,7 @@
 import type { Beat, MusicGenre } from "./player";
 
-// Krumhansl key profiles — trọng số cảm nhận 12 bậc trong giọng trưởng/thứ,
-// dùng so khớp chromagram để đoán bài đang ở giọng trưởng (vui) hay thứ (buồn)
+// Krumhansl key profiles: perceived weight of the 12 pitch classes in a major
+// vs minor key. Matched against the chromagram to guess the song's mode.
 const MAJOR_PROFILE = [
   6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88,
 ];
@@ -29,22 +29,22 @@ export class MusicPlayer {
   private interval = 60 / 128;
   private history: number[] = [];
 
-  /** Mức năng lượng dải trung (giọng hát/synth) và cao (hi-hat) 0..1. */
+  /** Mid-band (vocals/synth) and high-band (hi-hat) energy, 0..1. */
   mid = 0;
   high = 0;
-  /** Cường độ "drop" (1 → tắt dần): nhạc lặng >1s rồi bass bùng nổ. */
+  /** Drop intensity, decaying from 1: bass erupts after >1s of quiet. */
   dropLevel = 0;
   /**
-   * Tâm trạng bài hát, làm mượt rất chậm để không giật giữa các câu nhạc:
-   * - moodEnergy 0..1: êm dịu → dữ dội (tổng năng lượng phổ).
-   * - moodValence 0..1: buồn → vui (phổ "sáng" nhiều treble + tempo nhanh).
+   * Song mood, smoothed hard so it never jumps between phrases:
+   * - moodEnergy 0..1: calm → intense (total spectral energy).
+   * - moodValence 0..1: sad → happy (bright treble-heavy spectrum + tempo).
    */
   moodEnergy = 0;
   moodValence = 0.4;
   /**
-   * Cường độ đoạn nhạc SO VỚI chính bài đó (z-score loudness): 0 = đoạn
-   * trầm/break, ~0.5 = bình thường, 1 = điệp khúc/drop. Không phụ thuộc bài
-   * mix to hay nhỏ nên dùng làm cò kích pyro/đèn chuẩn hơn ngưỡng tuyệt đối.
+   * Section intensity relative to THIS song (loudness z-score): 0 = quiet
+   * break, ~0.5 = normal, 1 = chorus/drop. Independent of how loud the track
+   * is mixed, so it gates pyro/lights far better than an absolute threshold.
    */
   section = 0.5;
   private emaFast = 0;
@@ -52,25 +52,26 @@ export class MusicPlayer {
   private emaVar = 0.001;
   private centroidAvg = 0.3;
   /**
-   * Giai điệu (nốt thăng/trầm) dò từ cao độ trội dải 250–2000Hz:
-   * - melodyTrend -1..1: >0 nốt đang đi LÊN (thăng), <0 đi XUỐNG (trầm).
-   * - melodyHeight 0..1: cao độ hiện tại so với dải của chính bài.
+   * Melody contour, from the dominant pitch in the 250–2000Hz band:
+   * - melodyTrend -1..1: >0 melody rising, <0 falling.
+   * - melodyHeight 0..1: current pitch within this song's own range.
    */
   melodyTrend = 0;
   melodyHeight = 0.5;
-  /** Thể loại ước lượng từ tempo + cân bằng phổ + mật độ onset. */
+  /** Genre estimated from tempo + spectral balance + onset density. */
   genre: MusicGenre = "pop";
   /**
-   * Lệch lưới beat → phách 1 THẬT của ô nhịp (downbeat), dò bằng cộng dồn
-   * trọng âm theo 4 pha. Game trừ offset này để mọi accent %4/%8 khớp nhịp.
+   * Offset from the beat grid to the real downbeat, found by accumulating
+   * accent energy over the 4 phases of a bar. The game subtracts it so every
+   * %4/%8 accent lands on beat 1.
    */
   barOffset = 0;
-  /** Tin cậy beat 0..1 — onset khớp lưới đều đặn thì cao; thấp → bớt pyro. */
+  /** Beat confidence 0..1 — high when onsets land on an even grid; low → less pyro. */
   beatConfidence = 0.5;
   private phaseEnergy = [0, 0, 0, 0];
   private chromaMap: Int32Array | null = null;
   private chroma = new Float32Array(12);
-  /** 0 = giọng thứ (buồn) → 1 = giọng trưởng (tươi sáng). */
+  /** 0 = minor key (sad) → 1 = major key (bright). */
   private modeMajor = 0.5;
   private hzPerBin = 21.5;
   private melodyFast = 0;
@@ -100,13 +101,13 @@ export class MusicPlayer {
     return !!this.audio && !this.audio.paused && !this.audio.ended;
   }
 
-  /** Đang ở đoạn trầm (bass chìm dưới nền >0.5s) — thường là break/buildup. */
+  /** In a quiet stretch (bass under the floor >0.5s) — usually a break/buildup. */
   get inQuietSection(): boolean {
     return this.playing && this.quietTime > 0.5;
   }
 
 
-  /** Tiến độ bài hiện tại (giây) — null khi chưa có bài/chưa biết độ dài. */
+  /** Playback position in seconds; null with no track or unknown length. */
   get progress(): { time: number; duration: number } | null {
     if (!this.audio) return null;
     const duration = this.audio.duration;
@@ -114,13 +115,13 @@ export class MusicPlayer {
     return { time: this.audio.currentTime, duration };
   }
 
-  /** Tua tới mốc giây tuyệt đối (khôi phục vị trí nghe dở sau khi reload). */
+  /** Seek to an absolute second (restores position after a reload). */
   seekTo(seconds: number) {
     if (!this.audio) return;
     this.audio.currentTime = Math.max(0, seconds);
   }
 
-  /** Tua tới vị trí 0..1 của bài (bấm vào thanh tiến độ trên màn hình DJ). */
+  /** Seek to a 0..1 position (clicking the DJ screen's progress bar). */
   seek(frac: number) {
     if (!this.audio) return;
     const duration = this.audio.duration;
@@ -140,16 +141,16 @@ export class MusicPlayer {
       const source = this.ctx.createMediaElementSource(this.audio);
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 2048;
-      // Mượt THẤP để bắt transient kick tức thì (0.6 cũ làm onset trễ ~50ms →
-      // hiệu ứng nhấp sau tiếng nghe). Level/bass đã có EMA riêng phía dưới nên
-      // đèn không bị nhấp nháy loạn dù dữ liệu phổ thô hơn.
+      // Keep smoothing LOW to catch the kick transient immediately: the old
+      // 0.6 delayed onsets by ~50ms, firing effects after the audible hit.
+      // Level/bass have their own EMA below, so lights still don't flicker.
       this.analyser.smoothingTimeConstant = 0.2;
       source.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
       this.freq = new Uint8Array(this.analyser.frequencyBinCount);
       const hzPerBin = this.ctx.sampleRate / this.analyser.fftSize;
       this.hzPerBin = hzPerBin;
-      // Bảng bin FFT → lớp cao độ (chroma) cho dải 80Hz–2kHz, dựng một lần
+      // FFT bin → pitch class (chroma) table for 80Hz–2kHz, built once.
       this.chromaMap = new Int32Array(this.freq.length).fill(-1);
       const cLo = Math.max(1, Math.floor(80 / hzPerBin));
       const cHi = Math.min(this.freq.length - 1, Math.ceil(2000 / hzPerBin));
@@ -170,13 +171,16 @@ export class MusicPlayer {
     this.title = title;
     this.audio.src = url;
     this.audio.onended = () => this.onEndedCb?.();
-    // play() trước: nếu trình duyệt chặn autoplay sẽ ném NotAllowedError ngay
-    // (ctx.resume() khi bị chặn thì treo vô hạn — không được await trước)
+    // play() first: a browser blocking autoplay throws NotAllowedError right
+    // away, whereas awaiting ctx.resume() while blocked hangs forever.
     await this.audio.play();
     void this.ctx!.resume();
     this.history = [];
     this.beatIndex = 0;
     this.lastOnset = performance.now() / 1000;
+    // Reset alongside lastOnset, or beatConfidence sinks to its floor at the
+    // start of every track.
+    this.lastRealOnset = this.lastOnset;
     this.prevBass = null;
     this.fluxAvg = 0;
     this.energyAvg = 0;
@@ -268,11 +272,11 @@ export class MusicPlayer {
     this.high +=
       (highSum / ((this.highHi - this.highLo + 1) * 255) - this.high) * 0.35;
 
-    // === Detect thích ứng theo chính bài đang phát ===
-    // Loudness tổng hợp có trọng số (bass nặng nhất, như tai người cảm nhận)
+    // === Detection adapted to the track currently playing ===
+    // Weighted overall loudness (bass heaviest, roughly as the ear hears it)
     const inst = this.level * 0.5 + this.mid * 0.35 + this.high * 0.15;
-    // EMA nhanh/chậm + phương sai → z-score: đoạn hiện tại to/nhỏ bất thường
-    // cỡ nào so với mức trung bình của CHÍNH bài này (bất kể mix to hay nhỏ)
+    // Fast/slow EMA + variance → z-score: how unusually loud or quiet this
+    // moment is against THIS song's own average, whatever its mix level.
     this.emaFast += (inst - this.emaFast) * Math.min(1, dtu * 3);
     this.emaSlow += (inst - this.emaSlow) * Math.min(1, dtu * 0.12);
     const dev = inst - this.emaSlow;
@@ -280,12 +284,12 @@ export class MusicPlayer {
     const z =
       (this.emaFast - this.emaSlow) / Math.max(0.012, Math.sqrt(this.emaVar));
     const sectionTarget = Math.min(1, Math.max(0, 0.5 + z * 0.3));
-    // Vào cao trào bắt nhanh, thoát thì lơi chậm — như lighting operator thật
+    // Snap into a peak fast, ease out slowly — like a real lighting operator
     this.section +=
       (sectionTarget - this.section) *
       Math.min(1, dtu * (sectionTarget > this.section ? 2.5 : 0.8));
 
-    // Spectral centroid — "trọng tâm" phổ: cao = tươi sáng, thấp = trầm tối
+    // Spectral centroid: high = bright, low = dark
     let wSum = 0;
     let mSum = 0;
     for (let i = this.loBin; i <= this.highHi; i++) {
@@ -295,8 +299,8 @@ export class MusicPlayer {
     const centroid = mSum > 1 ? wSum / mSum / (this.midHi * 2) : 0.3;
     this.centroidAvg += (centroid - this.centroidAvg) * Math.min(1, dtu * 0.5);
 
-    // === Chromagram → giọng trưởng/thứ: tín hiệu buồn/vui THẬT của hòa âm
-    // (thay vì chỉ đoán qua độ "sáng" phổ) ===
+    // === Chromagram → major/minor: the harmonic sad/happy signal, rather
+    // than guessing it from spectral brightness alone ===
     if (this.chromaMap) {
       const fc = new Array(12).fill(0);
       for (let i = 0; i < this.chromaMap.length; i++) {
@@ -310,7 +314,7 @@ export class MusicPlayer {
           this.chroma[c] +=
             (fc[c] / fsum - this.chroma[c]) * Math.min(1, dtu * 0.5);
         }
-        // So khớp với 12 giọng trưởng + 12 giọng thứ, lấy giọng khớp nhất
+        // Correlate against all 12 major + 12 minor keys, keep the best match
         let bestMaj = 0;
         let bestMin = 0;
         for (let root = 0; root < 12; root++) {
@@ -326,7 +330,7 @@ export class MusicPlayer {
         }
         const modeInst =
           bestMaj + bestMin > 0 ? bestMaj / (bestMaj + bestMin) : 0.5;
-        // Chênh lệch quanh 0.5 rất nhỏ — khuếch đại rồi làm mượt chậm ~4s
+        // The spread around 0.5 is tiny — amplify, then smooth slowly (~4s)
         const amplified = Math.min(
           1,
           Math.max(0, 0.5 + (modeInst - 0.5) * 6),
@@ -337,10 +341,10 @@ export class MusicPlayer {
 
     const bpm = 60 / this.interval;
     const tempoNorm = Math.min(1, Math.max(0, (bpm - 85) / 70));
-    // Energy = độ lớn tuyệt đối × vị thế đoạn trong bài — verse dịu, drop bùng
+    // Energy = absolute loudness × where this section sits within the song
     const absLoud = Math.min(1, inst * 2.2);
     const energyInst = Math.min(1, absLoud * (0.4 + this.section * 0.8));
-    // Valence: trưởng/thứ là tín hiệu chính, phổ sáng + tempo phụ trợ
+    // Valence: key mode is the primary signal, brightness and tempo assist
     const valenceInst = Math.min(
       1,
       this.modeMajor * 0.45 +
@@ -350,12 +354,12 @@ export class MusicPlayer {
     this.moodEnergy += (energyInst - this.moodEnergy) * Math.min(1, dtu * 0.7);
     this.moodValence +=
       (valenceInst - this.moodValence) * Math.min(1, dtu * 0.35);
-    // Lâu không bắt được onset nào (đoạn ambient/nhiễu) → giảm tin cậy beat
+    // No onset for a long while (ambient/noisy passage) → lower confidence
     if (nowT - this.lastRealOnset > 2.5) {
       this.beatConfidence = Math.max(0.25, this.beatConfidence - dtu * 0.12);
     }
 
-    // === Giai điệu: dò cao độ trội dải giọng hát/lead → nốt thăng/trầm ===
+    // === Melody: dominant pitch in the vocal/lead band → rising or falling ===
     let peakI = this.midLo;
     let peakV = 0;
     for (let i = this.midLo; i <= this.midHi; i++) {
@@ -367,7 +371,7 @@ export class MusicPlayer {
     if (peakV > 45) {
       const semi = 12 * Math.log2((peakI * this.hzPerBin) / 440) + 69;
       if (this.melodySlow === 0) this.melodyFast = this.melodySlow = semi;
-      // EMA nhanh vs chậm: hiệu của chúng = hướng giai điệu đang đi
+      // Fast vs slow EMA: their difference is the direction the melody moves
       this.melodyFast += (semi - this.melodyFast) * Math.min(1, dtu * 8);
       this.melodySlow += (semi - this.melodySlow) * Math.min(1, dtu * 1.2);
       const trend = Math.max(
@@ -377,7 +381,7 @@ export class MusicPlayer {
       this.melodyTrend += (trend - this.melodyTrend) * Math.min(1, dtu * 4);
       this.melodyLo = Math.min(this.melodyLo, this.melodyFast);
       this.melodyHi = Math.max(this.melodyHi, this.melodyFast);
-      // Dải co lại từ từ để thích ứng khi bài chuyển tông
+      // Let the range contract slowly so it adapts when the song changes key
       this.melodyLo += (this.melodyFast - this.melodyLo) * Math.min(1, dtu * 0.02);
       this.melodyHi += (this.melodyFast - this.melodyHi) * Math.min(1, dtu * 0.02);
       const range = Math.max(3, this.melodyHi - this.melodyLo);
@@ -387,8 +391,9 @@ export class MusicPlayer {
       this.melodyTrend *= Math.max(0, 1 - dtu * 2);
     }
 
-    // === Ước lượng thể loại: tempo + cân bằng bass/mid/treble + độ dày onset.
-    // Điểm số làm mượt ~4s rồi lấy max — không nhảy thể loại giữa câu nhạc ===
+    // === Genre estimate: tempo + bass/mid/treble balance + onset density.
+    // Scores are smoothed ~4s before taking the max, so the genre never flips
+    // mid-phrase ===
     this.onsetRate *= Math.max(0, 1 - dtu * 0.6);
     const bassN = Math.min(1, this.level * 2.2);
     const midN = Math.min(1, this.mid * 2.5);
@@ -410,7 +415,7 @@ export class MusicPlayer {
     }
     this.genre = best;
 
-    // Drop: bass chìm dưới mức nền >1s (break/buildup) rồi bùng vượt hẳn nền
+    // Drop: bass stays under the floor >1s (break/buildup), then bursts past it
     this.energyAvg += (bass - this.energyAvg) * 0.012;
     if (bass < Math.max(0.015, this.energyAvg * 0.8)) {
       this.quietTime += dtu;
@@ -434,16 +439,16 @@ export class MusicPlayer {
     }
 
     const gap = now - this.lastRealOnset;
-    // Onset cần năng lượng vượt nền VÀ phổ biến thiên đột ngột (flux) —
-    // tránh bass ngân dài bị đếm nhầm thành beat mới
+    // An onset needs energy above the floor AND a sudden spectral change
+    // (flux), so a long sustained bass note isn't counted as a new beat.
     const energyHit = bass > avg * this.sensitivity && bass > 0.02;
     const fluxHit =
       flux > this.fluxAvg * 1.1 || bass > avg * this.sensitivity * 1.4;
     if (energyHit && fluxHit && gap > 0.25) {
-      // Đếm mật độ onset (dùng cho ước lượng thể loại — nhạc dồn dập vs thưa)
+      // Onset density, feeding the genre estimate (busy vs sparse music)
       this.onsetRate += 0.6;
-      // Downbeat: cộng dồn năng lượng onset theo 4 pha của ô nhịp — pha nào
-      // mạnh nhất qua nhiều ô nhịp chính là phách 1 thật
+      // Downbeat: accumulate onset energy across the 4 phases of a bar; the
+      // phase that stays strongest over many bars is the real beat 1.
       for (let p = 0; p < 4; p++) this.phaseEnergy[p] *= 0.96;
       this.phaseEnergy[this.beatIndex % 4] += bass;
       let bestP = 0;
@@ -451,7 +456,7 @@ export class MusicPlayer {
         if (this.phaseEnergy[p] > this.phaseEnergy[bestP]) bestP = p;
       }
       this.barOffset = bestP;
-      // Tin cậy beat: onset rơi khớp lưới (gap ≈ bội số interval) → tăng
+      // Onsets landing on the grid (gap ≈ a multiple of interval) raise trust
       const ratio = gap / this.interval;
       const offGrid = Math.abs(ratio - Math.round(ratio));
       this.beatConfidence +=
@@ -467,30 +472,36 @@ export class MusicPlayer {
         this.lastOnset = now;
         this.beatIndex++;
       } else {
-        // Kéo grid bám sát onset thật hơn (0.35 → 0.5) để phách hình khớp
-        // đúng tiếng, không trễ lại phía sau
+        // Pull the grid harder toward the real onset (0.35 → 0.5) so the
+        // visual beat tracks the audible one instead of lagging behind.
         this.lastOnset += (now - this.lastOnset) * 0.5;
       }
     }
   }
 
-  // Bù trễ còn lại của chuỗi phân tích→hiển thị (cửa sổ FFT ~46ms + đèn ease):
-  // đẩy PHA sớm lên chút để hiệu ứng loé đúng lúc nghe thấy kick, không sau
-  // một nhịp hình. Nhỏ (~40ms) nên phần tử tức thời cũng không thấy sớm rõ.
+  // Compensates the residual analyse→render latency (~46ms FFT window plus
+  // light easing) by nudging the phase early, so a flash lands when the kick
+  // is heard rather than a frame-beat later. Small enough (~40ms) that
+  // instant elements don't read as early either.
   private static readonly BEAT_LEAD = 0.04;
   /**
-   * Bù nhịp thủ công (giây, +sớm/−trễ) — người vận hành tự canh cho khớp tiếng
-   * thực tế (bù độ trễ tuỳ máy/bài/đường stream). Chỉnh live bằng phím.
+   * Manual beat offset in seconds (+ earlier / − later). The operator dials
+   * it in against what they actually hear, covering latency that varies by
+   * machine, track and stream path. Adjustable live by key.
    */
   beatOffset = 0;
 
   getBeat(): Beat {
     const now = performance.now() / 1000;
-    let ph =
+    const ph =
       (now - this.lastOnset + MusicPlayer.BEAT_LEAD + this.beatOffset) /
       this.interval;
-    ph -= Math.floor(ph); // giữ trong [0,1) sau khi đẩy pha
-    if (ph < 0) ph += 1;
-    return { index: this.beatIndex, pulse: Math.min(0.999, ph) };
+    // The shifted phase can cross a beat boundary, so carry the whole part
+    // into index — index-gated events must stay on the same grid as pulse.
+    const shift = Math.floor(ph);
+    return {
+      index: Math.max(0, this.beatIndex + shift),
+      pulse: Math.min(0.999, ph - shift),
+    };
   }
 }

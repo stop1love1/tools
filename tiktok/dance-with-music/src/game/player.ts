@@ -42,7 +42,13 @@ export type DanceMove =
   | "clap"
   | "dip"
   | "windmill"
-  | "stomp";
+  | "stomp"
+  // Nhóm điệu meme — chất TikTok/viral, đối lại bộ điệu sàn cổ điển ở trên
+  | "griddy"
+  | "gangnam"
+  | "sprinkler"
+  | "heel-toe"
+  | "mushroom-pop";
 export const ALL_DANCE_MOVES: DanceMove[] = [
   "bounce",
   "two-step",
@@ -71,6 +77,11 @@ export const ALL_DANCE_MOVES: DanceMove[] = [
   "dip",
   "windmill",
   "stomp",
+  "griddy",
+  "gangnam",
+  "sprinkler",
+  "heel-toe",
+  "mushroom-pop",
 ];
 const DANCE_MOVES: DanceMove[] = [
   "bounce",
@@ -106,6 +117,12 @@ const DANCE_MOVES: DanceMove[] = [
   "dip",
   "windmill",
   "stomp",
+  "griddy",
+  "griddy",
+  "gangnam",
+  "sprinkler",
+  "heel-toe",
+  "mushroom-pop",
 ];
 /** Thể loại nhạc ước lượng từ phổ tần — quyết định pool điệu nhảy + chất đèn. */
 export type MusicGenre = "ballad" | "pop" | "hiphop" | "rock" | "edm";
@@ -123,14 +140,16 @@ export const GENRE_MOVES: Record<MusicGenre, DanceMove[]> = {
   hiphop: [
     "two-step", "two-step", "robot", "robot", "moonwalk", "cross-step",
     "shoulder", "bounce", "slide", "twist", "stomp", "freeze",
+    "griddy", "griddy", "griddy", "heel-toe", "heel-toe",
   ],
   rock: [
     "headbang", "headbang", "pogo", "stomp", "stomp", "windmill", "clap",
-    "hop", "headbang",
+    "hop", "headbang", "mushroom-pop",
   ],
   edm: [
     "pogo", "pogo", "shuffle", "shuffle", "hop", "double-bounce",
     "charleston", "twist", "clap", "bounce",
+    "mushroom-pop", "mushroom-pop", "heel-toe", "gangnam",
   ],
 };
 
@@ -166,6 +185,15 @@ export function grooveCurve(phase: number, peak: number): number {
   return Math.sin(Math.max(0, x) * (Math.PI / 2));
 }
 
+/** Các điệu cố ý giữ người phẳng — không cộng "pop" theo kick/snare. */
+const FLAT_MOVES: ReadonlySet<DanceMove> = new Set<DanceMove>([
+  "freeze",
+  "robot",
+  "slide",
+  "moonwalk",
+  "dip",
+]);
+
 /**
  * "Độ dữ" của mỗi điệu 0 (êm, lắc lư) .. 1 (bốc, bật nhảy). Dùng để bốc điệu
  * khớp năng lượng đoạn nhạc — verse ra điệu dịu, điệp khúc ra điệu quẩy.
@@ -199,6 +227,11 @@ const MOVE_ENERGY: Record<DanceMove, number> = {
   headbang: 0.82,
   windmill: 0.84,
   pogo: 0.92,
+  sprinkler: 0.48,
+  "heel-toe": 0.58,
+  griddy: 0.62,
+  gangnam: 0.7,
+  "mushroom-pop": 0.8,
 };
 
 /**
@@ -218,6 +251,36 @@ export function pickEnergyMove(pool: DanceMove[], target: number): DanceMove {
   }
   return best;
 }
+
+/**
+ * Độ nghiêng thân giữ suốt một nhịp của điệu. `side` = nhân theo `sideDir`
+ * (đảo dấu mỗi nhịp → lắc qua lại); không có `side` là nghiêng cố định một phía.
+ * Điệu không có mặt trong bảng thì đứng thẳng.
+ */
+const MOVE_TILT: Partial<Record<DanceMove, { v: number; side?: boolean }>> = {
+  "lean-back": { v: -0.3 },
+  freeze: { v: 0.26, side: true },
+  "two-step": { v: 0.14, side: true },
+  sway: { v: -0.12, side: true },
+  slide: { v: 0.08, side: true },
+  kick: { v: -0.1 },
+  dip: { v: -0.35 },
+  shuffle: { v: 0.1, side: true },
+  stomp: { v: 0.06, side: true },
+  griddy: { v: 0.09, side: true },
+  "heel-toe": { v: 0.07, side: true },
+  sprinkler: { v: 0.16, side: true },
+};
+
+/** Biên độ dịch ngang giữ suốt một nhịp (nhân `sideDir`, đảo mỗi nhịp). */
+const MOVE_SIDE: Partial<Record<DanceMove, number>> = {
+  "two-step": 0.95,
+  sway: 0.6,
+  slide: 1.25,
+  stomp: 0.3,
+  griddy: 0.5,
+  "heel-toe": 0.34,
+};
 
 const MOVE_BEATS: Record<DanceMove, number> = {
   bounce: 2,
@@ -248,6 +311,11 @@ const MOVE_BEATS: Record<DanceMove, number> = {
   dip: 2,
   windmill: 2,
   stomp: 2,
+  griddy: 2,
+  gangnam: 4,
+  sprinkler: 4,
+  "heel-toe": 2,
+  "mushroom-pop": 2,
 };
 
 GENRE_MOVES.pop = DANCE_MOVES;
@@ -472,15 +540,24 @@ export class Player {
     this.sprite.scale.set(BASE_H * this.currentSkin.aspect, BASE_H, 1);
   }
 
+  /**
+   * Gán texture của khung hiện tại. Tự bỏ qua khi đã đúng nên gọi mỗi frame vẫn
+   * rẻ — cần vậy vì skin ảnh meme `expand()` có thể THAY khung 0 giữa chừng
+   * (bake lại trong khung có lề), người đang cầm texture cũ phải tự bắt kịp.
+   */
   private applyFrame() {
     const frames = this.currentSkin.frames;
-    this.sprite.material.map = frames[this.frame % frames.length];
+    const map = frames[this.frame % frames.length];
+    if (this.sprite.material.map === map) return;
+    this.sprite.material.map = map;
     this.sprite.material.needsUpdate = true;
   }
 
   startDancing(ms = DANCE_START_MS) {
     const now = performance.now();
     this.danceUntil = Math.max(this.danceUntil, now + ms);
+    // Skin ảnh meme đơn: dựng vòng nhảy ngay trước khi cần dùng tới (idempotent)
+    this.currentSkin.expand?.();
   }
 
   keepDancing(extendMs = DANCE_EXTEND_MS, maxAheadMs = DANCE_MAX_AHEAD_MS) {
@@ -641,6 +718,17 @@ export class Player {
     let scaleX = 1;
     let scaleY = 1;
     let rot = 0;
+    // Chất nhịp theo thể loại: swing/lay-back, half-time, hình cung nhún.
+    const groove = GENRE_GROOVE[vibe?.genre ?? "pop"] ?? GENRE_GROOVE.pop;
+    // Lay-back: dịch pha trễ chút → đỉnh nhún rơi SAU phách (hiphop groove);
+    // edm swing=0 dính grid tuyệt đối. Pha lùi qua biên thì index lùi theo để
+    // mốc phách và pha luôn đọc trên cùng một lưới đã dịch.
+    let gpulse = beat.pulse - groove.swing;
+    let gindex = beat.index;
+    if (gpulse < 0) {
+      gpulse += 1;
+      gindex = Math.max(0, gindex - 1);
+    }
     if (dancing) {
       if (beat.index !== this.lastBeat) {
         this.lastBeat = beat.index;
@@ -689,37 +777,20 @@ export class Player {
           this.facing = -this.facing;
         }
         this.hopBoost =
-          this.move === "hop" ? 0.3 : this.move === "pogo" ? 0.45 : 0;
-        this.tiltTarget =
-          this.move === "lean-back"
-            ? -0.3
-            : this.move === "freeze"
-              ? this.sideDir * 0.26
-              : this.move === "two-step"
-                ? this.sideDir * 0.14
-                : this.move === "sway"
-                  ? -this.sideDir * 0.12
-                  : this.move === "slide"
-                    ? this.sideDir * 0.08
-                    : this.move === "kick"
-                      ? -0.1
-                      : this.move === "dip"
-                        ? -0.35
-                        : this.move === "shuffle"
-                          ? this.sideDir * 0.1
-                          : this.move === "stomp"
-                            ? this.sideDir * 0.06
-                            : 0;
-        this.sideTarget =
-          this.move === "two-step"
-            ? this.sideDir * 0.95
-            : this.move === "sway"
-              ? this.sideDir * 0.6
-              : this.move === "slide"
-                ? this.sideDir * 1.25
-                : this.move === "stomp"
-                  ? this.sideDir * 0.3
+          this.move === "hop"
+            ? 0.3
+            : this.move === "pogo"
+              ? 0.45
+              : this.move === "gangnam"
+                ? 0.28
+                : this.move === "mushroom-pop"
+                  ? 0.34
                   : 0;
+        const tilt = MOVE_TILT[this.move];
+        this.tiltTarget = tilt
+          ? tilt.v * (tilt.side ? this.sideDir : 1)
+          : 0;
+        this.sideTarget = (MOVE_SIDE[this.move] ?? 0) * this.sideDir;
         if (this.move === "grapevine") {
           // Chuỗi bước ngang 4 nhịp: bước - chụm - bước xa - lùi về
           const seq = [0.5, 1.05, 1.6, 0.75];
@@ -729,6 +800,11 @@ export class Player {
           this.sideTarget =
             this.travelDir * (0.35 + (this.moveStep % 4) * 0.45);
           this.tiltTarget = -0.16;
+        } else if (this.move === "gangnam") {
+          // Phi ngựa: hai nhịp nhảy tiến ngang, hai nhịp giậm tại chỗ rồi lặp
+          const seq = [0.45, 1.0, 0.6, 0.15];
+          this.sideTarget = this.travelDir * seq[this.moveStep % 4];
+          this.tiltTarget = this.travelDir * 0.1;
         }
         // Thi thoảng dời chỗ vài bước quanh slot — sàn có dòng người qua lại
         if (
@@ -749,25 +825,23 @@ export class Player {
       if (!this.rig) {
         const nf = this.currentSkin.frames.length;
         const fpb = 2.5 + (vibe?.intensity ?? 0.5) * 1.5;
-        const nextFrame =
+        this.frame =
           (((Math.floor((beat.index + beat.pulse) * fpb) % nf) + nf) % nf) | 0;
-        if (nextFrame !== this.frame) {
-          this.frame = nextFrame;
-          this.applyFrame();
-        }
+        this.applyFrame();
       }
 
-      // Chất nhịp theo thể loại: swing/lay-back, half-time, hình cung nhún.
-      const groove = GENRE_GROOVE[vibe?.genre ?? "pop"] ?? GENRE_GROOVE.pop;
       const conf = vibe?.beatConfidence ?? 0.5;
-      // Lay-back: dịch pha trễ chút → đỉnh nhún rơi SAU phách (hiphop groove);
-      // edm swing=0 dính grid tuyệt đối.
-      let gpulse = beat.pulse - groove.swing;
-      if (gpulse < 0) gpulse += 1;
-
+      // Ballad (timeFeel "half"): trải MỘT cung nhún qua 2 phách — thong thả,
+      // không giật từng phách. Các điệu bật đôi giữ 2 nhún/phách như cũ.
+      const doubleHop =
+        this.move === "double-bounce" ||
+        this.move === "charleston" ||
+        this.move === "pogo";
+      const halfTime = groove.timeFeel === "half" && !doubleHop;
       // Phách 1 của ô nhịp 4 nhún mạnh nhất, phách 3 vừa — tạo groove rõ rệt
+      const accentIndex = halfTime ? gindex - (gindex % 2) : gindex;
       const accent =
-        beat.index % 4 === 0 ? 1.25 : beat.index % 2 === 0 ? 1.1 : 1;
+        accentIndex % 4 === 0 ? 1.25 : accentIndex % 2 === 0 ? 1.1 : 1;
       // Nhạc buồn/êm nhún dịu lại, nhạc dữ dội quẩy hết biên độ;
       // giai điệu đang lên (nốt thăng) thì bật cao thêm chút cho tới khúc.
       // Nhịp không chắc (beatConfidence thấp) dịu biên độ lại — tránh nhún dứt
@@ -781,16 +855,10 @@ export class Player {
         (0.62 + (vibe?.intensity ?? 0.5) * 0.72) *
         (1 + (vibe?.melodyTrend ?? 0) * 0.18) *
         (0.78 + conf * 0.22);
-      // Ballad (timeFeel "half"): trải MỘT cung nhún qua 2 phách — thong thả,
-      // không giật từng phách. Các điệu bật đôi giữ 2 nhún/phách như cũ.
-      const doubleHop =
-        this.move === "double-bounce" ||
-        this.move === "charleston" ||
-        this.move === "pogo";
       const hopPhase = doubleHop
         ? Math.min(1, (gpulse % 0.5) * 3.4)
-        : groove.timeFeel === "half"
-          ? Math.min(1, (((beat.index % 2) + gpulse) / 2) * 1.4)
+        : halfTime
+          ? Math.min(1, (((gindex % 2) + gpulse) / 2) * 1.4)
           : Math.min(1, gpulse * 1.7);
       // Hình cung nhún lệch đỉnh theo thể loại: edm attack sắc, ballad mềm muộn.
       y = grooveCurve(hopPhase, groove.peak) * amp;
@@ -847,6 +915,28 @@ export class Player {
         y = amp * Math.max(0, 1 - beat.pulse * 2.2) * 0.9;
         scaleY = 1 - 0.1 * Math.max(0, 1 - beat.pulse * 3);
         scaleX = 1 + 0.07 * Math.max(0, 1 - beat.pulse * 3);
+      } else if (this.move === "griddy") {
+        // Gót chân đảo gấp đôi nhịp, thân giữ thấp — sức nằm ở chân chứ không bật
+        y *= 0.5;
+        scaleY = 1 - 0.05 * Math.abs(Math.sin(beat.pulse * Math.PI * 2));
+      } else if (this.move === "heel-toe") {
+        // Gót–mũi đổi chân rất nhanh: 4 lần mỗi phách, người gần như đứng yên
+        y *= 0.4;
+        scaleY = 1 - 0.04 * Math.abs(Math.sin(beat.pulse * Math.PI * 4));
+      } else if (this.move === "gangnam") {
+        // Phi ngựa: bật nảy đều, người hơi giãn khi bay
+        scaleY = 1 + 0.07 * Math.sin(hopPhase * Math.PI);
+        scaleX = 1 - 0.05 * Math.sin(hopPhase * Math.PI);
+      } else if (this.move === "sprinkler") {
+        // Tay quét vòng, thân chỉ đưa nhẹ theo
+        y *= 0.55;
+      } else if (this.move === "mushroom-pop") {
+        // Nấm bung: nén sát đất cuối nhịp rồi BUNG to đúng phách
+        const punch = Math.max(0, 1 - beat.pulse * 3.2);
+        const squat = Math.max(0, beat.pulse - 0.62) * 2.6;
+        y = amp * (0.25 + punch * 0.85) - amp * squat * 0.35;
+        scaleY = 1 + 0.16 * punch - 0.13 * squat;
+        scaleX = 1 - 0.11 * punch + 0.1 * squat;
       }
       if (this.move === "cross-step") {
         this.sideTarget =
@@ -867,6 +957,19 @@ export class Player {
       } else if (this.move === "robot") {
         const step = Math.floor(beat.pulse * 4) % 4;
         this.sideTarget = (step === 1 || step === 2 ? 0.3 : 0) * this.sideDir;
+      } else if (this.move === "griddy") {
+        // Đảo chân qua lại gấp đôi nhịp quanh vị trí bước đã chốt đầu nhịp
+        this.sideTarget =
+          (MOVE_SIDE.griddy! + Math.sin(beat.pulse * Math.PI * 4) * 0.3) *
+          this.sideDir;
+      } else if (this.move === "heel-toe") {
+        this.sideTarget =
+          (MOVE_SIDE["heel-toe"]! +
+            Math.sin(beat.pulse * Math.PI * 8) * 0.16) *
+          this.sideDir;
+      } else if (this.move === "sprinkler") {
+        this.sideTarget =
+          Math.sin(beat.pulse * Math.PI * 0.5) * 0.45 * this.sideDir;
       }
 
       this.tilt += (this.tiltTarget - this.tilt) * Math.min(1, dt * 10);
@@ -910,6 +1013,18 @@ export class Player {
         rot = this.tilt + Math.sin(beat.pulse * Math.PI * 2) * 0.34 * this.sideDir;
       } else if (this.move === "stomp") {
         rot = this.tilt + Math.max(0, 1 - beat.pulse * 3) * 0.08 * this.sideDir;
+      } else if (this.move === "griddy") {
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 4) * 0.09;
+      } else if (this.move === "heel-toe") {
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 8) * 0.05;
+      } else if (this.move === "gangnam") {
+        // Lắc theo cú nhảy ngựa, nghiêng về hướng đang tiến
+        rot = this.tilt + Math.sin(beat.pulse * Math.PI * 2) * 0.12 * this.travelDir;
+      } else if (this.move === "sprinkler") {
+        // Thân xoay giật theo tay quét: quét ra chậm, giật về nhanh
+        rot = this.tilt + (beat.pulse < 0.75 ? beat.pulse * 0.4 : (1 - beat.pulse) * 1.2) * this.sideDir;
+      } else if (this.move === "mushroom-pop") {
+        rot = this.tilt + Math.max(0, 1 - beat.pulse * 3.2) * 0.1 * this.sideDir;
       } else {
         rot = this.tilt + Math.sin(Math.PI * 2 * beat.pulse + this.phase) * 0.06;
       }
@@ -925,15 +1040,15 @@ export class Player {
         // thêm (không nhân vào cung nhún) để không xẹp giữa nhịp.
         const sound = beat.index % 2 === 1 ? vibe.snare : vibe.kick;
         const pop = Math.max(0, 1 - beat.pulse * (2.4 + conf * 2.2));
-        y += pop * sound * (0.18 + conf * 0.16) * groove.bob * this.ampScale;
+        if (!FLAT_MOVES.has(this.move)) {
+          y += pop * sound * (0.18 + conf * 0.16) * groove.bob * this.ampScale;
+        }
       }
       this.sideOffset +=
         (this.sideTarget - this.sideOffset) * Math.min(1, dt * 7);
     } else {
-      if (this.frame !== 0) {
-        this.frame = 0;
-        this.applyFrame();
-      }
+      this.frame = 0;
+      this.applyFrame();
       this.lastBeat = -1;
       this.moveBeatsLeft = 0;
       y = (Math.sin(t * 1.6 + this.phase) * 0.5 + 0.5) * 0.04;
@@ -958,8 +1073,8 @@ export class Player {
       // phẳng đã ẩn. Vị trí/độ nảy của cả nhóm vẫn do phần dưới xử lý như cũ.
       this.rig.update(dt, {
         move: this.move,
-        pulse: beat.pulse,
-        beatIndex: beat.index,
+        pulse: gpulse,
+        beatIndex: gindex,
         intensity: vibe?.intensity ?? 0.5,
         genre: vibe?.genre ?? "pop",
         facing: dancing ? this.facing : 1,

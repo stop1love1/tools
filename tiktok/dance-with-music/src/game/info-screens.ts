@@ -3,11 +3,12 @@ import * as THREE from "three";
 export type InfoTrack = { title: string; thumb?: string };
 
 /**
- * Hai màn hình LED ở khu FOH sau khán đài:
- * - Trái: "đang phát" — ảnh bìa + tên bài + thanh tiến độ (thay cho iframe,
- *   vì WebGL không nhúng được iframe và tránh phát chồng tiếng).
- * - Phải: playlist — danh sách bài, bài đang phát sáng lên.
- * Nội dung vẽ bằng CanvasTexture, cập nhật khi dữ liệu đổi + tiến độ ~2fps.
+ * Two LED screens at the FOH desk behind the crowd:
+ * - Left: now playing — cover art, title and progress bar. An iframe is not an
+ *   option here: WebGL can't embed one, and it would double up the audio.
+ * - Right: the playlist, with the current track highlighted.
+ * Both are drawn to a CanvasTexture, redrawn on data changes and ~2fps for
+ * progress.
  */
 export class InfoScreens {
   readonly group = new THREE.Group();
@@ -51,8 +52,9 @@ export class InfoScreens {
       emissiveIntensity: 0.4,
     });
 
-    // Hai màn hình trên bàn FOH: trái ngang "đang phát", phải dọc "playlist".
-    // Hai mặt (DoubleSide) để đọc được từ cả phía sau lẫn các góc chếch.
+    // Two screens on the FOH desk: landscape "now playing" on the left,
+    // portrait "playlist" on the right. DoubleSide so they stay readable from
+    // behind and from oblique angles.
     const left = this.makePanel(3.0, 1.8, this.nowTex, bezelMat);
     left.position.set(-2.0, 2.7, centerZ);
     left.rotation.x = -0.22;
@@ -93,7 +95,7 @@ export class InfoScreens {
       this.thumbImg = null;
       if (t) {
         const img = new Image();
-        // Cần CORS để không "làm bẩn" canvas (WebGL sẽ từ chối texture bẩn)
+        // CORS is required or the canvas is tainted and WebGL rejects the texture
         img.crossOrigin = "anonymous";
         img.onload = () => {
           if (this.thumbUrl === t) {
@@ -114,7 +116,7 @@ export class InfoScreens {
     this.drawList();
   }
 
-  /** Gọi mỗi frame — cập nhật thanh tiến độ, tự giới hạn ~2fps cho nhẹ. */
+  /** Call every frame; refreshes the progress bar, self-limited to ~2fps. */
   update(dt: number, progress: { time: number; duration: number } | null) {
     this.time = progress?.time ?? 0;
     this.duration = progress?.duration ?? 0;
@@ -135,7 +137,7 @@ export class InfoScreens {
     c.fillStyle = g;
     c.fillRect(0, 0, W, H);
 
-    // Ảnh bìa bên trái (khung 16:9)
+    // Cover art on the left, in a 16:9 frame
     const thumbW = 300;
     const thumbH = 169;
     const tx = 28;
@@ -172,19 +174,19 @@ export class InfoScreens {
       c.fillText("♪", tx + thumbW / 2, ty + thumbH / 2);
     }
 
-    // Nhãn "ĐANG PHÁT"
+    // "Now playing" label
     c.textAlign = "left";
     c.textBaseline = "alphabetic";
     c.fillStyle = "#fe2c55";
     c.font = "700 26px system-ui, sans-serif";
     c.fillText("● ĐANG PHÁT", 352, 66);
 
-    // Tên bài (bọc 2 dòng)
+    // Track title, wrapped to 2 lines
     c.fillStyle = "#ffffff";
     c.font = "700 34px system-ui, sans-serif";
     this.wrapText(c, this.nowTitle || "—", 352, 112, 258, 40, 2);
 
-    // Thanh tiến độ
+    // Progress bar
     const barX = 28;
     const barY = 280;
     const barW = W - 56;
@@ -224,7 +226,7 @@ export class InfoScreens {
     const rowH = 46;
     const top = 78;
     const maxRows = Math.floor((H - top) / rowH);
-    // Cuộn để bài đang phát luôn trong khung
+    // Scroll so the current track stays in view
     let start = 0;
     if (this.current >= 0 && this.items.length > maxRows) {
       start = Math.min(
@@ -273,7 +275,7 @@ export class InfoScreens {
         line = words[i];
         lines++;
         if (lines >= maxLines - 1) {
-          // Dòng cuối: cắt "…" nếu còn dư
+          // Last line: ellipsize if there's more text than fits
           let rest = words.slice(i).join(" ");
           rest = this.ellipsis(c, rest, maxW);
           c.fillText(rest, x, y + lines * lineH);
