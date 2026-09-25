@@ -1,0 +1,12 @@
+{
+  "name": "jira-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local dashboard for my Jira issues and their Confluence docs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

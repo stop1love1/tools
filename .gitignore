@@ -14,6 +14,8 @@ dist/
 .env.*
 !.env.example
 *.local
+.oauth.json
+.oauth.json.tmp
 
 # Logs
 *.log

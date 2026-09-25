@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jira của tôi</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 10h14M9 16h10M9 22h6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="bar">
+        <div class="brand">
+          <span class="logo" aria-hidden="true"></span>
+          <h1>Jira của tôi</h1>
+        </div>
+        <input id="search" type="search" placeholder="Tìm key, tiêu đề, parent… ( / )" aria-label="Tìm kiếm" />
+        <div class="bar-actions">
+          <select id="user-filter" aria-label="Xem task của" title="Xem task của ai"><option value="">Của tôi</option></select>
+          <select id="preset" aria-label="Bộ lọc có sẵn"></select>
+          <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Sửa JQL" aria-label="Sửa JQL"></button>
+          <div class="seg icons" id="views" role="tablist">
+            <button data-view="list" role="tab" title="Danh sách task" aria-label="Danh sách task"></button>
+            <button data-view="docs" role="tab" title="Tài liệu Confluence & file đính kèm" aria-label="Tài liệu"></button>
+          </div>
+        </div>
+        <div class="bar-icons">
+          <a class="icon-btn outline accent" id="login" href="/oauth/login" hidden></a>
+          <button class="icon-btn outline bell" id="bell" title="Thông báo" aria-label="Thông báo" aria-expanded="false" aria-controls="notif">
+            <span class="bell-badge" id="bell-badge" hidden></span>
+          </button>
+          <button class="icon-btn outline" id="refresh" title="Tải lại (R)" aria-label="Tải lại"></button>
+        </div>
+      </div>
+      <div class="jql-row" id="jql-row" hidden>
+        <input id="jql" class="mono" spellcheck="false" aria-label="JQL" placeholder="JQL…" />
+        <button class="btn primary" id="apply">Áp dụng</button>
+      </div>
+    </header>
+
+    <section class="subbar">
+      <div class="pills" id="stats" aria-label="Lọc theo trạng thái"></div>
+      <select id="type-filter" aria-label="Lọc theo loại"></select>
+      <span class="muted small bar-meta" id="meta">Đang kết nối…</span>
+    </section>
+
+    <section class="progress-strip" id="progress-strip" aria-label="Tiến độ"></section>
+
+    <section class="focus" id="focus" aria-label="Cần xử lý gấp"></section>
+
+    <main id="main"></main>
+
+    <div class="notif-panel" id="notif" role="dialog" aria-label="Thông báo" hidden></div>
+    <aside class="drawer" id="drawer" aria-hidden="true"></aside>
+    <div class="scrim" id="scrim" hidden></div>
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
