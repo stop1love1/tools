@@ -896,7 +896,7 @@ main {
 .row,
 .list-head {
   display: grid;
-  grid-template-columns: 100px minmax(240px, 2fr) 56px 136px 84px 76px 92px 28px;
+  grid-template-columns: 140px minmax(240px, 2fr) 56px 168px 84px 76px 92px 28px;
   grid-template-areas: 'key sum assignee status prio docs upd act';
   align-items: center;
   gap: 2px 10px;
@@ -964,6 +964,7 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1 1 auto;
 }
 .c-sum .reason {
   flex: 0 0 auto;
@@ -1002,7 +1003,7 @@ main {
 
 .group {
   display: grid;
-  grid-template-columns: 100px minmax(240px, 2fr) 56px 136px 84px 76px 92px 28px;
+  grid-template-columns: 140px minmax(240px, 2fr) 56px 168px 84px 76px 92px 28px;
   grid-template-areas: 'key sum assignee status prio docs upd act';
   align-items: center;
   gap: 2px 10px;
@@ -1018,6 +1019,13 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
+}
+.group .c-key .key {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .group .fold-icon {
   flex-shrink: 0;
@@ -1051,6 +1059,10 @@ main {
 }
 .group-title {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
 }
 
 /* ---------- docs ---------- */
@@ -1526,19 +1538,6 @@ iframe.desc {
 .recent-panel[hidden] {
   display: none;
 }
-.sp-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  margin-left: 4px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 600;
-  border-radius: 4px;
-  letter-spacing: 0.01em;
-}
 .notif-head {
   display: flex;
   align-items: center;
@@ -1642,7 +1641,7 @@ iframe.desc {
   .row,
   .list-head,
   .group {
-    grid-template-columns: 124px minmax(0, 1fr) 132px 76px 88px 28px;
+    grid-template-columns: 140px minmax(0, 1fr) 160px 76px 88px 28px;
     grid-template-areas: 'key sum status docs upd act';
   }
   .c-prio,

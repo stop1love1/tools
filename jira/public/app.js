@@ -87,11 +87,11 @@ async function api(path, opts = {}) {
 // State
 
 const PRESETS = [
-  { label: 'Đang làm + mới xong', jql: '' },
-  { label: 'Chưa xong', jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC' },
-  { label: 'Cập nhật 7 ngày', jql: 'assignee = currentUser() AND updated >= -7d ORDER BY updated DESC' },
-  { label: 'Tất cả (90 ngày)', jql: 'assignee = currentUser() AND updated >= -90d ORDER BY updated DESC' },
-  { label: 'Tôi tạo, chưa xong', jql: 'reporter = currentUser() AND statusCategory != Done ORDER BY updated DESC' },
+  { label: 'In progress + recently done', jql: '' },
+  { label: 'Not done', jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC' },
+  { label: 'Updated in last 7 days', jql: 'assignee = currentUser() AND updated >= -7d ORDER BY updated DESC' },
+  { label: 'All (90 days)', jql: 'assignee = currentUser() AND updated >= -90d ORDER BY updated DESC' },
+  { label: 'Created by me, not done', jql: 'reporter = currentUser() AND statusCategory != Done ORDER BY updated DESC' },
 ];
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
@@ -159,7 +159,7 @@ const rank = (name) => {
 function tone(status) {
   if (!status) return 'new';
   if (status.category === 'done') {
-    // Phân biệt Done thật vs Cancelled/Rejected
+    // Distinguish real Done vs Cancelled/Rejected
     if (/cancel|hủy|huỷ|reject|won.?t|invalid|duplicate/i.test(status.name)) return 'void';
     return 'done';
   }
@@ -194,11 +194,11 @@ const PRIO = { highest: '⇈', high: '↑', medium: '=', low: '↓', lowest: '�
 const prio = (p) => {
   if (!p) return null;
   const k = p.toLowerCase();
-  return h('span', { class: `prio p-${k}`, title: `Ưu tiên: ${p}` }, PRIO[k] || '•');
+  return h('span', { class: `prio p-${k}`, title: `Priority: ${p}` }, PRIO[k] || '•');
 };
 
 const assigneeAvatar = (assignee) => {
-  if (!assignee) return h('span', { class: 'assignee-empty', title: 'Chưa phân công' }, '—');
+  if (!assignee) return h('span', { class: 'assignee-empty', title: 'Unassigned' }, '—');
   const displayName = assignee.displayName || assignee;
   const initials = displayName
     .split(/\s+/)
@@ -210,7 +210,7 @@ const assigneeAvatar = (assignee) => {
   return h('span', { class: 'assignee-avatar', title: displayName }, initials);
 };
 
-const rtf = new Intl.RelativeTimeFormat('vi', { numeric: 'auto' });
+const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 function rel(iso) {
   if (!iso) return '';
   const diff = (new Date(iso).getTime() - Date.now()) / 1000;
@@ -223,8 +223,8 @@ function rel(iso) {
   }
   return '';
 }
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
-const fmtDay = (day) => (day ? new Date(day + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : '—');
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+const fmtDay = (day) => (day ? new Date(day + 'T00:00:00').toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' }) : '—');
 const fmtSize = (b) => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
 
 function shortUrl(url) {
@@ -253,19 +253,19 @@ function urgency(i) {
   if (i.status.category === 'done') return { score: -1, reasons, level: null };
   if (i.due) {
     const d = dayDiff(i.due);
-    if (d < 0) (score += 100), reasons.push({ level: 'danger', label: `Quá hạn ${-d} ngày` });
-    else if (d === 0) (score += 80), reasons.push({ level: 'danger', label: 'Hạn hôm nay' });
-    else if (d <= 3) (score += 50), reasons.push({ level: 'warn', label: `Còn ${d} ngày` });
-    else if (d <= 7) (score += 15), reasons.push({ level: 'info', label: `Hạn ${fmtDay(i.due)}` });
+    if (d < 0) (score += 100), reasons.push({ level: 'danger', label: `${-d}d overdue` });
+    else if (d === 0) (score += 80), reasons.push({ level: 'danger', label: 'Due today' });
+    else if (d <= 3) (score += 50), reasons.push({ level: 'warn', label: `${d}d left` });
+    else if (d <= 7) (score += 15), reasons.push({ level: 'info', label: `Due ${fmtDay(i.due)}` });
   }
   const p = (i.priority || '').toLowerCase();
-  if (/highest|blocker|critical|urgent/.test(p)) (score += 60), reasons.push({ level: 'danger', label: `Ưu tiên ${i.priority}` });
+  if (/highest|blocker|critical|urgent/.test(p)) (score += 60), reasons.push({ level: 'danger', label: `Priority ${i.priority}` });
   else if (/high|major/.test(p)) score += 35;
-  if (i.labels.some((l) => /hotfix|urgent|gấp|gap|asap|blocker/i.test(l))) (score += 40), reasons.push({ level: 'warn', label: 'Nhãn gấp' });
+  if (i.labels.some((l) => /hotfix|urgent|gấp|gap|asap|blocker/i.test(l))) (score += 40), reasons.push({ level: 'warn', label: 'Urgent label' });
   const t = tone(i.status);
   score += t === 'prog' ? 8 : t === 'review' ? 4 : 0;
   const idle = Math.floor((Date.now() - Date.parse(i.updated)) / 86400000);
-  if (t === 'prog' && idle >= 7) (score += 5), reasons.push({ level: 'info', label: `${idle} ngày chưa cập nhật` });
+  if (t === 'prog' && idle >= 7) (score += 5), reasons.push({ level: 'info', label: `${idle}d since update` });
   const level = reasons.some((r) => r.level === 'danger') ? 'danger' : reasons.some((r) => r.level === 'warn') ? 'warn' : null;
   return { score, reasons, level };
 }
@@ -293,7 +293,7 @@ function dueBadge(i) {
   if (!i.due || i.status.category === 'done') return null;
   const d = dayDiff(i.due);
   const lvl = d <= 0 ? 'danger' : d <= 3 ? 'warn' : 'info';
-  return h('span', { class: `reason r-${lvl}`, title: `Hạn: ${fmtDay(i.due)}` }, d < 0 ? `Quá hạn ${-d}n` : d === 0 ? 'Hôm nay' : `Hạn ${fmtDay(i.due)}`);
+  return h('span', { class: `reason r-${lvl}`, title: `Due: ${fmtDay(i.due)}` }, d < 0 ? `${-d}d overdue` : d === 0 ? 'Today' : `Due ${fmtDay(i.due)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -318,18 +318,18 @@ function issueMarkdown(i, d) {
   const L = [
     `## ${i.key}: ${i.summary}`,
     `- Jira: ${i.url}`,
-    `- Trạng thái: ${i.status.name} · Loại: ${i.type.name} · Ưu tiên: ${i.priority || '—'}${i.due ? ` · Hạn: ${i.due}` : ''}`,
+    `- Status: ${i.status.name} · Type: ${i.type.name} · Priority: ${i.priority || '—'}${i.due ? ` · Due: ${i.due}` : ''}`,
   ];
   const reasons = urgency(i).reasons;
-  if (reasons.length) L.push(`- Cần chú ý: ${reasons.map((r) => r.label).join(', ')}`);
+  if (reasons.length) L.push(`- Needs attention: ${reasons.map((r) => r.label).join(', ')}`);
   if (i.parent) L.push(`- Parent: ${i.parent.key} ${i.parent.summary} — ${site}/browse/${i.parent.key}`);
   const allDocs = [...docs, ...extraDocs.filter((x) => !docs.some((y) => (y.pageId || y.url) === (x.pageId || x.url)))];
   if (allDocs.length) {
-    L.push('- Tài liệu Confluence:');
+    L.push('- Confluence docs:');
     for (const x of allDocs) L.push(`  - ${docTitle(x)}: ${x.url}`);
   }
   if (i.attachments.length) {
-    L.push('- File đính kèm:');
+    L.push('- Attachments:');
     for (const a of i.attachments) L.push(`  - ${a.filename}: ${a.url}`);
   }
   if (d) {
@@ -343,9 +343,9 @@ function issueMarkdown(i, d) {
       for (const c of d.children) L.push(`  - ${c.key} [${c.status?.name || ''}] ${c.summary} — ${site}/browse/${c.key}`);
     }
     const desc = htmlToText(d.descriptionHtml, site);
-    if (desc) L.push('', '### Mô tả', desc);
+    if (desc) L.push('', '### Description', desc);
     if (d.comments.length) {
-      L.push('', '### Bình luận');
+      L.push('', '### Comments');
       for (const c of d.comments) L.push(`- ${c.author} (${fmtDate(c.created)}): ${htmlToText(c.html, site).replace(/\s*\n\s*/g, ' ')}`);
     }
   }
@@ -367,7 +367,7 @@ async function copyText(text, message) {
 }
 
 const claudePrompt = (i, d) =>
-  `Đọc task Jira dưới đây (dùng Atlassian MCP để xem chi tiết và các tài liệu Confluence liên quan):\n\n${issueMarkdown(i, d)}`.slice(0, 11_000);
+  `Read the Jira task below (use Atlassian MCP to view details and related Confluence docs):\n\n${issueMarkdown(i, d)}`.slice(0, 11_000);
 
 // Opens a new Claude Code tab in Cursor with the task prefilled. An already-open session can't take a
 // prompt from outside, so the same text also goes to the clipboard for pasting there.
@@ -380,9 +380,9 @@ async function sendToClaude(i, d) {
   }
   try {
     await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt }) });
-    toast(`Đã mở ${i.key} trong Claude Code (Cursor). Nội dung cũng đã được copy để dán vào phiên đang mở.`);
+    toast(`Opened ${i.key} in Claude Code (Cursor). Content also copied to paste into the open session.`);
   } catch (e) {
-    toast(`Không mở được Claude Code: ${e.message}. Nội dung đã được copy — dán thủ công.`, 'error');
+    toast(`Failed to open Claude Code: ${e.message}. Content copied — paste manually.`, 'error');
   }
 }
 
@@ -391,8 +391,8 @@ function claudeButton(i) {
     'button',
     {
       class: 'icon-btn sm claude-btn',
-      title: 'Mở trong Claude Code (Cursor) — tab mới với task điền sẵn, đồng thời copy nội dung',
-      'aria-label': `Mở ${i.key} trong Claude Code`,
+      title: 'Open in Claude Code (Cursor) — new tab with task prefilled, copy content at the same time',
+      'aria-label': `Open ${i.key} in Claude Code`,
       onClick: (e) => {
         e.stopPropagation();
         sendToClaude(i);
@@ -425,7 +425,7 @@ async function load({ silent = false } = {}) {
     if (!state.jql) $('#jql').value = data.defaultJql;
     if (state.openKey) state.openIssue = state.issues.find((i) => i.key === state.openKey) || state.openIssue;
   } catch (e) {
-    if (silent && state.issues.length) toast(`Không tải lại được: ${e.message}`, 'error');
+    if (silent && state.issues.length) toast(`Failed to reload: ${e.message}`, 'error');
     else (state.error = e.message), (state.errorLogin = e.login);
   } finally {
     state.loading = false;
@@ -468,7 +468,7 @@ async function transition(issue, t) {
   } catch (e) {
     issue.status = prev;
     recentlyTransitioned.delete(issue.key);
-    toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url, label: 'Mở trên Jira' });
+    toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url, label: 'Open in Jira' });
   } finally {
     issue.pending = false;
     cache.transitions.delete(issue.key);
@@ -523,10 +523,10 @@ function renderProgress() {
   const counted = base.length - cancelled;
   const pct = counted ? Math.round((done / counted) * 100) : 0;
   const parts = [
-    ['done', 'Hoàn thành', done],
-    ['prog', 'Đang làm', doing],
-    ['new', 'Chưa làm', todo],
-    ['void', 'Đã huỷ', cancelled],
+    ['done', 'Done', done],
+    ['prog', 'In progress', doing],
+    ['new', 'To do', todo],
+    ['void', 'Cancelled', cancelled],
   ].filter((p) => p[2] > 0);
   
   // Story Points calculation
@@ -536,9 +536,9 @@ function renderProgress() {
   const todoSP = totalSP - doneSP - doingSP;
   const spPct = totalSP ? Math.round((doneSP / totalSP) * 100) : 0;
   const spParts = [
-    ['done', 'Đã xong', doneSP],
-    ['prog', 'Đang làm', doingSP],
-    ['new', 'Chưa làm', todoSP],
+    ['done', 'Done', doneSP],
+    ['prog', 'In progress', doingSP],
+    ['new', 'To do', todoSP],
   ].filter((p) => p[2] > 0);
   
   const cards = [
@@ -548,10 +548,10 @@ function renderProgress() {
       h(
         'div',
         { class: 'progress-top' },
-        h('span', { class: 'progress-title' }, h('b', null, `${done}/${counted}`), ' hoàn thành', h('span', { class: 'pct' }, `${pct}%`)),
+        h('span', { class: 'progress-title' }, h('b', null, `${done}/${counted}`), ' done', h('span', { class: 'pct' }, `${pct}%`)),
         h(
           'div',
-          { class: 'track', role: 'img', 'aria-label': parts.map(([, label, n]) => `${label} ${n}`).join(', ') + ` trên tổng ${base.length}` },
+          { class: 'track', role: 'img', 'aria-label': parts.map(([, label, n]) => `${label} ${n}`).join(', ') + ` out of ${base.length}` },
           parts.map(([tone, label, n]) => h('span', { class: `seg seg-${tone}`, style: `width:${(n / base.length) * 100}%`, title: `${label}: ${n}` })),
         ),
       ),
@@ -614,7 +614,7 @@ function renderBell() {
   badge.hidden = !unread;
   badge.textContent = unread > 99 ? '99+' : String(unread);
   const bell = $('#bell');
-  if (bell) bell.title = unread ? `${unread} thông báo mới` : 'Thông báo';
+  if (bell) bell.title = unread ? `${unread} new notifications` : 'Notifications';
 }
 
 function toggleNotif(force) {
@@ -691,7 +691,7 @@ function renderRecentPanel() {
 
 function renderNotifPanel() {
   const n = state.notif;
-  // "Nguyễn Phương Anh - ANHNP103" / "Cù Huy Toàn (VSF-…)" → drop the employee-code suffix first.
+  // "First Last - CODE123" / "First Last (DEPT-…)" → drop the employee-code suffix first.
   const initials = (name) =>
     name
       .split(/\s+[-(]/)[0]
@@ -701,7 +701,7 @@ function renderNotifPanel() {
       .map((w) => w[0])
       .join('')
       .toUpperCase() || '?';
-  const verb = (e) => (e.kind === 'comment' ? (e.mention ? 'nhắc đến bạn trong bình luận' : 'bình luận') : e.text);
+  const verb = (e) => (e.kind === 'comment' ? (e.mention ? 'mentioned you in a comment' : 'commented') : e.text);
   const item = (e) =>
     h(
       'button',
@@ -716,7 +716,7 @@ function renderNotifPanel() {
       h(
         'span',
         { class: 'notif-body' },
-        h('span', { class: 'notif-line' }, h('b', null, e.author || 'Ai đó'), ' ', verb(e)),
+        h('span', { class: 'notif-line' }, h('b', null, e.author || 'Someone'), ' ', verb(e)),
         e.kind === 'comment' && e.text && h('span', { class: 'notif-quote' }, e.text),
         h('span', { class: 'notif-issue' }, typeBadge(e.issue.type), h('span', { class: 'key' }, e.issue.key), h('span', { class: 'notif-sum' }, e.issue.summary)),
         h('span', { class: 'muted small', title: fmtDate(e.at) }, rel(e.at)),
@@ -726,22 +726,22 @@ function renderNotifPanel() {
     h(
       'div',
       { class: 'notif-head' },
-      h('b', null, 'Thông báo'),
-      h('span', { class: 'muted small' }, `${n.days} ngày qua · task bạn làm, tạo hoặc theo dõi`),
+      h('b', null, 'Notifications'),
+      h('span', { class: 'muted small' }, `Last ${n.days} days · tasks you work on, created or watch`),
       h('span', { class: 'spacer' }),
-      h('button', { class: 'icon-btn sm', title: 'Tải lại thông báo', onClick: () => loadNotifications({ fresh: true }) }, icon('refresh')),
-      h('button', { class: 'icon-btn sm', title: 'Đóng', onClick: () => toggleNotif(false) }, icon('x')),
+      h('button', { class: 'icon-btn sm', title: 'Reload notifications', onClick: () => loadNotifications({ fresh: true }) }, icon('refresh')),
+      h('button', { class: 'icon-btn sm', title: 'Close', onClick: () => toggleNotif(false) }, icon('x')),
     ),
     h(
       'div',
       { class: 'notif-list' },
       !n.loaded
-        ? h('div', { class: 'notif-empty' }, 'Đang tải…')
+        ? h('div', { class: 'notif-empty' }, 'Loading…')
         : n.error
           ? h('div', { class: 'notif-empty err' }, n.error)
           : n.events.length
             ? n.events.map(item)
-            : h('div', { class: 'notif-empty' }, 'Không có hoạt động mới từ người khác.'),
+            : h('div', { class: 'notif-empty' }, 'No new activity from others.'),
     ),
   );
 }
@@ -764,15 +764,15 @@ function render() {
       h(
         'div',
         { class: 'error-box' },
-        h('div', null, h('strong', null, 'Không tải được dữ liệu. '), state.error),
-        state.errorLogin && h('a', { class: 'btn primary', href: '/oauth/login' }, 'Đăng nhập Atlassian'),
+        h('div', null, h('strong', null, 'Failed to load data. '), state.error),
+        state.errorLogin && h('a', { class: 'btn primary', href: '/oauth/login' }, 'Sign in to Atlassian'),
       ),
     );
     return;
   }
   if (!state.fetchedAt) return;
   if (!state.issues.length) {
-    main.replaceChildren(h('div', { class: 'empty-state' }, 'Không có task nào khớp JQL này.'));
+    main.replaceChildren(h('div', { class: 'empty-state' }, 'No tasks match this JQL.'));
     return;
   }
   main.replaceChildren(state.view === 'docs' ? renderDocs(list) : renderList(list));
@@ -783,12 +783,12 @@ function renderMeta() {
   const parts = [];
   if (state.me) {
     parts.push(state.me.name);
-    if (state.me.auth.source === 'own') parts.push('tự refresh token');
+    if (state.me.auth.source === 'own') parts.push('own refresh token');
     else if (state.me.auth.expiresAt) {
-      parts.push(`token Claude Code hết hạn ${new Date(state.me.auth.expiresAt).toLocaleString('vi-VN', { timeStyle: 'short', dateStyle: 'short' })}`);
+      parts.push(`Claude Code token expires ${new Date(state.me.auth.expiresAt).toLocaleString('en-US', { timeStyle: 'short', dateStyle: 'short' })}`);
     }
   }
-  if (state.fetchedAt) parts.push(`cập nhật ${state.fetchedAt.toLocaleTimeString('vi-VN', { timeStyle: 'short' })}`);
+  if (state.fetchedAt) parts.push(`updated ${state.fetchedAt.toLocaleTimeString('en-US', { timeStyle: 'short' })}`);
   
   // Set tooltip on login button
   const login = $('#login');
@@ -803,7 +803,7 @@ function renderTypes() {
   if (state.type !== 'all' && !counts.has(state.type)) state.type = 'all';
   const select = $('#type-filter');
   select.replaceChildren(
-    h('option', { value: 'all' }, `Mọi loại (${state.issues.length})`),
+    h('option', { value: 'all' }, `All types (${state.issues.length})`),
     ...[...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => h('option', { value: name }, `${name} (${n})`)),
   );
   select.value = state.type;
@@ -831,7 +831,7 @@ function renderSprints() {
     if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
   }
   select.replaceChildren(
-    h('option', { value: '' }, 'Mọi sprint'),
+    h('option', { value: '' }, 'All sprints'),
     ...sorted.map((s) => 
       h('option', { value: s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''} (${counts.get(s.id) || 0})`)
     ),
@@ -861,9 +861,9 @@ function renderFocus() {
     h(
       'div',
       { class: 'focus-head' },
-      h('h2', null, icon('flame'), 'Cần xử lý gấp'),
+      h('h2', null, icon('flame'), 'Urgent attention'),
       h('span', { class: `count ${urgent.length ? 'hot' : ''}` }, urgent.length),
-      h('span', { class: 'muted small' }, 'Quá hạn, sắp đến hạn (≤ 3 ngày), ưu tiên High trở lên hoặc có nhãn gấp'),
+      h('span', { class: 'muted small' }, 'Overdue, due soon (≤ 3 days), High priority or above, or has urgent label'),
     ),
     urgent.length
       ? h(
@@ -881,10 +881,10 @@ function renderFocus() {
                   render();
                 },
               },
-              `Xem tất cả ${urgent.length} task gấp →`,
+              `View all ${urgent.length} urgent tasks →`,
             ),
         )
-      : h('div', { class: 'focus-empty' }, 'Không có task quá hạn, sắp đến hạn hay ưu tiên cao.'),
+      : h('div', { class: 'focus-empty' }, 'No overdue, due-soon, or high-priority tasks.'),
   );
 }
 
@@ -900,13 +900,13 @@ function renderStats() {
       h('b', null, value),
     );
   $('#stats').replaceChildren(
-    pill('Tất cả', all.length, null, !state.status && !state.urgentOnly, () => {
+    pill('All', all.length, null, !state.status && !state.urgentOnly, () => {
       state.status = null;
       state.urgentOnly = false;
       syncUrl();
       render();
     }),
-    pill('Gấp', all.filter(isUrgent).length, 'hot', state.urgentOnly, () => {
+    pill('Urgent', all.filter(isUrgent).length, 'hot', state.urgentOnly, () => {
       state.urgentOnly = !state.urgentOnly;
       syncUrl();
       render();
@@ -928,7 +928,7 @@ function keyLink(i) {
     {
       class: 'key',
       href: '#' + i.key,
-      title: 'Mở chi tiết',
+      title: 'Open detail',
       onClick: (e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey) return; // let the browser open a new tab
         e.preventDefault();
@@ -945,7 +945,7 @@ function statusButton(issue) {
     'button',
     {
       class: `status tone-${tone(issue.status)}`,
-      title: 'Đổi trạng thái',
+      title: 'Change status',
       onClick: (e) => {
         e.stopPropagation();
         openStatusMenu(e.currentTarget, issue);
@@ -970,7 +970,7 @@ function docBadges(issue) {
 // --- list (grouped by parent; parents fold/unfold on click) ---
 
 function renderList(list) {
-  if (!list.length) return h('div', { class: 'empty-state' }, 'Không có task nào khớp bộ lọc.');
+  if (!list.length) return h('div', { class: 'empty-state' }, 'No tasks match this filter.');
   const byKey = new Map(state.issues.map((i) => [i.key, i]));
   const groups = new Map();
   for (const i of list) {
@@ -994,7 +994,7 @@ function renderList(list) {
         class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}`,
         onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
       },
-      h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i), i.storyPoints && h('span', { class: 'sp-badge', title: 'Story Points' }, i.storyPoints + ' SP')),
+      h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
       h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i)),
       h('div', { class: 'c-assignee' }, assigneeAvatar(i.assignee)),
       h('div', { class: 'c-status' }, statusButton(i)),
@@ -1048,15 +1048,14 @@ function renderList(list) {
     if (taskCount > 0) parts.push(`${taskCount} task${taskCount > 1 ? 's' : ''}`);
     if (bugCount > 0) parts.push(`${bugCount} bug${bugCount > 1 ? 's' : ''}`);
     if (storyCount > 0) parts.push(`${storyCount} stor${storyCount > 1 ? 'ies' : 'y'}`);
-    if (otherCount > 0) parts.push(`${otherCount} khác`);
-    if (hot > 0) parts.push(`${hot} gấp`);
+    if (otherCount > 0) parts.push(`${otherCount} other`);
     
     const claudeGroupButton = h(
       'button',
       {
         class: 'icon-btn sm claude-btn',
-        title: `Mở ${parent.key} + ${items.length} subtask trong Claude Code`,
-        'aria-label': `Mở nhóm ${parent.key} trong Claude Code`,
+        title: `Open ${parent.key} + ${items.length} subtasks in Claude Code`,
+        'aria-label': `Open group ${parent.key} in Claude Code`,
         onClick: async (e) => {
           e.stopPropagation();
           // Build combined prompt with parent + all subtasks
@@ -1065,15 +1064,15 @@ function renderList(list) {
             combined += issueMarkdown(mine, await getDetail(parent.key).catch(() => null));
           } else {
             combined += `- Jira: ${parent.url || siteOf(items[0]) + '/browse/' + parent.key}\n`;
-            combined += `- Loại: ${parent.type?.name || parent.type}\n`;
+            combined += `- Type: ${parent.type?.name || parent.type}\n`;
           }
           combined += `\n---\n\n## Subtasks (${items.length}):\n\n`;
           for (const item of items) {
             combined += `### ${item.key}: ${item.summary}\n`;
-            combined += `- Trạng thái: ${item.status.name}\n`;
+            combined += `- Status: ${item.status.name}\n`;
             combined += `- Jira: ${item.url}\n`;
             const u = urgency(item);
-            if (u.reasons.length) combined += `- Cần chú ý: ${u.reasons.map(r => r.label).join(', ')}\n`;
+            if (u.reasons.length) combined += `- Needs attention: ${u.reasons.map(r => r.label).join(', ')}\n`;
             combined += '\n';
           }
           combined = combined.slice(0, 11_000);
@@ -1084,9 +1083,9 @@ function renderList(list) {
           }
           try {
             await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt: combined }) });
-            toast(`Đã mở ${parent.key} + ${items.length} subtask trong Claude Code`);
+            toast(`Opened ${parent.key} + ${items.length} subtasks in Claude Code`);
           } catch (err) {
-            toast(`Không mở được Claude Code: ${err.message}. Nội dung đã copy.`, 'error');
+            toast(`Failed to open Claude Code: ${err.message}. Content copied.`, 'error');
           }
         },
       },
@@ -1100,7 +1099,7 @@ function renderList(list) {
         role: 'button',
         tabindex: '0',
         'aria-expanded': String(!closed),
-        title: closed ? 'Mở rộng' : 'Thu gọn',
+        title: closed ? 'Expand' : 'Collapse',
         onClick: (e) => !e.target.closest('a,button') && toggle(),
         onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
       },
@@ -1108,7 +1107,7 @@ function renderList(list) {
       h('div', { class: 'c-key' }, 
         h('span', { class: 'fold-icon' }, icon('chevRight')),
         typeBadge(parent.type?.name || parent.type),
-        mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Mở chi tiết', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key)
+        mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key)
       ),
       // c-sum: group title
       h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary)),
@@ -1130,14 +1129,14 @@ function renderList(list) {
   const out = h(
     'div',
     { class: 'list' },
-    h('div', { class: 'list-head' }, ['Key', 'Tiêu đề', 'Người', 'Trạng thái', 'Ưu tiên', 'Tài liệu', 'Cập nhật', ''].map((t, idx) => h('div', { class: idx === 4 ? 'h-prio' : null }, t))),
+    h('div', { class: 'list-head' }, ['Key', 'Summary', 'Assignee', 'Status', 'Priority', 'Docs', 'Updated', ''].map((t, idx) => h('div', { class: idx === 4 ? 'h-prio' : null }, t))),
   );
   for (const g of ordered) {
     out.append(groupRow(g.parent, g.items, g.items.length, g.items.filter(isUrgent).length));
     if (!isClosed(g.parent, g.items)) out.append(...g.items.map((i) => row(i, true)));
   }
   if (loose.length) {
-    if (ordered.length) out.append(h('div', { class: 'group plain' }, h('span', { class: 'muted' }, 'Không thuộc nhóm')));
+    if (ordered.length) out.append(h('div', { class: 'group plain' }, h('span', { class: 'muted' }, 'Ungrouped')));
     out.append(...loose.map((i) => row(i, false)));
   }
   return out;
@@ -1179,7 +1178,7 @@ function renderDocs(list) {
                   h('a', { class: 'doc-title', href: doc.url, target: '_blank', rel: 'noopener' }, icon('doc'), h('span', null, docTitle(doc))),
                   h(
                     'button',
-                    { class: 'icon-btn sm', title: 'Copy link', onClick: () => copyText(`${docTitle(doc)}: ${doc.url}`, 'Đã copy link trang') },
+                    { class: 'icon-btn sm', title: 'Copy link', onClick: () => copyText(`${docTitle(doc)}: ${doc.url}`, 'Page link copied') },
                     icon('copy'),
                   ),
                 ),
@@ -1188,8 +1187,8 @@ function renderDocs(list) {
               ),
             ),
         )
-      : h('div', { class: 'empty-state', style: 'margin-bottom:28px' }, 'Chưa có task nào link tới trang Confluence.'),
-    h('h2', { class: 'section-title' }, 'File đính kèm trên Jira', h('span', { class: 'muted small' }, attachments.length)),
+      : h('div', { class: 'empty-state', style: 'margin-bottom:28px' }, 'No tasks link to this Confluence page.'),
+    h('h2', { class: 'section-title' }, 'Jira attachments', h('span', { class: 'muted small' }, attachments.length)),
     attachments.length
       ? h(
           'ul',
@@ -1205,7 +1204,7 @@ function renderDocs(list) {
             ),
           ),
         )
-      : h('div', { class: 'empty-state' }, 'Không có file đính kèm.'),
+      : h('div', { class: 'empty-state' }, 'No attachments.'),
   );
 }
 
@@ -1230,7 +1229,7 @@ async function openDetail(key) {
   $('#scrim').hidden = false;
 
   if (state.openIssue) renderDetail(state.openIssue, null);
-  else drawer.replaceChildren(detailHead(null, key), h('div', { class: 'drawer-body' }, h('div', { class: 'muted' }, 'Đang tải…')));
+  else drawer.replaceChildren(detailHead(null, key), h('div', { class: 'drawer-body' }, h('div', { class: 'muted' }, 'Loading…')));
 
   try {
     const d = await getDetail(key);
@@ -1240,7 +1239,7 @@ async function openDetail(key) {
   } catch (e) {
     if (state.openKey !== key) return;
     const body = $('.drawer-body', drawer);
-    body?.append(h('div', { class: 'error-box' }, e.message, e.login && h('a', { class: 'btn primary', href: '/oauth/login' }, 'Đăng nhập Atlassian')));
+    body?.append(h('div', { class: 'error-box' }, e.message, e.login && h('a', { class: 'btn primary', href: '/oauth/login' }, 'Sign in to Atlassian')));
     $('[data-slot="loading"]', drawer)?.remove();
   }
 }
@@ -1254,7 +1253,7 @@ function detailHead(issue, key) {
       'button',
       {
         class: 'icon-btn expand-toggle',
-        title: state.wide ? 'Thu nhỏ' : 'Mở rộng toàn màn hình',
+        title: state.wide ? 'Shrink' : 'Expand to full screen',
         onClick: () => {
           state.wide = !state.wide;
           LS.set('wide', state.wide);
@@ -1267,17 +1266,17 @@ function detailHead(issue, key) {
     h('span', { class: 'key' }, key),
     h('span', { id: 'drawer-status' }),
     h('span', { class: 'spacer' }),
-    jiraUrl && h('button', { class: 'icon-btn', title: 'Copy link Jira', 'aria-label': 'Copy link Jira', onClick: () => copyText(jiraUrl, 'Đã copy link') }, icon('link')),
+    jiraUrl && h('button', { class: 'icon-btn', title: 'Copy Jira link', 'aria-label': 'Copy Jira link', onClick: () => copyText(jiraUrl, 'Link copied') }, icon('link')),
     issue &&
       h(
         'button',
         {
           class: 'icon-btn',
-          title: 'Copy cho AI: link, tài liệu, MR, task con, mô tả, bình luận (Markdown)',
+          title: 'Copy for AI: link, docs, MR, subtasks, description, comments (Markdown)',
           'aria-label': 'Copy cho AI',
           onClick: async () => {
             const d = await getDetail(key).catch(() => null);
-            copyText(issueMarkdown(issue, d), `Đã copy ${key} (kèm mô tả) — dán cho AI là đọc được`);
+            copyText(issueMarkdown(issue, d), `Copied ${key} (with description) — paste into AI to read`);
           },
         },
         icon('copy'),
@@ -1287,14 +1286,14 @@ function detailHead(issue, key) {
         'button',
         {
           class: 'btn sm primary',
-          title: 'Mở tab Claude Code mới trong Cursor với task này (kèm mô tả, bình luận)',
+          title: 'Open a new Claude Code tab in Cursor with this task (with description, comments)',
           onClick: async () => sendToClaude(issue, await getDetail(key).catch(() => null)),
         },
         icon('ai'),
         h('span', { class: 'btn-label' }, 'Claude Code'),
       ),
-    jiraUrl && h('a', { class: 'icon-btn', href: jiraUrl, target: '_blank', rel: 'noopener', title: 'Mở trên Jira' }, icon('ext')),
-    h('button', { class: 'icon-btn', title: 'Đóng (Esc)', onClick: closeDrawer }, icon('x')),
+    jiraUrl && h('a', { class: 'icon-btn', href: jiraUrl, target: '_blank', rel: 'noopener', title: 'Open in Jira' }, icon('ext')),
+    h('button', { class: 'icon-btn', title: 'Close (Esc)', onClick: closeDrawer }, icon('x')),
   );
 }
 
@@ -1302,7 +1301,7 @@ function renderDetail(issue, d) {
   const drawer = $('#drawer');
   const scroll = $('.drawer-body', drawer)?.scrollTop || 0;
   const p = issue.parent;
-  const loading = h('div', { class: 'muted small', 'data-slot': 'loading' }, 'Đang tải chi tiết…');
+  const loading = h('div', { class: 'muted small', 'data-slot': 'loading' }, 'Loading detail…');
 
   const docs = [...(d?.issue?.docs || issue.docs), ...(d?.confluence || [])].filter(
     (x, idx, arr) => arr.findIndex((y) => (y.pageId || y.url) === (x.pageId || x.url)) === idx,
@@ -1314,11 +1313,12 @@ function renderDetail(issue, d) {
   const meta = h(
     'dl',
     { class: 'meta' },
-    h('dt', null, 'Loại'), h('dd', null, typeBadge(issue.type.name), issue.type.name),
-    h('dt', null, 'Ưu tiên'), h('dd', null, prio(issue.priority), issue.priority || '—'),
-    issue.due && [h('dt', null, 'Hạn'), h('dd', null, fmtDay(issue.due), dueBadge(issue))],
-    d && [h('dt', null, 'Người làm'), h('dd', null, d.assignee || '—')],
-    d?.reporter && [h('dt', null, 'Người tạo'), h('dd', null, d.reporter)],
+    h('dt', null, 'Type'), h('dd', null, typeBadge(issue.type.name), issue.type.name),
+    h('dt', null, 'Priority'), h('dd', null, prio(issue.priority), issue.priority || '—'),
+    issue.storyPoints && [h('dt', null, 'Story Points'), h('dd', null, issue.storyPoints)],
+    issue.due && [h('dt', null, 'Due'), h('dd', null, fmtDay(issue.due), dueBadge(issue))],
+    d && [h('dt', null, 'Assignee'), h('dd', null, d.assignee || '—')],
+    d?.reporter && [h('dt', null, 'Reporter'), h('dd', null, d.reporter)],
     p && [
       h('dt', null, 'Parent'),
       h(
@@ -1328,10 +1328,10 @@ function renderDetail(issue, d) {
         h('span', null, p.summary),
       ),
     ],
-    issue.project && [h('dt', null, 'Dự án'), h('dd', null, issue.project.name)],
-    h('dt', null, 'Cập nhật'), h('dd', null, `${fmtDate(issue.updated)} (${rel(issue.updated)})`),
-    h('dt', null, 'Tạo lúc'), h('dd', null, fmtDate(issue.created)),
-    issue.labels.length > 0 && [h('dt', null, 'Nhãn'), h('dd', null, issue.labels.map((l) => h('span', { class: 'badge' }, l)))],
+    issue.project && [h('dt', null, 'Project'), h('dd', null, issue.project.name)],
+    h('dt', null, 'Updated'), h('dd', null, `${fmtDate(issue.updated)} (${rel(issue.updated)})`),
+    h('dt', null, 'Created'), h('dd', null, fmtDate(issue.created)),
+    issue.labels.length > 0 && [h('dt', null, 'Labels'), h('dd', null, issue.labels.map((l) => h('span', { class: 'badge' }, l)))],
   );
 
   const docsList = h(
@@ -1344,22 +1344,22 @@ function renderDetail(issue, d) {
             null,
             icon('doc'),
             h('a', { href: x.url, target: '_blank', rel: 'noopener', title: x.url }, docTitle(x)),
-            x.from && x.from !== issue.key && h('span', { class: 'tag muted small' }, `từ ${x.from}`),
-            h('button', { class: 'icon-btn sm', title: 'Copy link', onClick: () => copyText(`${docTitle(x)}: ${x.url}`, 'Đã copy link trang') }, icon('copy')),
+            x.from && x.from !== issue.key && h('span', { class: 'tag muted small' }, `from ${x.from}`),
+            h('button', { class: 'icon-btn sm', title: 'Copy link', onClick: () => copyText(`${docTitle(x)}: ${x.url}`, 'Page link copied') }, icon('copy')),
           ),
         )
-      : h('li', { class: 'muted' }, 'Không có trang Confluence nào được link.'),
+      : h('li', { class: 'muted' }, 'No linked Confluence pages.'),
   );
 
   const side = h(
     'div',
     { class: 'detail-side' },
     meta,
-    block('doc', 'Tài liệu Confluence', docs.length, docsList),
+    block('doc', 'Confluence docs', docs.length, docsList),
     issue.attachments.length > 0 &&
       block(
         'clip',
-        'File đính kèm',
+        'Attachments',
         issue.attachments.length,
         h(
           'ul',
@@ -1389,14 +1389,14 @@ function renderDetail(issue, d) {
           ),
         ),
       ),
-    d && block('link', 'Merge request & liên kết', null, renderLinks(d.links)),
+    d && block('link', 'Merge request & links', null, renderLinks(d.links)),
   );
 
   const main = h(
     'div',
     { class: 'detail-main' },
-    block(null, 'Mô tả', null, d ? (d.descriptionHtml ? htmlFrame(d.descriptionHtml, siteOf(issue)) : h('div', { class: 'muted small' }, 'Không có mô tả.')) : loading),
-    d && block('chat', 'Bình luận', d.comments.length, d.comments.length ? htmlFrame(commentsHtml(d.comments), siteOf(issue)) : h('div', { class: 'muted small' }, 'Chưa có bình luận.')),
+    block(null, 'Description', null, d ? (d.descriptionHtml ? htmlFrame(d.descriptionHtml, siteOf(issue)) : h('div', { class: 'muted small' }, 'No description.')) : loading),
+    d && block('chat', 'Comments', d.comments.length, d.comments.length ? htmlFrame(commentsHtml(d.comments), siteOf(issue)) : h('div', { class: 'muted small' }, 'No comments yet.')),
   );
 
   drawer.replaceChildren(
@@ -1427,7 +1427,7 @@ function refreshDrawerStatus() {
 }
 
 function renderLinks(links) {
-  if (!links.length) return h('div', { class: 'muted small' }, 'Không có liên kết.');
+  if (!links.length) return h('div', { class: 'muted small' }, 'No links.');
   const item = (l) =>
     h(
       'li',
@@ -1453,7 +1453,7 @@ function htmlFrame(html, site) {
   const v = (name) => css.getPropertyValue(name).trim();
   const frame = h('iframe', {
     class: 'desc',
-    title: 'Nội dung',
+    title: 'Content',
     sandbox: 'allow-same-origin allow-popups allow-popups-to-escape-sandbox',
   });
   const base = h('base', { href: site + '/', target: '_blank' }).outerHTML;
@@ -1489,7 +1489,7 @@ function closeDrawer() {
 
 async function openStatusMenu(anchor, issue) {
   closeMenu();
-  const menu = h('div', { class: 'menu', role: 'menu' }, h('div', { class: 'menu-note' }, 'Đang tải transition…'));
+  const menu = h('div', { class: 'menu', role: 'menu' }, h('div', { class: 'menu-note' }, 'Loading transitions…'));
   document.body.append(menu);
   state.menu = menu;
   placeMenu(menu, anchor);
@@ -1514,7 +1514,7 @@ async function openStatusMenu(anchor, issue) {
               t.name.toLowerCase() !== t.to.name.toLowerCase() && h('span', { class: 'muted small' }, `→ ${t.to.name}`),
             ),
           )
-        : [h('div', { class: 'menu-note' }, 'Không có transition khả dụng.')]),
+        : [h('div', { class: 'menu-note' }, 'No available transitions.')]),
     );
     placeMenu(menu, anchor);
     menu.querySelector('button')?.focus();
@@ -1674,7 +1674,7 @@ function syncPreset() {
 }
 
 function viewedUserName() {
-  return state.users?.users.find((u) => u.accountId === state.user)?.name || 'người đã chọn';
+  return state.users?.users.find((u) => u.accountId === state.user)?.name || 'selected user';
 }
 
 async function loadUsers() {
@@ -1682,17 +1682,17 @@ async function loadUsers() {
   try {
     state.users = await api('/api/users');
   } catch (e) {
-    select.title = `Không tải được danh sách người dùng: ${e.message}`;
+    select.title = `Failed to load user list: ${e.message}`;
     return;
   }
-  // Sắp xếp theo tên
-  const sorted = [...state.users.users].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  // Sort by name
+  const sorted = [...state.users.users].sort((a, b) => a.name.localeCompare(b.name, 'en'));
   const opts = sorted.map((u) => h('option', { value: u.accountId }, `${u.name} (${u.count})`));
   if (state.user && !state.users.users.some((u) => u.accountId === state.user)) {
-    opts.unshift(h('option', { value: state.user }, 'Người đã chọn'));
+    opts.unshift(h('option', { value: state.user }, 'Selected user'));
   }
   select.replaceChildren(
-    h('option', { value: '' }, 'Của tôi'),
+    h('option', { value: '' }, 'Mine'),
     ...opts,
   );
   select.value = state.user;
@@ -1710,15 +1710,15 @@ function showAuth(me) {
   if (!login) return;
   login.hidden = me.auth.source === 'own';
   login.replaceChildren(icon('key'));
-  login.title = 'Bật tự refresh: đăng nhập Atlassian một lần để dashboard có phiên riêng, không phụ thuộc token của Claude Code';
-  login.setAttribute('aria-label', 'Bật tự refresh token');
+  login.title = 'Enable auto-refresh: sign in to Atlassian once to give the dashboard its own session, independent of Claude Code tokens';
+  login.setAttribute('aria-label', 'Enable auto refresh token');
   renderMeta();
 }
 
 function init() {
   $('#preset').replaceChildren(
     ...PRESETS.map((p, i) => h('option', { value: String(i) }, p.label)),
-    h('option', { value: 'custom', disabled: true }, 'JQL tuỳ chỉnh'),
+    h('option', { value: 'custom', disabled: true }, 'Custom JQL'),
   );
   $('#jql').value = state.jql;
   $('#search').value = state.q;

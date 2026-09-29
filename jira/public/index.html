@@ -1,73 +1,73 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Jira của tôi</title>
+    <title>My Jira</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 10h14M9 16h10M9 22h6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <header class="topbar">
       <div class="bar">
-        <input id="search" type="search" placeholder="Tìm key, tiêu đề, parent… ( / )" aria-label="Tìm kiếm" />
+        <input id="search" type="search" placeholder="Search key, title, parent… ( / )" aria-label="Search" />
         <div class="bar-actions">
-          <select id="user-filter" aria-label="Xem task của" title="Xem task của ai"><option value="">Của tôi</option></select>
+          <select id="user-filter" aria-label="View tasks of" title="View tasks of"><option value="">Mine</option></select>
           <button class="icon-btn outline" id="recent-btn" title="Recently viewed" aria-label="Recently viewed"></button>
-          <select id="preset" aria-label="Bộ lọc có sẵn"></select>
-          <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Sửa JQL" aria-label="Sửa JQL"></button>
+          <select id="preset" aria-label="Saved filter"></select>
+          <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Edit JQL" aria-label="Edit JQL"></button>
           <div class="seg icons" id="views" role="tablist">
-            <button data-view="list" role="tab" title="Danh sách task" aria-label="Danh sách task"></button>
-            <button data-view="docs" role="tab" title="Tài liệu Confluence & file đính kèm" aria-label="Tài liệu"></button>
+            <button data-view="list" role="tab" title="Task list" aria-label="Task list"></button>
+            <button data-view="docs" role="tab" title="Confluence pages & attachments" aria-label="Documents"></button>
           </div>
         </div>
         <div class="bar-icons">
           <div class="theme-picker" id="theme-picker">
-            <button class="icon-btn outline" id="theme-toggle" title="Chọn theme" aria-label="Chọn theme" aria-expanded="false" aria-controls="theme-menu"></button>
+            <button class="icon-btn outline" id="theme-toggle" title="Choose theme" aria-label="Choose theme" aria-expanded="false" aria-controls="theme-menu"></button>
             <div class="theme-menu" id="theme-menu" role="menu">
               <button class="theme-option" data-theme="auto" role="menuitem">
                 <span class="theme-icon" id="theme-icon-auto"></span>
-                <span class="theme-label">Hệ thống</span>
+                <span class="theme-label">System</span>
                 <span class="theme-check" id="theme-check-auto"></span>
               </button>
               <button class="theme-option" data-theme="light" role="menuitem">
                 <span class="theme-icon" id="theme-icon-light"></span>
-                <span class="theme-label">Sáng</span>
+                <span class="theme-label">Light</span>
                 <span class="theme-check" id="theme-check-light"></span>
               </button>
               <button class="theme-option" data-theme="dark" role="menuitem">
                 <span class="theme-icon" id="theme-icon-dark"></span>
-                <span class="theme-label">Tối</span>
+                <span class="theme-label">Dark</span>
                 <span class="theme-check" id="theme-check-dark"></span>
               </button>
             </div>
           </div>
           <a class="icon-btn outline accent" id="login" href="/oauth/login" hidden></a>
-          <button class="icon-btn outline bell" id="bell" title="Thông báo" aria-label="Thông báo" aria-expanded="false" aria-controls="notif">
+          <button class="icon-btn outline bell" id="bell" title="Notifications" aria-label="Notifications" aria-expanded="false" aria-controls="notif">
             <span class="bell-badge" id="bell-badge" hidden></span>
           </button>
-          <button class="icon-btn outline" id="refresh" title="Tải lại (R)" aria-label="Tải lại"></button>
+          <button class="icon-btn outline" id="refresh" title="Reload (R)" aria-label="Reload"></button>
         </div>
       </div>
       <div class="jql-row" id="jql-row" hidden>
         <input id="jql" class="mono" spellcheck="false" aria-label="JQL" placeholder="JQL…" />
-        <button class="btn primary" id="apply">Áp dụng</button>
+        <button class="btn primary" id="apply">Apply</button>
       </div>
     </header>
 
     <section class="subbar">
-      <div class="pills" id="stats" aria-label="Lọc theo trạng thái"></div>
-      <select id="type-filter" aria-label="Lọc theo loại"></select>
-      <select id="sprint-filter" aria-label="Lọc theo sprint" hidden></select>
+      <div class="pills" id="stats" aria-label="Filter by status"></div>
+      <select id="type-filter" aria-label="Filter by type"></select>
+      <select id="sprint-filter" aria-label="Filter by sprint" hidden></select>
     </section>
 
-    <section class="progress-strip" id="progress-strip" aria-label="Tiến độ"></section>
+    <section class="progress-strip" id="progress-strip" aria-label="Progress"></section>
 
-    <section class="focus" id="focus" aria-label="Cần xử lý gấp"></section>
+    <section class="focus" id="focus" aria-label="Urgent attention"></section>
 
     <main id="main"></main>
 
-    <div class="notif-panel" id="notif" role="dialog" aria-label="Thông báo" hidden></div>
+    <div class="notif-panel" id="notif" role="dialog" aria-label="Notifications" hidden></div>
     <div class="recent-panel" id="recent" role="dialog" aria-label="Recently viewed" hidden></div>
     <aside class="drawer" id="drawer" aria-hidden="true"></aside>
     <div class="scrim" id="scrim" hidden></div>
