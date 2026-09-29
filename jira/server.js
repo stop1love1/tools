@@ -843,8 +843,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const own = readOwn();
-  const auth = own?.refreshToken ? 'phiên riêng, tự refresh' : 'token của Claude Code';
-  console.log(`Jira dashboard: http://localhost:${PORT}  (${BASE}, qua MCP — ${auth})`);
+  const auth = own?.refreshToken ? 'own session, auto-refresh' : 'Claude Code token';
+  console.log(`Jira dashboard: http://localhost:${PORT}  (${BASE}, via MCP — ${auth})`);
 });
 
 // Keep our own grant warm so it never lapses while the server runs.
