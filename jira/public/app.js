@@ -47,6 +47,12 @@ const ICONS = {
   moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
   'circle-half': '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>',
+  check: '<path d="M5 12.5 10 17 19 7"/>',
+  branch: '<circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="7" r="2.5"/><path d="M6 7.5v9M18 9.5a6 6 0 0 1-6 6H8.5"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  download: '<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 };
 
 function icon(name) {
@@ -97,13 +103,14 @@ const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
 // Read URL params on init
 const initParams = new URLSearchParams(location.search);
+const initView = initParams.get('view') || LS.get('view', 'list');
 
 const state = {
   issues: [],
   jql: LS.get('jql', ''),
   usedJql: '',
   defaultJql: '',
-  view: initParams.get('view') || LS.get('view', 'list') === 'docs' ? 'docs' : 'list',
+  view: ['docs', 'git'].includes(initView) ? initView : 'list',
   me: null,
   user: initParams.get('user') || LS.get('user', ''),
   users: null,
@@ -195,19 +202,6 @@ const prio = (p) => {
   if (!p) return null;
   const k = p.toLowerCase();
   return h('span', { class: `prio p-${k}`, title: `Priority: ${p}` }, PRIO[k] || '•');
-};
-
-const assigneeAvatar = (assignee) => {
-  if (!assignee) return h('span', { class: 'assignee-empty', title: 'Unassigned' }, '—');
-  const displayName = assignee.displayName || assignee;
-  const initials = displayName
-    .split(/\s+/)
-    .map(w => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-  return h('span', { class: 'assignee-avatar', title: displayName }, initials);
 };
 
 const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
@@ -424,6 +418,7 @@ async function load({ silent = false } = {}) {
     recentlyTransitioned.clear();
     if (!state.jql) $('#jql').value = data.defaultJql;
     if (state.openKey) state.openIssue = state.issues.find((i) => i.key === state.openKey) || state.openIssue;
+    loadGitSummary();
   } catch (e) {
     if (silent && state.issues.length) toast(`Failed to reload: ${e.message}`, 'error');
     else (state.error = e.message), (state.errorLogin = e.login);
@@ -750,6 +745,12 @@ function render() {
   closeMenu();
   renderMeta();
   for (const b of document.querySelectorAll('#views button')) b.setAttribute('aria-selected', String(b.dataset.view === state.view));
+  document.body.dataset.view = state.view;
+  if (state.view === 'git') {
+    syncUrl();
+    $('#main').replaceChildren(renderGitView());
+    return;
+  }
   const list = filtered();
   renderTypes();
   renderSprints();
@@ -969,34 +970,48 @@ function docBadges(issue) {
 
 // --- list (grouped by parent; parents fold/unfold on click) ---
 
+// Epic → Story/Task → Sub-task, the same levels as the git flow (epic branch → task branch).
 function renderList(list) {
   if (!list.length) return h('div', { class: 'empty-state' }, 'No tasks match this filter.');
   const byKey = new Map(state.issues.map((i) => [i.key, i]));
-  const groups = new Map();
-  for (const i of list) {
-    if (!i.parent) continue;
-    if (!groups.has(i.parent.key)) groups.set(i.parent.key, { parent: byKey.get(i.parent.key) || i.parent, items: [] });
-    groups.get(i.parent.key).items.push(i);
-  }
-  // A parent that is itself one of my issues is shown as its group's header.
-  const loose = list.filter((i) => !i.parent && !groups.has(i.key)).sort(byUrgency);
-  for (const g of groups.values()) g.items.sort(byUrgency);
+  const isEpicIssue = (i) => /epic/i.test(i.type?.name || '');
   const top = (g) => Math.max(...g.items.map((i) => urgency(i).score));
   const latest = (g) => Math.max(...g.items.map((i) => Date.parse(i.updated)));
-  const ordered = [...groups.values()].sort((a, b) => top(b) - top(a) || latest(b) - latest(a));
+  const byGroupUrgency = (a, b) => top(b) - top(a) || latest(b) - latest(a);
 
-  const row = (i, child) => {
+  // Epic buckets; an Epic that is itself in the list becomes its bucket's header.
+  const buckets = new Map();
+  for (const i of list) {
+    const ek = isEpicIssue(i) ? i.key : i.epic?.key || null;
+    if (!buckets.has(ek)) buckets.set(ek, { epic: ek && (byKey.get(ek) || i.epic || { key: ek, summary: '' }), items: [] });
+    if (!(isEpicIssue(i) && ek === i.key)) buckets.get(ek).items.push(i);
+  }
+
+  // Inside a bucket: sub-tasks grouped under their parent; items hanging straight off the epic stay loose.
+  const groupBucket = (items, epicKey) => {
+    const groups = new Map();
+    for (const i of items) {
+      if (!i.parent || i.parent.key === epicKey) continue;
+      if (!groups.has(i.parent.key)) groups.set(i.parent.key, { parent: byKey.get(i.parent.key) || i.parent, items: [] });
+      groups.get(i.parent.key).items.push(i);
+    }
+    // A parent that is itself one of my issues is shown as its group's header.
+    const loose = items.filter((i) => (!i.parent || i.parent.key === epicKey) && !groups.has(i.key)).sort(byUrgency);
+    for (const g of groups.values()) g.items.sort(byUrgency);
+    return { groups: [...groups.values()].sort(byGroupUrgency), loose };
+  };
+
+  const row = (i, child, deep) => {
     const u = urgency(i);
     const isDone = i.status.category === 'done';
     return h(
       'div',
       {
-        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}`,
+        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}`,
         onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
       },
       h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
-      h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i)),
-      h('div', { class: 'c-assignee' }, assigneeAvatar(i.assignee)),
+      h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i), gitCell(i)),
       h('div', { class: 'c-status' }, statusButton(i)),
       h('div', { class: 'c-prio' }, prio(i.priority), ' ', i.priority || ''),
       h('div', { class: 'c-docs' }, docBadges(i)),
@@ -1012,13 +1027,10 @@ function renderList(list) {
     const override = state.closedGroups.has(parent.key);
     // An override flips whatever the auto default would be.
     const result = override ? !allDone : allDone;
-    if (allDone) {
-      console.log(`[isClosed] ${parent.key}: allDone=${allDone}, override=${override}, result=${result}`, items.map(i => ({ key: i.key, cat: i.status.category })));
-    }
     return result;
   };
 
-  const groupRow = (parent, items, count, hot) => {
+  const groupRow = (parent, items, nested) => {
     const mine = parent.url ? parent : null; // full issue DTO when the parent is also assigned to me
     const closed = isClosed(parent, items);
     const toggle = () => {
@@ -1095,7 +1107,7 @@ function renderList(list) {
     return h(
       'div',
       {
-        class: `group${closed ? ' closed' : ''}`,
+        class: `group${closed ? ' closed' : ''}${nested ? ' nested' : ''}`,
         role: 'button',
         tabindex: '0',
         'aria-expanded': String(!closed),
@@ -1111,8 +1123,6 @@ function renderList(list) {
       ),
       // c-sum: group title
       h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary)),
-      // c-assignee: empty
-      h('div', { class: 'c-assignee' }),
       // c-status: status button or parts text
       h('div', { class: 'c-status' }, mine ? statusButton(mine) : h('span', { class: 'muted small' }, parts.join(', '))),
       // c-prio: empty
@@ -1129,17 +1139,72 @@ function renderList(list) {
   const out = h(
     'div',
     { class: 'list' },
-    h('div', { class: 'list-head' }, ['Key', 'Summary', 'Assignee', 'Status', 'Priority', 'Docs', 'Updated', ''].map((t, idx) => h('div', { class: idx === 4 ? 'h-prio' : null }, t))),
+    h('div', { class: 'list-head' }, ['Key', 'Summary', 'Status', 'Priority', 'Docs', 'Updated', ''].map((t, idx) => h('div', { class: idx === 3 ? 'h-prio' : null }, t))),
   );
-  for (const g of ordered) {
-    out.append(groupRow(g.parent, g.items, g.items.length, g.items.filter(isUrgent).length));
-    if (!isClosed(g.parent, g.items)) out.append(...g.items.map((i) => row(i, true)));
+  const appendBucket = (items, epicKey, nested) => {
+    const { groups, loose } = groupBucket(items, epicKey);
+    for (const g of groups) {
+      out.append(groupRow(g.parent, g.items, nested));
+      if (!isClosed(g.parent, g.items)) out.append(...g.items.map((i) => row(i, true, nested)));
+    }
+    out.append(...loose.map((i) => row(i, nested, false)));
+  };
+
+  const epics = [...buckets.entries()].filter(([k]) => k).map(([, b]) => b).sort(byGroupUrgency);
+  for (const b of epics) {
+    out.append(epicRow(b.epic, b.items, isClosed));
+    if (!isClosed({ key: 'epic:' + b.epic.key }, b.items.length ? b.items : [b.epic])) appendBucket(b.items, b.epic.key, true);
   }
-  if (loose.length) {
-    if (ordered.length) out.append(h('div', { class: 'group plain' }, h('span', { class: 'muted' }, 'Ungrouped')));
-    out.append(...loose.map((i) => row(i, false)));
+  const noEpic = buckets.get(null);
+  if (noEpic?.items.length) {
+    if (epics.length) out.append(h('div', { class: 'group plain epic-none' }, h('span', { class: 'muted' }, 'No epic')));
+    appendBucket(noEpic.items, null, false);
   }
   return out;
+}
+
+// Epic header: folds everything under it; shows progress and the epic branch the tasks merge into.
+function epicRow(epic, items, isClosed) {
+  const mine = epic.url ? epic : null;
+  const foldKey = 'epic:' + epic.key;
+  const closed = isClosed({ key: foldKey }, items.length ? items : [epic]);
+  const toggle = () => {
+    state.closedGroups.has(foldKey) ? state.closedGroups.delete(foldKey) : state.closedGroups.add(foldKey);
+    LS.set('groupFold', [...state.closedGroups]);
+    render();
+  };
+  const counted = items.filter((i) => !isCancelled(i));
+  const done = counted.filter((i) => i.status.category === 'done').length;
+  return h(
+    'div',
+    {
+      class: `group epic-row${closed ? ' closed' : ''}`,
+      role: 'button',
+      tabindex: '0',
+      'aria-expanded': String(!closed),
+      title: closed ? 'Expand' : 'Collapse',
+      onClick: (e) => !e.target.closest('a,button') && toggle(),
+      onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
+    },
+    h(
+      'div',
+      { class: 'c-key' },
+      h('span', { class: 'fold-icon' }, icon('chevRight')),
+      typeBadge('Epic'),
+      h('a', { class: 'key', href: '#' + epic.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(epic.key)) }, epic.key),
+    ),
+    h(
+      'div',
+      { class: 'c-sum' },
+      h('span', { class: 'group-title', title: epic.summary }, epic.summary || 'Epic'),
+      h('button', { class: 'gchip epic-branch', title: `Git branch of this epic — click to copy\nTasks: branch off it, MR back into it; one MR epic → uat`, onClick: () => copyText(`epic/${epic.key}`, 'Epic branch copied') }, icon('branch'), `epic/${epic.key}`),
+    ),
+    h('div', { class: 'c-status' }, mine ? statusButton(mine) : epic.status ? statusPill(epic.status) : null),
+    h('div', { class: 'c-prio' }),
+    h('div', { class: 'c-docs' }),
+    h('div', { class: 'c-upd muted small' }, `${done}/${counted.length} done`),
+    h('div', { class: 'c-act' }),
+  );
 }
 
 // --- docs ---
@@ -1298,6 +1363,7 @@ function detailHead(issue, key) {
 }
 
 function renderDetail(issue, d) {
+  const isEpic = /epic/i.test(issue.type?.name || '');
   const drawer = $('#drawer');
   const scroll = $('.drawer-body', drawer)?.scrollTop || 0;
   const p = issue.parent;
@@ -1395,6 +1461,7 @@ function renderDetail(issue, d) {
   const main = h(
     'div',
     { class: 'detail-main' },
+    !isEpic && typeof gitFlowBlock === 'function' && gitFlowBlock(issue), // git.js missing (old server): skip the block
     block(null, 'Description', null, d ? (d.descriptionHtml ? htmlFrame(d.descriptionHtml, siteOf(issue)) : h('div', { class: 'muted small' }, 'No description.')) : loading),
     d && block('chat', 'Comments', d.comments.length, d.comments.length ? htmlFrame(commentsHtml(d.comments), siteOf(issue)) : h('div', { class: 'muted small' }, 'No comments yet.')),
   );
@@ -1406,6 +1473,8 @@ function renderDetail(issue, d) {
       { class: 'drawer-body' },
       h('h2', { class: 'detail-title' }, issue.summary),
       urgency(issue).reasons.length > 0 && h('div', { class: 'row-reasons' }, reasonChips(issue)),
+      // An epic's branch and its commits are what you open an epic for: show them first.
+      isEpic && typeof gitFlowBlock === 'function' && gitFlowBlock(issue),
       h('div', { class: 'detail-grid' }, side, main),
     ),
   );
@@ -1741,6 +1810,7 @@ function init() {
   $('#jql-toggle').append(icon('code'));
   $('[data-view="list"]').append(icon('list'));
   $('[data-view="docs"]').append(icon('doc'));
+  $('[data-view="git"]').append(icon('branch'));
   $('#user-filter').addEventListener('change', (e) => {
     state.user = e.target.value;
     LS.set('user', state.user);
@@ -1837,7 +1907,8 @@ function init() {
       e.preventDefault();
       $('#search').focus();
     } else if (!typing && (e.key === 'r' || e.key === 'R') && !e.metaKey && !e.ctrlKey) {
-      load();
+      if (state.view === 'git') loadGit();
+      else load();
     } else if (!typing && e.key === '?') {
       e.preventDefault();
       showKeyboardShortcuts();
@@ -1898,6 +1969,7 @@ function init() {
       toast(e.message, 'error');
       $('#login').hidden = !e.login;
     });
+  if (state.view === 'git') render(); // the Git view doesn't wait for Jira
   load();
   loadNotifications();
   loadUsers();

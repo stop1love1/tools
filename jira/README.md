@@ -30,6 +30,20 @@ Cấu hình tuỳ chọn: xem `.env.example`.
 - **Tài liệu**: mọi trang Confluence được link + file đính kèm Jira.
 - Phím tắt: `/` tìm kiếm, `R` tải lại, `Esc` đóng. Tự tải lại mỗi 5 phút.
 
+## Git flow (lms backend + frontend)
+
+Quản lý nhánh / commit / cherry-pick theo đúng flow trong `lms/.cursor/rules/git-workflow.mdc`, ngay trong dashboard:
+
+- **Khối "Git flow" trong chi tiết task**: từng bước epic → nhánh task `-uat` → commit / rebase lên epic / push → MR task → epic → MR epic → uat (chỉ 1) → cherry-pick sang `-develop` → MR → develop, riêng cho Backend và Frontend. Mỗi bước hiện trạng thái và nút cho việc tiếp theo. Epic lấy theo Epic cha trên Jira (bấm chip `epic/…` để đổi); nếu commit của ticket nằm ở epic khác, dashboard gợi ý.
+- **Tab Git** (icon nhánh trên header): trạng thái 2 repo + commit/push/fetch, ticket đang có nhánh, dọn nhánh local (`backup/*`, đã mất trên origin, đã vào uat, tên sai chuẩn), log các job gần đây.
+- **MR**: mở trang "New merge request" của GitLab đã điền sẵn source/target/title/description theo mẫu — không cần `glab` hay API token.
+- **An toàn**:
+  - Thao tác trên nhánh không được checkout thì chạy trong worktree tạm `~/Documents/lms-worktrees/dash-<repo>` → không đụng code đang làm dở. Xong job worktree tạm tự nhả nhánh.
+  - Trước khi rebase / cherry-pick / reset / xoá nhánh, tip được lưu vào `refs/dash-backup/<nhánh>/<thời gian>` (thay cho việc tự tạo `backup/*`). Nút **Undo** đưa nhánh về bản backup gần nhất; nhánh đã xoá khôi phục bằng `git branch <tên> refs/dash-backup/<tên>/<thời gian>`.
+  - Conflict được giữ nguyên để sửa trong Cursor, rồi **Continue / Skip / Abort** từ dashboard. Continue từ chối nếu file còn conflict marker.
+  - Force-push luôn dùng `--force-with-lease`; không bao giờ push thẳng vào `uat` / `develop` / `release/*`. Mỗi lúc chỉ chạy 1 job git.
+- Commit chạy đủ hook của repo (lint-staged, typecheck, gitleaks…); `VSF_APP_TOKEN` được đọc từ `lms/dev.sh` nếu server không được chạy từ `dev.sh`.
+
 ## Bảo mật
 
 - Server chỉ nghe `127.0.0.1`; token không bao giờ gửi xuống trình duyệt.

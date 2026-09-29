@@ -14,6 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { createGitApi } = require('./git');
 
 loadEnv(path.join(__dirname, '.env'));
 
@@ -489,15 +490,20 @@ async function listIssues(jql) {
   // Sub-tasks rarely carry their own PRD link; inherit the parent's Confluence links.
   const parentKeys = [...new Set(issues.map((i) => i.fields.parent?.key).filter((k) => k && !byKey.has(k)))];
   const parentDesc = new Map();
+  const parentFields = new Map(); // parent key → fields (its own parent tells a sub-task's Epic)
   await mapPool(parentKeys, 4, async (key) => {
     try {
-      const p = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['description'], responseContentFormat: 'adf' });
+      const p = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['description', 'parent'], responseContentFormat: 'adf' });
       parentDesc.set(key, p.fields?.description);
+      parentFields.set(key, p.fields || {});
     } catch {
       // Parent not visible to this user: skip its links.
     }
   });
-  for (const [key, issue] of byKey) parentDesc.set(key, issue.fields.description);
+  for (const [key, issue] of byKey) {
+    parentDesc.set(key, issue.fields.description);
+    parentFields.set(key, issue.fields);
+  }
 
   const ownLinks = new Map(issues.map((i) => [i.key, confluenceLinks(i.fields.description)]));
   const parentLinks = new Map([...parentDesc].map(([k, d]) => [k, ownLinks.get(k) || confluenceLinks(d)]));
@@ -507,8 +513,23 @@ async function listIssues(jql) {
 
   return issues.map((issue) => {
     const pk = issue.fields.parent?.key;
-    return issueDto(issue, mergeDocs(issue.key, ownLinks.get(issue.key), pk, (pk && parentLinks.get(pk)) || []));
+    const dto = issueDto(issue, mergeDocs(issue.key, ownLinks.get(issue.key), pk, (pk && parentLinks.get(pk)) || []));
+    dto.epic = epicOf(issue, parentFields);
+    return dto;
   });
+}
+
+// The Epic above an issue: its parent (Task/Story → Epic) or its grandparent (Sub-task → Story → Epic).
+// The epic branch of the git flow is named after it.
+function epicOf(issue, parentFields) {
+  const isEpic = (n) => /epic/i.test(n?.fields?.issuetype?.name || '');
+  const dto = (n) => ({ key: n.key, summary: n.fields?.summary || '', status: statusDto(n.fields?.status) });
+  if (/epic/i.test(issue.fields.issuetype?.name || '')) return null;
+  const p = issue.fields.parent;
+  if (!p) return null;
+  if (isEpic(p)) return dto(p);
+  const gp = parentFields.get(p.key)?.parent;
+  return gp && isEpic(gp) ? dto(gp) : null;
 }
 
 // An issue's docs: its own Confluence links first, then the ones inherited from its parent.
@@ -753,11 +774,40 @@ async function doTransition(key, id) {
 }
 
 // ---------------------------------------------------------------------------
+// Git flow (lms backend/frontend). The epic branch follows the parent Epic on Jira; a ticket without one is its own epic.
+
+const epicCache = new Map();
+
+async function resolveEpic(key) {
+  if (epicCache.has(key)) return epicCache.get(key);
+  let epic = key;
+  let cur = key;
+  for (let depth = 0; depth < 3 && cur; depth++) {
+    const j = await callTool('getJiraIssue', { issueIdOrKey: cur, fields: ['parent', 'issuetype'] });
+    if (/epic/i.test(j.fields?.issuetype?.name || '')) {
+      epic = cur;
+      break;
+    }
+    const p = j.fields?.parent;
+    if (p && /epic/i.test(p.fields?.issuetype?.name || '')) {
+      epic = p.key;
+      break;
+    }
+    cur = p?.key;
+  }
+  epicCache.set(key, epic);
+  return epic;
+}
+
+const gitApi = createGitApi({ httpError, readJson, resolveEpic, editorBin: EDITOR_BIN });
+
+// ---------------------------------------------------------------------------
 // HTTP server
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/git.js': ['git.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
 
@@ -794,6 +844,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/users') return send(res, 200, await listUsers());
+
+    if (url.pathname.startsWith('/api/git/')) return send(res, 200, await gitApi(req, url));
 
     if (req.method === 'POST' && url.pathname === '/api/claude-code') {
       const body = await readJson(req);
