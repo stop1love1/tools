@@ -4,6 +4,7 @@
 // Tiny DOM helpers
 
 const $ = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -42,6 +43,10 @@ const ICONS = {
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
   code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M16 7l3 3M14 9l2 2"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  'circle-half': '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>',
 };
 
 function icon(name) {
@@ -117,6 +122,8 @@ const state = {
   wide: LS.get('wide', false),
   closedGroups: new Set(LS.get('groupFold', [])),
   notif: { events: [], days: 7, loaded: false, error: null, seen: LS.get('notifSeen', 0), seenBefore: 0, open: false },
+  recentlyViewed: LS.get('recentlyViewed', []),
+  theme: LS.get('theme', 'auto'),
 };
 const cache = { transitions: new Map(), details: new Map() };
 const recentlyTransitioned = new Map();
@@ -188,6 +195,19 @@ const prio = (p) => {
   if (!p) return null;
   const k = p.toLowerCase();
   return h('span', { class: `prio p-${k}`, title: `Ưu tiên: ${p}` }, PRIO[k] || '•');
+};
+
+const assigneeAvatar = (assignee) => {
+  if (!assignee) return h('span', { class: 'assignee-empty', title: 'Chưa phân công' }, '—');
+  const displayName = assignee.displayName || assignee;
+  const initials = displayName
+    .split(/\s+/)
+    .map(w => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+  return h('span', { class: 'assignee-avatar', title: displayName }, initials);
 };
 
 const rtf = new Intl.RelativeTimeFormat('vi', { numeric: 'auto' });
@@ -612,6 +632,63 @@ function toggleNotif(force) {
   if (!n.loaded) loadNotifications();
 }
 
+function toggleRecent(force) {
+  const recent = $('#recent');
+  const isOpen = force ?? recent.hidden;
+  recent.hidden = !isOpen;
+  $('#recent-btn').setAttribute('aria-expanded', String(isOpen));
+  if (!isOpen) return;
+  renderRecentPanel();
+}
+
+function renderRecentPanel() {
+  const recent = $('#recent');
+  const viewed = state.recentlyViewed
+    .map(key => state.issues.find(i => i.key === key) || { key, summary: '(not in current filter)', url: null })
+    .slice(0, 10);
+  
+  const item = (i) =>
+    h(
+      'button',
+      {
+        class: 'notif-item',
+        onClick: () => {
+          toggleRecent(false);
+          openDetail(i.key);
+        },
+      },
+      i.type && h('span', { class: 'avatar' }, typeBadge(i.type.name)),
+      h(
+        'span',
+        { class: 'notif-body' },
+        h('span', { class: 'notif-issue' }, h('span', { class: 'key' }, i.key), h('span', { class: 'notif-sum' }, i.summary)),
+        i.status && h('span', { class: 'muted small' }, i.status.name),
+      ),
+    );
+  
+  recent.replaceChildren(
+    h(
+      'div',
+      { class: 'notif-head' },
+      h('b', null, 'Recently Viewed'),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'icon-btn sm', title: 'Clear', onClick: () => {
+        state.recentlyViewed = [];
+        LS.set('recentlyViewed', []);
+        renderRecentPanel();
+      }}, icon('x')),
+      h('button', { class: 'icon-btn sm', title: 'Close', onClick: () => toggleRecent(false) }, icon('x')),
+    ),
+    h(
+      'div',
+      { class: 'notif-list' },
+      viewed.length
+        ? viewed.map(item)
+        : h('div', { class: 'notif-empty' }, 'No recently viewed issues.'),
+    ),
+  );
+}
+
 function renderNotifPanel() {
   const n = state.notif;
   // "Nguyễn Phương Anh - ANHNP103" / "Cù Huy Toàn (VSF-…)" → drop the employee-code suffix first.
@@ -917,8 +994,9 @@ function renderList(list) {
         class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}`,
         onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
       },
-      h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
+      h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i), i.storyPoints && h('span', { class: 'sp-badge', title: 'Story Points' }, i.storyPoints + ' SP')),
       h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i)),
+      h('div', { class: 'c-assignee' }, assigneeAvatar(i.assignee)),
       h('div', { class: 'c-status' }, statusButton(i)),
       h('div', { class: 'c-prio' }, prio(i.priority), ' ', i.priority || ''),
       h('div', { class: 'c-docs' }, docBadges(i)),
@@ -1026,22 +1104,33 @@ function renderList(list) {
         onClick: (e) => !e.target.closest('a,button') && toggle(),
         onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
       },
-      h('span', { class: 'fold-icon' }, icon('chevRight')),
-      typeBadge(parent.type?.name || parent.type),
-      mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Mở chi tiết', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key),
-      h('span', { class: 'group-title' }, parent.summary),
-      mine ? statusButton(mine) : h('span', { class: 'muted small' }, parts.join(', ')),
-      h('span'), // Empty prio column
-      h('span'), // Empty docs column
-      h('span'), // Empty updated column
-      claudeGroupButton,
+      // c-key: fold icon + type badge + key
+      h('div', { class: 'c-key' }, 
+        h('span', { class: 'fold-icon' }, icon('chevRight')),
+        typeBadge(parent.type?.name || parent.type),
+        mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Mở chi tiết', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key)
+      ),
+      // c-sum: group title
+      h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary)),
+      // c-assignee: empty
+      h('div', { class: 'c-assignee' }),
+      // c-status: status button or parts text
+      h('div', { class: 'c-status' }, mine ? statusButton(mine) : h('span', { class: 'muted small' }, parts.join(', '))),
+      // c-prio: empty
+      h('div', { class: 'c-prio' }),
+      // c-docs: empty
+      h('div', { class: 'c-docs' }),
+      // c-upd: empty
+      h('div', { class: 'c-upd' }),
+      // c-act: claude button
+      h('div', { class: 'c-act' }, claudeGroupButton),
     );
   };
 
   const out = h(
     'div',
     { class: 'list' },
-    h('div', { class: 'list-head' }, ['Key', 'Tiêu đề', 'Trạng thái', 'Ưu tiên', 'Tài liệu', 'Cập nhật', ''].map((t, idx) => h('div', { class: idx === 3 ? 'h-prio' : null }, t))),
+    h('div', { class: 'list-head' }, ['Key', 'Tiêu đề', 'Người', 'Trạng thái', 'Ưu tiên', 'Tài liệu', 'Cập nhật', ''].map((t, idx) => h('div', { class: idx === 4 ? 'h-prio' : null }, t))),
   );
   for (const g of ordered) {
     out.append(groupRow(g.parent, g.items, g.items.length, g.items.filter(isUrgent).length));
@@ -1129,6 +1218,11 @@ async function openDetail(key) {
   state.openKey = key;
   state.openIssue = state.issues.find((i) => i.key === key) || null;
   if (location.hash !== '#' + key) history.replaceState(null, '', '#' + key);
+  
+  // Track recently viewed
+  state.recentlyViewed = [key, ...state.recentlyViewed.filter(k => k !== key)].slice(0, 10);
+  LS.set('recentlyViewed', state.recentlyViewed);
+  
   const drawer = $('#drawer');
   drawer.classList.toggle('wide', state.wide);
   drawer.classList.add('open');
@@ -1467,6 +1561,106 @@ function setView(view) {
   render();
 }
 
+function applyTheme() {
+  const root = document.documentElement;
+
+  // Clear first
+  root.classList.remove('light', 'dark');
+
+  if (state.theme === 'dark') {
+    root.classList.add('dark');
+  } else if (state.theme === 'light') {
+    root.classList.add('light');
+  } else { // auto
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (prefersDark) root.classList.add('dark');
+  }
+
+  // Update button icon
+  const btn = $('#theme-toggle');
+  if (btn) {
+    const isDark = root.classList.contains('dark');
+    btn.replaceChildren(icon(isDark ? 'sun' : 'moon'));
+  }
+
+  // Update theme menu
+  if (window.__updateThemeMenu) window.__updateThemeMenu();
+}
+
+function setTheme(theme) {
+  if (!['auto', 'light', 'dark'].includes(theme)) return;
+  state.theme = theme;
+  LS.set('theme', theme);
+  applyTheme();
+  closeThemePicker();
+  if (theme === 'auto') {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    toast(`Theme: auto (${prefersDark ? 'dark' : 'light'})`);
+  } else {
+    toast(`Theme: ${theme}`);
+  }
+}
+
+function toggleThemePicker() {
+  const picker = $('#theme-picker');
+  if (!picker) return;
+  picker.classList.toggle('open');
+}
+
+function closeThemePicker() {
+  const picker = $('#theme-picker');
+  if (picker) picker.classList.remove('open');
+}
+
+// Listen for system theme changes
+if (window.matchMedia) {
+  const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  darkModeQuery.addEventListener('change', () => {
+    if (state.theme === 'auto') {
+      applyTheme();
+    }
+  });
+}
+
+// Close picker on outside click
+document.addEventListener('click', (e) => {
+  const picker = $('#theme-picker');
+  if (!picker) return;
+  if (!picker.contains(e.target) && !e.target.closest('#theme-toggle')) {
+    closeThemePicker();
+  }
+});
+
+function showKeyboardShortcuts() {
+  const shortcuts = [
+    ['/', 'Focus search box'],
+    ['Esc', 'Close drawer/menu/panels or unfocus'],
+    ['r', 'Refresh data'],
+    ['?', 'Show keyboard shortcuts'],
+    ['1-5', 'Switch to preset filter 1-5'],
+    ['j / k', 'Navigate down / up in list'],
+    ['Enter', 'Open focused issue'],
+    ['Click issue', 'Open detail drawer'],
+  ];
+  
+  const modal = h(
+    'div',
+    { class: 'shortcuts-modal', onClick: (e) => e.target.classList.contains('shortcuts-modal') && e.target.remove() },
+    h(
+      'div',
+      { class: 'shortcuts-content' },
+      h('div', { class: 'shortcuts-head' }, h('h2', null, 'Keyboard Shortcuts'), h('button', { class: 'icon-btn', onClick: (e) => e.target.closest('.shortcuts-modal').remove() }, icon('x'))),
+      h(
+        'div',
+        { class: 'shortcuts-list' },
+        shortcuts.map(([key, desc]) => h('div', { class: 'shortcut-row' }, h('kbd', null, key), h('span', null, desc))),
+      ),
+    ),
+  );
+  
+  document.body.append(modal);
+}
+
 function applyJql(jql) {
   state.jql = jql.trim() === state.defaultJql ? '' : jql.trim();
   LS.set('jql', state.jql);
@@ -1581,9 +1775,54 @@ function init() {
     e.stopPropagation();
     toggleNotif();
   });
+  $('#recent-btn').replaceChildren(icon('clock'));
+  $('#recent-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleRecent();
+  });
+  $('#theme-toggle').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleThemePicker();
+  });
+
+  // Wire theme options
+  document.querySelectorAll('.theme-option').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const theme = btn.dataset.theme;
+      setTheme(theme);
+    });
+  });
+
+  // Update theme menu icons & check marks
+  function updateThemeMenu() {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const effectiveTheme = state.theme === 'auto'
+      ? (prefersDark ? 'dark' : 'light')
+      : state.theme;
+
+    // Set icons for each option
+    $('#theme-icon-auto').replaceChildren(icon('circle-half'));
+    $('#theme-icon-light').replaceChildren(icon('sun'));
+    $('#theme-icon-dark').replaceChildren(icon('moon'));
+
+    // Update active state
+    document.querySelectorAll('.theme-option').forEach(btn => {
+      const t = btn.dataset.theme;
+      btn.classList.toggle('active', t === state.theme);
+      const check = btn.querySelector('.theme-check');
+      if (check) check.replaceChildren(t === state.theme ? icon('check') : '');
+    });
+  }
+
+  // Store updateThemeMenu for use in applyTheme
+  window.__updateThemeMenu = updateThemeMenu;
+  updateThemeMenu();
+  applyTheme();
   document.addEventListener('click', (e) => {
     if (state.menu && !state.menu.contains(e.target)) closeMenu();
     if (state.notif.open && !e.target.closest('#notif')) toggleNotif(false);
+    if (!$('#recent').hidden && !e.target.closest('#recent') && !e.target.closest('#recent-btn')) toggleRecent(false);
   });
   document.addEventListener('scroll', closeMenu, true);
   document.addEventListener('keydown', (e) => {
@@ -1591,6 +1830,7 @@ function init() {
     if (e.key === 'Escape') {
       if (state.menu) closeMenu();
       else if (state.notif.open) toggleNotif(false);
+      else if (!$('#recent').hidden) toggleRecent(false);
       else if (state.openKey) closeDrawer();
       else if (typing) document.activeElement.blur();
     } else if (!typing && e.key === '/') {
@@ -1598,6 +1838,43 @@ function init() {
       $('#search').focus();
     } else if (!typing && (e.key === 'r' || e.key === 'R') && !e.metaKey && !e.ctrlKey) {
       load();
+    } else if (!typing && e.key === '?') {
+      e.preventDefault();
+      showKeyboardShortcuts();
+    } else if (!typing && /^[1-5]$/.test(e.key)) {
+      // Switch preset with numbers 1-5
+      const idx = Number(e.key) - 1;
+      if (PRESETS[idx]) {
+        $('#preset').value = String(idx);
+        $('#jql').value = PRESETS[idx].jql || state.defaultJql;
+        applyJql(PRESETS[idx].jql);
+      }
+    } else if (!typing && (e.key === 'j' || e.key === 'k') && !state.openKey) {
+      // j/k navigation in list view
+      e.preventDefault();
+      const list = $('.list');
+      if (!list) return;
+      const rows = [...list.querySelectorAll('.row:not(.child)')];
+      if (!rows.length) return;
+      
+      const current = rows.findIndex(r => r.classList.contains('keyboard-focus'));
+      let nextIdx;
+      
+      if (e.key === 'j') {
+        nextIdx = current < 0 ? 0 : Math.min(current + 1, rows.length - 1);
+      } else {
+        nextIdx = current < 0 ? 0 : Math.max(current - 1, 0);
+      }
+      
+      rows.forEach(r => r.classList.remove('keyboard-focus'));
+      rows[nextIdx].classList.add('keyboard-focus');
+      rows[nextIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else if (!typing && e.key === 'Enter' && !state.openKey) {
+      // Open focused row
+      const list = $('.list');
+      if (!list) return;
+      const focused = list.querySelector('.row.keyboard-focus');
+      if (focused) focused.click();
     }
   });
   // Deep links: #VLEARN-123 opens that issue's detail.

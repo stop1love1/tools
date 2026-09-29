@@ -13,6 +13,7 @@
         <input id="search" type="search" placeholder="Tìm key, tiêu đề, parent… ( / )" aria-label="Tìm kiếm" />
         <div class="bar-actions">
           <select id="user-filter" aria-label="Xem task của" title="Xem task của ai"><option value="">Của tôi</option></select>
+          <button class="icon-btn outline" id="recent-btn" title="Recently viewed" aria-label="Recently viewed"></button>
           <select id="preset" aria-label="Bộ lọc có sẵn"></select>
           <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Sửa JQL" aria-label="Sửa JQL"></button>
           <div class="seg icons" id="views" role="tablist">
@@ -21,6 +22,26 @@
           </div>
         </div>
         <div class="bar-icons">
+          <div class="theme-picker" id="theme-picker">
+            <button class="icon-btn outline" id="theme-toggle" title="Chọn theme" aria-label="Chọn theme" aria-expanded="false" aria-controls="theme-menu"></button>
+            <div class="theme-menu" id="theme-menu" role="menu">
+              <button class="theme-option" data-theme="auto" role="menuitem">
+                <span class="theme-icon" id="theme-icon-auto"></span>
+                <span class="theme-label">Hệ thống</span>
+                <span class="theme-check" id="theme-check-auto"></span>
+              </button>
+              <button class="theme-option" data-theme="light" role="menuitem">
+                <span class="theme-icon" id="theme-icon-light"></span>
+                <span class="theme-label">Sáng</span>
+                <span class="theme-check" id="theme-check-light"></span>
+              </button>
+              <button class="theme-option" data-theme="dark" role="menuitem">
+                <span class="theme-icon" id="theme-icon-dark"></span>
+                <span class="theme-label">Tối</span>
+                <span class="theme-check" id="theme-check-dark"></span>
+              </button>
+            </div>
+          </div>
           <a class="icon-btn outline accent" id="login" href="/oauth/login" hidden></a>
           <button class="icon-btn outline bell" id="bell" title="Thông báo" aria-label="Thông báo" aria-expanded="false" aria-controls="notif">
             <span class="bell-badge" id="bell-badge" hidden></span>
@@ -47,6 +68,7 @@
     <main id="main"></main>
 
     <div class="notif-panel" id="notif" role="dialog" aria-label="Thông báo" hidden></div>
+    <div class="recent-panel" id="recent" role="dialog" aria-label="Recently viewed" hidden></div>
     <aside class="drawer" id="drawer" aria-hidden="true"></aside>
     <div class="scrim" id="scrim" hidden></div>
     <div class="toasts" id="toasts" aria-live="polite"></div>
