@@ -102,6 +102,7 @@ const state = {
   q: '',
   type: 'all',
   status: null,
+  sprint: LS.get('sprint', null),
   urgentOnly: false,
   loading: false,
   error: null,
@@ -111,10 +112,11 @@ const state = {
   openIssue: null,
   menu: null,
   wide: LS.get('wide', false),
-  closedGroups: new Set(LS.get('closedGroups', [])),
+  closedGroups: new Set(LS.get('groupFold', [])),
   notif: { events: [], days: 7, loaded: false, error: null, seen: LS.get('notifSeen', 0), seenBefore: 0, open: false },
 };
 const cache = { transitions: new Map(), details: new Map() };
+const recentlyTransitioned = new Map();
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -146,17 +148,17 @@ function statusList(issues) {
 
 function typeClass(name) {
   const n = (name || '').toLowerCase();
-  if (n.includes('epic')) return ['t-epic', 'E'];
-  if (n.includes('sub')) return ['t-sub', '↳'];
-  if (n.includes('story')) return ['t-story', 'S'];
-  if (n.includes('bug')) return ['t-bug', 'B'];
-  if (n.includes('task')) return ['t-task', 'T'];
+  if (n.includes('epic')) return ['t-epic', ''];
+  if (n.includes('sub')) return ['t-sub', ''];
+  if (n.includes('story')) return ['t-story', ''];
+  if (n.includes('bug')) return ['t-bug', ''];
+  if (n.includes('task')) return ['t-task', ''];
   return ['', (name || '?').charAt(0).toUpperCase()];
 }
 
 const typeBadge = (name) => {
-  const [cls, letter] = typeClass(name);
-  return h('span', { class: `type ${cls}`, title: name }, letter);
+  const [cls, text] = typeClass(name);
+  return h('span', { class: `type ${cls}`, title: name });
 };
 
 const PRIO = { highest: '⇈', high: '↑', medium: '=', low: '↓', lowest: '⇊' };
@@ -216,7 +218,7 @@ function urgency(i) {
   }
   const p = (i.priority || '').toLowerCase();
   if (/highest|blocker|critical|urgent/.test(p)) (score += 60), reasons.push({ level: 'danger', label: `Ưu tiên ${i.priority}` });
-  else if (/high|major/.test(p)) (score += 35), reasons.push({ level: 'warn', label: `Ưu tiên ${i.priority}` });
+  else if (/high|major/.test(p)) score += 35;
   if (i.labels.some((l) => /hotfix|urgent|gấp|gap|asap|blocker/i.test(l))) (score += 40), reasons.push({ level: 'warn', label: 'Nhãn gấp' });
   const t = tone(i.status);
   score += t === 'prog' ? 8 : t === 'review' ? 4 : 0;
@@ -227,7 +229,21 @@ function urgency(i) {
 }
 
 const isUrgent = (i) => urgency(i).score >= 35;
-const byUrgency = (a, b) => urgency(b).score - urgency(a).score || Date.parse(b.updated) - Date.parse(a.updated);
+
+const byUrgency = (a, b) => {
+  const now = Date.now();
+  const aLocked = recentlyTransitioned.get(a.key);
+  const bLocked = recentlyTransitioned.get(b.key);
+  
+  if (aLocked && bLocked && now - aLocked < 3000 && now - bLocked < 3000) {
+    return aLocked - bLocked;
+  }
+  
+  if (aLocked && now - aLocked < 3000) return -1;
+  if (bLocked && now - bLocked < 3000) return 1;
+  
+  return urgency(b).score - urgency(a).score || Date.parse(b.updated) - Date.parse(a.updated);
+};
 
 const reasonChips = (i) => urgency(i).reasons.map((r) => h('span', { class: `reason r-${r.level}` }, r.label));
 
@@ -363,6 +379,7 @@ async function load({ silent = false } = {}) {
     state.error = null;
     state.fetchedAt = new Date();
     cache.transitions.clear();
+    recentlyTransitioned.clear();
     if (!state.jql) $('#jql').value = data.defaultJql;
     if (state.openKey) state.openIssue = state.issues.find((i) => i.key === state.openKey) || state.openIssue;
   } catch (e) {
@@ -398,6 +415,9 @@ async function transition(issue, t) {
   const prev = issue.status;
   issue.status = { ...t.to };
   issue.pending = true;
+  
+  recentlyTransitioned.set(issue.key, Date.now());
+  
   render();
   try {
     const d = await api(`/api/issues/${issue.key}/transitions`, { method: 'POST', body: JSON.stringify({ id: t.id }) });
@@ -405,12 +425,18 @@ async function transition(issue, t) {
     toast(`${issue.key} → ${d.status.name}`);
   } catch (e) {
     issue.status = prev;
+    recentlyTransitioned.delete(issue.key);
     toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url, label: 'Mở trên Jira' });
   } finally {
     issue.pending = false;
     cache.transitions.delete(issue.key);
     cache.details.delete(issue.key);
     render();
+    
+    setTimeout(() => {
+      recentlyTransitioned.delete(issue.key);
+      render();
+    }, 3000);
   }
 }
 
@@ -431,7 +457,12 @@ function scoped() {
 }
 
 function filtered() {
-  return scoped().filter((i) => (!state.status || i.status.name === state.status) && (!state.urgentOnly || isUrgent(i)));
+  return scoped().filter(
+    (i) => 
+      (!state.status || i.status.name === state.status) && 
+      (!state.urgentOnly || isUrgent(i)) &&
+      (!state.sprint || (i.sprint && i.sprint.id === Number(state.sprint)))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -455,15 +486,32 @@ function renderProgress() {
     ['new', 'Chưa làm', todo],
     ['void', 'Đã huỷ', cancelled],
   ].filter((p) => p[2] > 0);
-  el.replaceChildren(
+  
+  // Story Points calculation
+  const totalSP = base.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+  const doneSP = base.filter((i) => i.status.category === 'done' && !isCancelled(i)).reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+  const doingSP = base.filter((i) => i.status.category === 'indeterminate').reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+  const todoSP = totalSP - doneSP - doingSP;
+  const spPct = totalSP ? Math.round((doneSP / totalSP) * 100) : 0;
+  const spParts = [
+    ['done', 'Đã xong', doneSP],
+    ['prog', 'Đang làm', doingSP],
+    ['new', 'Chưa làm', todoSP],
+  ].filter((p) => p[2] > 0);
+  
+  const cards = [
     h(
       'div',
       { class: 'progress-card' },
-      h('span', { class: 'progress-title' }, h('b', null, `${done}/${counted}`), ' hoàn thành', h('span', { class: 'pct' }, `${pct}%`)),
       h(
         'div',
-        { class: 'track', role: 'img', 'aria-label': parts.map(([, label, n]) => `${label} ${n}`).join(', ') + ` trên tổng ${base.length}` },
-        parts.map(([tone, label, n]) => h('span', { class: `seg seg-${tone}`, style: `width:${(n / base.length) * 100}%`, title: `${label}: ${n}` })),
+        { class: 'progress-top' },
+        h('span', { class: 'progress-title' }, h('b', null, `${done}/${counted}`), ' hoàn thành', h('span', { class: 'pct' }, `${pct}%`)),
+        h(
+          'div',
+          { class: 'track', role: 'img', 'aria-label': parts.map(([, label, n]) => `${label} ${n}`).join(', ') + ` trên tổng ${base.length}` },
+          parts.map(([tone, label, n]) => h('span', { class: `seg seg-${tone}`, style: `width:${(n / base.length) * 100}%`, title: `${label}: ${n}` })),
+        ),
       ),
       h(
         'span',
@@ -471,7 +519,34 @@ function renderProgress() {
         parts.map(([tone, label, n]) => h('span', { class: `legend-item seg-${tone}` }, h('span', { class: 'dot' }), label, ' ', h('b', null, n))),
       ),
     ),
-  );
+  ];
+  
+  // Only show story points card if there are any story points
+  if (totalSP > 0) {
+    cards.push(
+      h(
+        'div',
+        { class: 'progress-card' },
+        h(
+          'div',
+          { class: 'progress-top' },
+          h('span', { class: 'progress-title' }, h('b', null, `${doneSP}/${totalSP}`), ' story points', h('span', { class: 'pct' }, `${spPct}%`)),
+          h(
+            'div',
+            { class: 'track', role: 'img', 'aria-label': spParts.map(([, label, n]) => `${label} ${n}`).join(', ') },
+            spParts.map(([tone, label, n]) => h('span', { class: `seg seg-${tone}`, style: `width:${(n / totalSP) * 100}%`, title: `${label}: ${n}` })),
+          ),
+        ),
+        h(
+          'span',
+          { class: 'legend' },
+          spParts.map(([tone, label, n]) => h('span', { class: `legend-item seg-${tone}` }, h('span', { class: 'dot' }), label, ' ', h('b', null, n))),
+        ),
+      ),
+    );
+  }
+  
+  el.replaceChildren(...cards);
 }
 
 // ---------------------------------------------------------------------------
@@ -496,7 +571,8 @@ function renderBell() {
   const badge = $('#bell-badge');
   badge.hidden = !unread;
   badge.textContent = unread > 99 ? '99+' : String(unread);
-  $('#bell').title = unread ? `${unread} thông báo mới` : 'Thông báo';
+  const bell = $('#bell');
+  if (bell) bell.title = unread ? `${unread} thông báo mới` : 'Thông báo';
 }
 
 function toggleNotif(force) {
@@ -577,6 +653,7 @@ function render() {
   for (const b of document.querySelectorAll('#views button')) b.setAttribute('aria-selected', String(b.dataset.view === state.view));
   const list = filtered();
   renderTypes();
+  renderSprints();
   renderProgress();
   renderFocus();
   renderStats();
@@ -604,7 +681,6 @@ function render() {
 
 function renderMeta() {
   const parts = [];
-  if (state.user) parts.push(`Đang xem task của ${viewedUserName()}`);
   if (state.me) {
     parts.push(state.me.name);
     if (state.me.auth.source === 'own') parts.push('tự refresh token');
@@ -613,7 +689,12 @@ function renderMeta() {
     }
   }
   if (state.fetchedAt) parts.push(`cập nhật ${state.fetchedAt.toLocaleTimeString('vi-VN', { timeStyle: 'short' })}`);
-  if (parts.length) $('#meta').textContent = parts.join(' · ');
+  
+  // Set tooltip on login button
+  const login = $('#login');
+  if (login && parts.length) {
+    login.title = parts.join(' · ');
+  }
 }
 
 function renderTypes() {
@@ -629,6 +710,35 @@ function renderTypes() {
   select.hidden = counts.size < 2;
 }
 
+function renderSprints() {
+  const sprints = new Map();
+  for (const i of state.issues) {
+    if (i.sprint) sprints.set(i.sprint.id, i.sprint);
+  }
+  const select = $('#sprint-filter');
+  if (sprints.size === 0) {
+    select.hidden = true;
+    return;
+  }
+  const sorted = [...sprints.values()].sort((a, b) => {
+    if (a.state === 'active' && b.state !== 'active') return -1;
+    if (a.state !== 'active' && b.state === 'active') return 1;
+    return b.name.localeCompare(a.name);
+  });
+  const counts = new Map();
+  for (const i of state.issues) {
+    if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
+  }
+  select.replaceChildren(
+    h('option', { value: '' }, 'Mọi sprint'),
+    ...sorted.map((s) => 
+      h('option', { value: s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''} (${counts.get(s.id) || 0})`)
+    ),
+  );
+  select.value = state.sprint || '';
+  select.hidden = false;
+}
+
 function renderFocus() {
   const el = $('#focus');
   if (state.error || !state.fetchedAt || !state.issues.length) return el.replaceChildren();
@@ -636,9 +746,10 @@ function renderFocus() {
   if (!urgent.length) return el.replaceChildren();
   const row = (i) => {
     const u = urgency(i);
+    const isDone = i.status.category === 'done';
     return h(
       'div',
-      { class: `focus-row lvl-${u.level || 'none'}`, onClick: (e) => !e.target.closest('a,button') && openDetail(i.key) },
+      { class: `focus-row lvl-${u.level || 'none'}${isDone ? ' done' : ''}`, onClick: (e) => !e.target.closest('a,button') && openDetail(i.key) },
       h('div', { class: 'focus-reasons' }, reasonChips(i)),
       h('div', { class: 'focus-main' }, typeBadge(i.type.name), keyLink(i), h('span', { class: 'focus-summary', title: i.summary }, i.summary)),
       h('div', { class: 'focus-actions' }, statusButton(i), claudeButton(i)),
@@ -698,6 +809,7 @@ function renderStats() {
     ...statusList(all).map((s) =>
       pill(s.name, all.filter((i) => i.status.name === s.name).length, tone(s), state.status === s.name, () => {
         state.status = state.status === s.name ? null : s.name;
+        state.urgentOnly = false;
         render();
       }),
     ),
@@ -769,10 +881,11 @@ function renderList(list) {
 
   const row = (i, child) => {
     const u = urgency(i);
+    const isDone = i.status.category === 'done';
     return h(
       'div',
       {
-        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${i.pending ? ' pending' : ''}`,
+        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}`,
         onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
       },
       h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
@@ -785,12 +898,26 @@ function renderList(list) {
     );
   };
 
-  const groupRow = (parent, count, hot) => {
+  // Groups whose subtasks are all finished (Done or Cancelled) start collapsed; everything else starts expanded.
+  const isClosed = (parent, items) => {
+    // Check if all subtasks in this group are done (including cancelled)
+    const allDone = items.every(i => i.status.category === 'done');
+    const override = state.closedGroups.has(parent.key);
+    // An override flips whatever the auto default would be.
+    const result = override ? !allDone : allDone;
+    if (allDone) {
+      console.log(`[isClosed] ${parent.key}: allDone=${allDone}, override=${override}, result=${result}`, items.map(i => ({ key: i.key, cat: i.status.category })));
+    }
+    return result;
+  };
+
+  const groupRow = (parent, items, count, hot) => {
     const mine = parent.url ? parent : null; // full issue DTO when the parent is also assigned to me
-    const closed = state.closedGroups.has(parent.key);
+    const closed = isClosed(parent, items);
     const toggle = () => {
-      closed ? state.closedGroups.delete(parent.key) : state.closedGroups.add(parent.key);
-      LS.set('closedGroups', [...state.closedGroups]);
+      // Any click flips the current state; store/remove the override accordingly
+      state.closedGroups.has(parent.key) ? state.closedGroups.delete(parent.key) : state.closedGroups.add(parent.key);
+      LS.set('groupFold', [...state.closedGroups]);
       render();
     };
     return h(
@@ -820,8 +947,8 @@ function renderList(list) {
     h('div', { class: 'list-head' }, ['Key', 'Tiêu đề', 'Trạng thái', 'Ưu tiên', 'Tài liệu', 'Cập nhật', ''].map((t, idx) => h('div', { class: idx === 3 ? 'h-prio' : null }, t))),
   );
   for (const g of ordered) {
-    out.append(groupRow(g.parent, g.items.length, g.items.filter(isUrgent).length));
-    if (!state.closedGroups.has(g.parent.key)) out.append(...g.items.map((i) => row(i, true)));
+    out.append(groupRow(g.parent, g.items, g.items.length, g.items.filter(isUrgent).length));
+    if (!isClosed(g.parent, g.items)) out.append(...g.items.map((i) => row(i, true)));
   }
   if (loose.length) {
     if (ordered.length) out.append(h('div', { class: 'group plain' }, h('span', { class: 'muted' }, 'Không thuộc nhóm')));
@@ -1282,8 +1409,10 @@ function showAuth(me) {
   // Older servers returned { tokenExpiresAt } instead of { auth }.
   me.auth ??= { source: 'claude', expiresAt: me.tokenExpiresAt || null };
   state.me = me;
-  $('.brand').title = `${me.name} · ${new URL(me.site).host}`;
+  const brand = $('.brand');
+  if (brand) brand.title = `${me.name} · ${new URL(me.site).host}`;
   const login = $('#login');
+  if (!login) return;
   login.hidden = me.auth.source === 'own';
   login.replaceChildren(icon('key'));
   login.title = 'Bật tự refresh: đăng nhập Atlassian một lần để dashboard có phiên riêng, không phụ thuộc token của Claude Code';
@@ -1325,6 +1454,11 @@ function init() {
   $('#refresh').addEventListener('click', () => load());
   $('#type-filter').addEventListener('change', (e) => {
     state.type = e.target.value;
+    render();
+  });
+  $('#sprint-filter').addEventListener('change', (e) => {
+    state.sprint = e.target.value ? Number(e.target.value) : null;
+    LS.set('sprint', state.sprint);
     render();
   });
   $('#jql-toggle').addEventListener('click', (e) => {
@@ -1378,7 +1512,7 @@ function init() {
   api('/api/me')
     .then(showAuth)
     .catch((e) => {
-      $('#meta').textContent = e.message;
+      toast(e.message, 'error');
       $('#login').hidden = !e.login;
     });
   load();

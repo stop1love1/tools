@@ -10,10 +10,6 @@
   <body>
     <header class="topbar">
       <div class="bar">
-        <div class="brand">
-          <span class="logo" aria-hidden="true"></span>
-          <h1>Jira của tôi</h1>
-        </div>
         <input id="search" type="search" placeholder="Tìm key, tiêu đề, parent… ( / )" aria-label="Tìm kiếm" />
         <div class="bar-actions">
           <select id="user-filter" aria-label="Xem task của" title="Xem task của ai"><option value="">Của tôi</option></select>
@@ -41,7 +37,7 @@
     <section class="subbar">
       <div class="pills" id="stats" aria-label="Lọc theo trạng thái"></div>
       <select id="type-filter" aria-label="Lọc theo loại"></select>
-      <span class="muted small bar-meta" id="meta">Đang kết nối…</span>
+      <select id="sprint-filter" aria-label="Lọc theo sprint" hidden></select>
     </section>
 
     <section class="progress-strip" id="progress-strip" aria-label="Tiến độ"></section>

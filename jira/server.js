@@ -40,7 +40,8 @@ const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 const MAX_ISSUES = 300;
 const ISSUE_FIELDS = [
   'summary', 'status', 'issuetype', 'priority', 'updated', 'created', 'duedate',
-  'parent', 'project', 'description', 'attachment', 'labels',
+  'parent', 'project', 'description', 'attachment', 'labels', 'customfield_10020',
+  'customfield_10016', // Story Points
 ];
 const LOGIN_HINT = 'Bấm “Đăng nhập Atlassian” để dashboard có phiên riêng và tự refresh.';
 
@@ -427,6 +428,15 @@ function statusDto(s) {
 
 function issueDto(issue, docs) {
   const f = issue.fields;
+  
+  // Sprint field có thể là 'sprint' hoặc customfield (thường customfield_10020)
+  const sprintField = f.sprint || f.customfield_10020;
+  const sprints = Array.isArray(sprintField) ? sprintField : sprintField ? [sprintField] : [];
+  const activeSprint = sprints.find(s => s && s.state === 'active') || sprints[sprints.length - 1] || null;
+  
+  // Story Points field (customfield_10016 is common, but may vary)
+  const storyPoints = f.customfield_10016 || null;
+  
   return {
     key: issue.key,
     url: `${BASE}/browse/${issue.key}`,
@@ -439,6 +449,8 @@ function issueDto(issue, docs) {
     updated: f.updated,
     due: f.duedate || null,
     labels: f.labels || [],
+    sprint: activeSprint ? { id: activeSprint.id, name: activeSprint.name, state: activeSprint.state } : null,
+    storyPoints,
     parent: f.parent
       ? {
           key: f.parent.key,
