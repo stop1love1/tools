@@ -133,7 +133,11 @@ const rank = (name) => {
 
 function tone(status) {
   if (!status) return 'new';
-  if (status.category === 'done') return 'done';
+  if (status.category === 'done') {
+    // Phân biệt Done thật vs Cancelled/Rejected
+    if (/cancel|hủy|huỷ|reject|won.?t|invalid|duplicate/i.test(status.name)) return 'void';
+    return 'done';
+  }
   if (status.category === 'new') return 'new';
   return /review|test|qa|uat|verif/i.test(status.name) ? 'review' : 'prog';
 }
@@ -920,6 +924,72 @@ function renderList(list) {
       LS.set('groupFold', [...state.closedGroups]);
       render();
     };
+    
+    // Count by type
+    const typeCounts = new Map();
+    for (const i of items) {
+      const typeName = i.type.name.toLowerCase();
+      let category = 'other';
+      if (typeName.includes('task')) category = 'task';
+      else if (typeName.includes('bug')) category = 'bug';
+      else if (typeName.includes('story')) category = 'story';
+      typeCounts.set(category, (typeCounts.get(category) || 0) + 1);
+    }
+    
+    const parts = [];
+    const taskCount = typeCounts.get('task') || 0;
+    const bugCount = typeCounts.get('bug') || 0;
+    const storyCount = typeCounts.get('story') || 0;
+    const otherCount = typeCounts.get('other') || 0;
+    
+    if (taskCount > 0) parts.push(`${taskCount} task${taskCount > 1 ? 's' : ''}`);
+    if (bugCount > 0) parts.push(`${bugCount} bug${bugCount > 1 ? 's' : ''}`);
+    if (storyCount > 0) parts.push(`${storyCount} stor${storyCount > 1 ? 'ies' : 'y'}`);
+    if (otherCount > 0) parts.push(`${otherCount} khác`);
+    if (hot > 0) parts.push(`${hot} gấp`);
+    
+    const claudeGroupButton = h(
+      'button',
+      {
+        class: 'icon-btn sm claude-btn',
+        title: `Mở ${parent.key} + ${items.length} subtask trong Claude Code`,
+        'aria-label': `Mở nhóm ${parent.key} trong Claude Code`,
+        onClick: async (e) => {
+          e.stopPropagation();
+          // Build combined prompt with parent + all subtasks
+          let combined = `# ${parent.key}: ${parent.summary}\n\n`;
+          if (mine) {
+            combined += issueMarkdown(mine, await getDetail(parent.key).catch(() => null));
+          } else {
+            combined += `- Jira: ${parent.url || siteOf(items[0]) + '/browse/' + parent.key}\n`;
+            combined += `- Loại: ${parent.type?.name || parent.type}\n`;
+          }
+          combined += `\n---\n\n## Subtasks (${items.length}):\n\n`;
+          for (const item of items) {
+            combined += `### ${item.key}: ${item.summary}\n`;
+            combined += `- Trạng thái: ${item.status.name}\n`;
+            combined += `- Jira: ${item.url}\n`;
+            const u = urgency(item);
+            if (u.reasons.length) combined += `- Cần chú ý: ${u.reasons.map(r => r.label).join(', ')}\n`;
+            combined += '\n';
+          }
+          combined = combined.slice(0, 11_000);
+          try {
+            await navigator.clipboard.writeText(combined);
+          } catch {
+            // Clipboard unavailable
+          }
+          try {
+            await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt: combined }) });
+            toast(`Đã mở ${parent.key} + ${items.length} subtask trong Claude Code`);
+          } catch (err) {
+            toast(`Không mở được Claude Code: ${err.message}. Nội dung đã copy.`, 'error');
+          }
+        },
+      },
+      icon('ai'),
+    );
+    
     return h(
       'div',
       {
@@ -935,9 +1005,11 @@ function renderList(list) {
       typeBadge(parent.type?.name || parent.type),
       mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Mở chi tiết', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key),
       h('span', { class: 'group-title' }, parent.summary),
-      mine && statusButton(mine),
-      h('span', { class: 'muted small' }, `${count} task`),
-      hot > 0 && h('span', { class: 'reason r-danger' }, `${hot} gấp`),
+      mine ? statusButton(mine) : h('span', { class: 'muted small' }, parts.join(', ')),
+      h('span'), // Empty prio column
+      h('span'), // Empty docs column
+      h('span'), // Empty updated column
+      claudeGroupButton,
     );
   };
 
@@ -1393,13 +1465,15 @@ async function loadUsers() {
     select.title = `Không tải được danh sách người dùng: ${e.message}`;
     return;
   }
-  const opts = state.users.users.map((u) => h('option', { value: u.accountId }, `${u.name} (${u.count})`));
+  // Sắp xếp theo tên
+  const sorted = [...state.users.users].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  const opts = sorted.map((u) => h('option', { value: u.accountId }, `${u.name} (${u.count})`));
   if (state.user && !state.users.users.some((u) => u.accountId === state.user)) {
     opts.unshift(h('option', { value: state.user }, 'Người đã chọn'));
   }
   select.replaceChildren(
     h('option', { value: '' }, 'Của tôi'),
-    h('optgroup', { label: `Thành viên ${state.users.projects.join(', ')} (60 ngày)` }, opts),
+    ...opts,
   );
   select.value = state.user;
   renderMeta();

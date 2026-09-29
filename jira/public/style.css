@@ -828,10 +828,10 @@ main {
 }
 
 .group {
-  display: flex;
+  display: grid;
+  grid-template-columns: 20px 28px 100px minmax(0, 1fr) 136px 84px 76px 92px 28px;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
   padding: 6px 10px;
   font-size: 13px;
   background: var(--surface-2);
@@ -839,6 +839,16 @@ main {
   font-weight: 600;
   cursor: pointer;
   user-select: none;
+}
+.group > .icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  justify-self: center;
+}
+.group > .icon-btn svg {
+  width: 16px;
+  height: 16px;
 }
 .group:hover {
   background: color-mix(in srgb, var(--surface-2) 70%, var(--border));
