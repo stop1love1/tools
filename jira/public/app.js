@@ -53,6 +53,8 @@ const ICONS = {
   download: '<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  rebase: '<circle cx="6" cy="18" r="2.5"/><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-3 4-6 4H8.5"/><path d="m14 3 3 3-3 3"/>',
+  unlink: '<path d="M10 14a4 4 0 0 0 5.7 0l1.3-1.3M14 10a4 4 0 0 0-5.7 0L7 11.3"/><path d="M4 4l16 16"/>',
 };
 
 function icon(name) {
@@ -418,7 +420,6 @@ async function load({ silent = false } = {}) {
     recentlyTransitioned.clear();
     if (!state.jql) $('#jql').value = data.defaultJql;
     if (state.openKey) state.openIssue = state.issues.find((i) => i.key === state.openKey) || state.openIssue;
-    loadGitSummary();
   } catch (e) {
     if (silent && state.issues.length) toast(`Failed to reload: ${e.message}`, 'error');
     else (state.error = e.message), (state.errorLogin = e.login);
@@ -858,15 +859,18 @@ function renderFocus() {
       h('div', { class: 'focus-actions' }, statusButton(i), claudeButton(i)),
     );
   };
+  const open = LS.get('focusOpen', true);
+  const toggle = () => (LS.set('focusOpen', !open), renderFocus());
   el.replaceChildren(
     h(
-      'div',
-      { class: 'focus-head' },
+      'button',
+      { class: `focus-head${open ? '' : ' closed'}`, 'aria-expanded': String(open), onClick: toggle },
+      h('span', { class: 'fold-icon' }, icon('chevRight')),
       h('h2', null, icon('flame'), 'Urgent attention'),
       h('span', { class: `count ${urgent.length ? 'hot' : ''}` }, urgent.length),
-      h('span', { class: 'muted small' }, 'Overdue, due soon (≤ 3 days), High priority or above, or has urgent label'),
+      h('span', { class: 'muted small' }, 'Overdue, due within 3 days, High priority or above, or urgent label'),
     ),
-    urgent.length
+    !open ? '' : urgent.length
       ? h(
           'div',
           { class: 'focus-list' },
@@ -1011,7 +1015,7 @@ function renderList(list) {
         onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
       },
       h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
-      h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i), gitCell(i)),
+      h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i)),
       h('div', { class: 'c-status' }, statusButton(i)),
       h('div', { class: 'c-prio' }, prio(i.priority), ' ', i.priority || ''),
       h('div', { class: 'c-docs' }, docBadges(i)),
@@ -1122,9 +1126,8 @@ function renderList(list) {
         mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key)
       ),
       // c-sum: group title
-      h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary)),
-      // c-status: status button or parts text
-      h('div', { class: 'c-status' }, mine ? statusButton(mine) : h('span', { class: 'muted small' }, parts.join(', '))),
+      h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary), h('span', { class: 'muted small nowrap' }, parts.join(', '))),
+      h('div', { class: 'c-status' }, mine ? statusButton(mine) : null),
       // c-prio: empty
       h('div', { class: 'c-prio' }),
       // c-docs: empty
@@ -1197,12 +1200,13 @@ function epicRow(epic, items, isClosed) {
       'div',
       { class: 'c-sum' },
       h('span', { class: 'group-title', title: epic.summary }, epic.summary || 'Epic'),
-      h('button', { class: 'gchip epic-branch', title: `Git branch of this epic — click to copy\nTasks: branch off it, MR back into it; one MR epic → uat`, onClick: () => copyText(`epic/${epic.key}`, 'Epic branch copied') }, icon('branch'), `epic/${epic.key}`),
+      h('span', { class: 'mini-prog', title: `${done} of ${counted.length} done` }, h('i', { style: `width:${counted.length ? Math.round((done / counted.length) * 100) : 0}%` })),
+      h('span', { class: 'muted small nowrap' }, `${done}/${counted.length}`),
     ),
     h('div', { class: 'c-status' }, mine ? statusButton(mine) : epic.status ? statusPill(epic.status) : null),
     h('div', { class: 'c-prio' }),
     h('div', { class: 'c-docs' }),
-    h('div', { class: 'c-upd muted small' }, `${done}/${counted.length} done`),
+    h('div', { class: 'c-upd' }),
     h('div', { class: 'c-act' }),
   );
 }
@@ -1338,7 +1342,7 @@ function detailHead(issue, key) {
         {
           class: 'icon-btn',
           title: 'Copy for AI: link, docs, MR, subtasks, description, comments (Markdown)',
-          'aria-label': 'Copy cho AI',
+          'aria-label': 'Copy for AI',
           onClick: async () => {
             const d = await getDetail(key).catch(() => null);
             copyText(issueMarkdown(issue, d), `Copied ${key} (with description) — paste into AI to read`);
@@ -1350,7 +1354,7 @@ function detailHead(issue, key) {
       h(
         'button',
         {
-          class: 'btn sm primary',
+          class: 'btn sm',
           title: 'Open a new Claude Code tab in Cursor with this task (with description, comments)',
           onClick: async () => sendToClaude(issue, await getDetail(key).catch(() => null)),
         },
@@ -1363,7 +1367,6 @@ function detailHead(issue, key) {
 }
 
 function renderDetail(issue, d) {
-  const isEpic = /epic/i.test(issue.type?.name || '');
   const drawer = $('#drawer');
   const scroll = $('.drawer-body', drawer)?.scrollTop || 0;
   const p = issue.parent;
@@ -1376,28 +1379,20 @@ function renderDetail(issue, d) {
   const block = (iconName, title, count, content) =>
     h('section', { class: 'block' }, h('h3', null, iconName && icon(iconName), title, count != null && h('span', { class: 'n' }, count)), content);
 
+  // One compact line of facts; the drawer's space goes to git, description and comments.
+  const fact = (label, ...value) => h('span', { class: 'fact' }, h('span', { class: 'fact-l' }, label), ...value);
   const meta = h(
-    'dl',
-    { class: 'meta' },
-    h('dt', null, 'Type'), h('dd', null, typeBadge(issue.type.name), issue.type.name),
-    h('dt', null, 'Priority'), h('dd', null, prio(issue.priority), issue.priority || '—'),
-    issue.storyPoints && [h('dt', null, 'Story Points'), h('dd', null, issue.storyPoints)],
-    issue.due && [h('dt', null, 'Due'), h('dd', null, fmtDay(issue.due), dueBadge(issue))],
-    d && [h('dt', null, 'Assignee'), h('dd', null, d.assignee || '—')],
-    d?.reporter && [h('dt', null, 'Reporter'), h('dd', null, d.reporter)],
-    p && [
-      h('dt', null, 'Parent'),
-      h(
-        'dd',
-        null,
-        h('a', { class: 'key', href: '#' + p.key, onClick: (e) => (e.preventDefault(), openDetail(p.key)) }, p.key),
-        h('span', null, p.summary),
-      ),
-    ],
-    issue.project && [h('dt', null, 'Project'), h('dd', null, issue.project.name)],
-    h('dt', null, 'Updated'), h('dd', null, `${fmtDate(issue.updated)} (${rel(issue.updated)})`),
-    h('dt', null, 'Created'), h('dd', null, fmtDate(issue.created)),
-    issue.labels.length > 0 && [h('dt', null, 'Labels'), h('dd', null, issue.labels.map((l) => h('span', { class: 'badge' }, l)))],
+    'div',
+    { class: 'meta-line' },
+    fact('Type', typeBadge(issue.type.name), issue.type.name),
+    fact('Priority', prio(issue.priority), issue.priority || '—'),
+    issue.storyPoints && fact('SP', String(issue.storyPoints)),
+    issue.due && fact('Due', fmtDay(issue.due), dueBadge(issue)),
+    d && fact('Assignee', d.assignee || '—'),
+    d?.reporter && fact('Reporter', d.reporter),
+    p && fact('Parent', h('a', { class: 'key', href: '#' + p.key, onClick: (e) => (e.preventDefault(), openDetail(p.key)) }, p.key), h('span', { class: 'fact-sum', title: p.summary }, p.summary)),
+    issue.labels.length > 0 && fact('Labels', issue.labels.map((l) => h('span', { class: 'badge' }, l))),
+    h('span', { class: 'fact muted small' }, `Updated ${rel(issue.updated)} · created ${fmtDate(issue.created)}`),
   );
 
   const docsList = h(
@@ -1420,8 +1415,7 @@ function renderDetail(issue, d) {
   const side = h(
     'div',
     { class: 'detail-side' },
-    meta,
-    block('doc', 'Confluence docs', docs.length, docsList),
+    docs.length > 0 && block('doc', 'Confluence docs', docs.length, docsList),
     issue.attachments.length > 0 &&
       block(
         'clip',
@@ -1438,7 +1432,7 @@ function renderDetail(issue, d) {
     d?.children.length > 0 &&
       block(
         'tree',
-        'Task con',
+        'Subtasks',
         d.children.length,
         h(
           'ul',
@@ -1455,13 +1449,13 @@ function renderDetail(issue, d) {
           ),
         ),
       ),
-    d && block('link', 'Merge request & links', null, renderLinks(d.links)),
+    // MRs and commits live in the Git block (with GitLab state); only other links are listed here.
+    d?.links.some((l) => l.kind === 'other') && block('link', 'Links', null, renderLinks(d.links.filter((l) => l.kind === 'other'))),
   );
 
   const main = h(
     'div',
     { class: 'detail-main' },
-    !isEpic && typeof gitFlowBlock === 'function' && gitFlowBlock(issue), // git.js missing (old server): skip the block
     block(null, 'Description', null, d ? (d.descriptionHtml ? htmlFrame(d.descriptionHtml, siteOf(issue)) : h('div', { class: 'muted small' }, 'No description.')) : loading),
     d && block('chat', 'Comments', d.comments.length, d.comments.length ? htmlFrame(commentsHtml(d.comments), siteOf(issue)) : h('div', { class: 'muted small' }, 'No comments yet.')),
   );
@@ -1473,9 +1467,10 @@ function renderDetail(issue, d) {
       { class: 'drawer-body' },
       h('h2', { class: 'detail-title' }, issue.summary),
       urgency(issue).reasons.length > 0 && h('div', { class: 'row-reasons' }, reasonChips(issue)),
-      // An epic's branch and its commits are what you open an epic for: show them first.
-      isEpic && typeof gitFlowBlock === 'function' && gitFlowBlock(issue),
-      h('div', { class: 'detail-grid' }, side, main),
+      meta,
+      // Git is what you act on: right under the title (git.js missing on an old server: skipped).
+      typeof gitFlowBlock === 'function' && gitFlowBlock(issue, d),
+      h('div', { class: `detail-grid${side.childElementCount ? '' : ' no-side'}` }, side.childElementCount ? side : null, main),
     ),
   );
   refreshDrawerStatus();
@@ -1808,9 +1803,9 @@ function init() {
   });
   $('#refresh').append(icon('refresh'));
   $('#jql-toggle').append(icon('code'));
-  $('[data-view="list"]').append(icon('list'));
-  $('[data-view="docs"]').append(icon('doc'));
-  $('[data-view="git"]').append(icon('branch'));
+  $('[data-view="list"]').append(icon('list'), h('span', null, 'Tasks'));
+  $('[data-view="docs"]').append(icon('doc'), h('span', null, 'Docs'));
+  $('[data-view="git"]').append(icon('branch'), h('span', null, 'Workspace'));
   $('#user-filter').addEventListener('change', (e) => {
     state.user = e.target.value;
     LS.set('user', state.user);

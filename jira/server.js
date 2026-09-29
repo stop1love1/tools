@@ -44,7 +44,7 @@ const ISSUE_FIELDS = [
   'parent', 'project', 'description', 'attachment', 'labels', 'customfield_10020',
   'customfield_10016', // Story Points
 ];
-const LOGIN_HINT = 'Bấm “Đăng nhập Atlassian” để dashboard có phiên riêng và tự refresh.';
+const LOGIN_HINT = 'Sign in to Atlassian (key button) to give the dashboard its own auto-refreshing session.';
 
 // ---------------------------------------------------------------------------
 // Credentials
@@ -61,7 +61,7 @@ function readClaudeCredential() {
   try {
     stat = fs.statSync(CREDENTIALS_FILE);
   } catch {
-    throw httpError(401, `Chưa đăng nhập. ${LOGIN_HINT}`);
+    throw httpError(401, `Not signed in. ${LOGIN_HINT}`);
   }
   if (stat.mtimeMs !== claudeCache.mtimeMs) {
     const data = safeJson(fs.readFileSync(CREDENTIALS_FILE, 'utf8')) || {};
@@ -72,9 +72,9 @@ function readClaudeCredential() {
     };
   }
   const cred = claudeCache.cred;
-  if (!cred) throw httpError(401, `Chưa đăng nhập. ${LOGIN_HINT}`);
+  if (!cred) throw httpError(401, `Not signed in. ${LOGIN_HINT}`);
   if (cred.expiresAt && cred.expiresAt < Date.now()) {
-    throw httpError(401, `Token MCP của Claude Code đã hết hạn lúc ${new Date(cred.expiresAt).toLocaleString('vi-VN')}. ${LOGIN_HINT}`);
+    throw httpError(401, `Claude Code's MCP token expired at ${new Date(cred.expiresAt).toLocaleString('en-US')}. ${LOGIN_HINT}`);
   }
   return cred;
 }
@@ -98,7 +98,7 @@ let metaPromise = null;
 
 function oauthMeta() {
   metaPromise ??= fetch(`${OAUTH_ISSUER}/.well-known/oauth-authorization-server`, { signal: AbortSignal.timeout(15_000) }).then(
-    (r) => (r.ok ? r.json() : Promise.reject(httpError(502, `Không đọc được OAuth metadata (HTTP ${r.status})`))),
+    (r) => (r.ok ? r.json() : Promise.reject(httpError(502, `Could not read OAuth metadata (HTTP ${r.status})`))),
   );
   metaPromise.catch(() => (metaPromise = null));
   return metaPromise;
@@ -141,7 +141,7 @@ function refreshOwn() {
     } catch (e) {
       if (e.oauthError === 'invalid_grant' || e.oauthError === 'invalid_client') {
         writeOwn(e.oauthError === 'invalid_client' ? {} : { clientId: own.clientId });
-        console.warn('[oauth] Phiên của dashboard không còn hiệu lực, cần đăng nhập lại.');
+        console.warn('[oauth] The dashboard session is no longer valid; sign in again.');
       }
       throw e;
     }
@@ -186,7 +186,7 @@ async function startLogin(res) {
       signal: AbortSignal.timeout(15_000),
     });
     const reg = await r.json().catch(() => ({}));
-    if (!r.ok || !reg.client_id) throw httpError(502, `Không đăng ký được OAuth client (HTTP ${r.status})`);
+    if (!r.ok || !reg.client_id) throw httpError(502, `Could not register the OAuth client (HTTP ${r.status})`);
     own = writeOwn({ clientId: reg.client_id });
   }
   for (const [s, p] of pendingLogins) if (Date.now() - p.createdAt > 10 * 60_000) pendingLogins.delete(s);
@@ -212,8 +212,8 @@ async function finishLogin(url, res) {
   const pending = pendingLogins.get(state);
   pendingLogins.delete(state);
   const error = url.searchParams.get('error');
-  if (error) return sendHtml(res, 400, `Đăng nhập bị huỷ: ${url.searchParams.get('error_description') || error}`);
-  if (!pending) return sendHtml(res, 400, 'Phiên đăng nhập không hợp lệ hoặc đã quá 10 phút. Hãy thử lại.');
+  if (error) return sendHtml(res, 400, `Sign-in cancelled: ${url.searchParams.get('error_description') || error}`);
+  if (!pending) return sendHtml(res, 400, 'The sign-in session is invalid or older than 10 minutes. Please try again.');
   const own = readOwn() || {};
   try {
     const data = await tokenRequest({
@@ -226,7 +226,7 @@ async function finishLogin(url, res) {
     storeTokens(own.clientId, data);
   } catch (e) {
     if (e.oauthError === 'invalid_client') writeOwn({});
-    return sendHtml(res, 502, `Không lấy được token: ${e.message}`);
+    return sendHtml(res, 502, `Could not get a token: ${e.message}`);
   }
   session = null;
   res.writeHead(302, { Location: '/' });
@@ -252,7 +252,7 @@ async function mcpPost(cred, sessionId, message) {
     signal: AbortSignal.timeout(30_000),
   });
   if (res.status === 401) {
-    throw Object.assign(httpError(401, `Atlassian MCP từ chối token. ${LOGIN_HINT}`), { unauthorized: true });
+    throw Object.assign(httpError(401, `Atlassian MCP rejected the token. ${LOGIN_HINT}`), { unauthorized: true });
   }
   const text = await res.text();
   if (message.id === undefined) return { res };
@@ -269,7 +269,7 @@ async function openSession(cred) {
     method: 'initialize',
     params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'jira-dashboard', version: '1.0.0' } },
   });
-  if (!res.ok || !reply || reply.error) throw httpError(502, `Không khởi tạo được phiên MCP (HTTP ${res.status})`);
+  if (!res.ok || !reply || reply.error) throw httpError(502, `Could not start an MCP session (HTTP ${res.status})`);
   const id = res.headers.get('mcp-session-id');
   await mcpPost(cred, id, { method: 'notifications/initialized' });
   session = { token: cred.token, id };
@@ -300,8 +300,8 @@ async function callTool(name, args) {
       session = null;
       continue;
     }
-    if (!res.ok || !reply) throw httpError(502, `MCP ${name} lỗi HTTP ${res.status}`);
-    if (reply.error) throw httpError(502, reply.error.message || `MCP ${name} lỗi`);
+    if (!res.ok || !reply) throw httpError(502, `MCP ${name} failed with HTTP ${res.status}`);
+    if (reply.error) throw httpError(502, reply.error.message || `MCP ${name} failed`);
     const text = (reply.result?.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
     const data = safeJson(text);
     if (reply.result?.isError || data?.error === true) throw httpError(400, toolErrorMessage(data?.message ?? text));
@@ -312,7 +312,7 @@ async function callTool(name, args) {
 // Tool errors wrap Jira's error JSON inside a message string, e.g.
 // "Failed to search issues: Bad Request. {"errorMessages":[...]}".
 function toolErrorMessage(message) {
-  const raw = String(message || 'Lỗi không xác định');
+  const raw = String(message || 'Unknown error');
   const start = raw.indexOf('{');
   const inner = start >= 0 ? safeJson(raw.slice(start)) : null;
   if (!inner) return raw;
@@ -410,7 +410,7 @@ async function resolvePages(ids) {
       }
       for (const id of chunk) if (!pageCache.has(id)) pageCache.set(id, null);
     } catch (e) {
-      console.warn(`[confluence] Không lấy được tiêu đề trang: ${e.message}`);
+      console.warn(`[confluence] Could not load page titles: ${e.message}`);
     }
   }
 }
@@ -430,7 +430,7 @@ function statusDto(s) {
 function issueDto(issue, docs) {
   const f = issue.fields;
   
-  // Sprint field có thể là 'sprint' hoặc customfield (thường customfield_10020)
+  // The sprint field is either 'sprint' or a custom field (usually customfield_10020)
   const sprintField = f.sprint || f.customfield_10020;
   const sprints = Array.isArray(sprintField) ? sprintField : sprintField ? [sprintField] : [];
   const activeSprint = sprints.find(s => s && s.state === 'active') || sprints[sprints.length - 1] || null;
@@ -622,32 +622,32 @@ function describeChange(item) {
   const to = str(item.toString);
   switch (item.field) {
     case 'status':
-      return { kind: 'status', text: `chuyển trạng thái ${from || '—'} → ${to || '—'}` };
+      return { kind: 'status', text: `changed status ${from || '—'} → ${to || '—'}` };
     case 'assignee':
-      return { kind: 'assign', text: to ? `giao cho ${to}` : 'bỏ người được giao' };
+      return { kind: 'assign', text: to ? `assigned to ${to}` : 'unassigned' };
     case 'description':
-      return { kind: 'edit', text: 'sửa mô tả' };
+      return { kind: 'edit', text: 'edited the description' };
     case 'summary':
-      return { kind: 'edit', text: `đổi tiêu đề thành “${to || ''}”` };
+      return { kind: 'edit', text: `renamed to “${to || ''}”` };
     case 'priority':
-      return { kind: 'edit', text: `đổi ưu tiên ${from || '—'} → ${to || '—'}` };
+      return { kind: 'edit', text: `changed priority ${from || '—'} → ${to || '—'}` };
     case 'duedate':
-      return { kind: 'edit', text: `đổi hạn ${from || '—'} → ${to || '—'}` };
+      return { kind: 'edit', text: `changed due date ${from || '—'} → ${to || '—'}` };
     case 'Attachment':
-      return { kind: 'edit', text: to ? `đính kèm ${to}` : `xoá file ${from || ''}` };
+      return { kind: 'edit', text: to ? `attached ${to}` : `removed ${from || ''}` };
     case 'IssueParentAssociation':
-      return { kind: 'edit', text: `đổi parent thành ${to || '—'}` };
+      return { kind: 'edit', text: `changed parent to ${to || '—'}` };
     case 'Sprint':
-      return { kind: 'edit', text: `chuyển sprint → ${to || '—'}` };
+      return { kind: 'edit', text: `moved to sprint ${to || '—'}` };
     case 'Story point estimate':
-      return { kind: 'edit', text: `đổi story point ${from || '—'} → ${to || '—'}` };
+      return { kind: 'edit', text: `changed story points ${from || '—'} → ${to || '—'}` };
     case 'resolution':
     case 'Rank':
     case 'Workflow':
     case 'RemoteWorkItemLink': // GitLab commit/MR auto-links
       return null; // noise that accompanies other changes
     default:
-      return { kind: 'edit', text: `sửa ${item.field}` };
+      return { kind: 'edit', text: `edited ${item.field}` };
   }
 }
 
@@ -750,13 +750,13 @@ function openInEditor(url) {
     }, 15_000);
     child.once('error', (e) => {
       clearTimeout(timer);
-      reject(httpError(500, `Không chạy được "${EDITOR_BIN}" (${e.code || e.message}). Đặt EDITOR_BIN trong .env trỏ tới lệnh cursor.`));
+      reject(httpError(500, `Could not run "${EDITOR_BIN}" (${e.code || e.message}). Set EDITOR_BIN in .env to the cursor command.`));
     });
     child.once('exit', (code) => {
       clearTimeout(timer);
       if (code === 0) return resolve();
       const last = stderr.trim().split('\n').filter((l) => !/^\[\d+:/.test(l)).pop() || '';
-      reject(httpError(500, `${EDITOR_BIN} --open-url thất bại (exit ${code}) ${last}`.trim()));
+      reject(httpError(500, `${EDITOR_BIN} --open-url failed (exit ${code}) ${last}`.trim()));
     });
   });
 }
@@ -777,13 +777,15 @@ async function doTransition(key, id) {
 // Git flow (lms backend/frontend). The epic branch follows the parent Epic on Jira; a ticket without one is its own epic.
 
 const epicCache = new Map();
+const summaryCache = new Map(); // ticket → summary, filled while resolving epics
 
 async function resolveEpic(key) {
   if (epicCache.has(key)) return epicCache.get(key);
   let epic = key;
   let cur = key;
   for (let depth = 0; depth < 3 && cur; depth++) {
-    const j = await callTool('getJiraIssue', { issueIdOrKey: cur, fields: ['parent', 'issuetype'] });
+    const j = await callTool('getJiraIssue', { issueIdOrKey: cur, fields: ['parent', 'issuetype', 'summary'] });
+    if (j.fields?.summary) summaryCache.set(cur, j.fields.summary);
     if (/epic/i.test(j.fields?.issuetype?.name || '')) {
       epic = cur;
       break;
@@ -799,7 +801,7 @@ async function resolveEpic(key) {
   return epic;
 }
 
-const gitApi = createGitApi({ httpError, readJson, resolveEpic, editorBin: EDITOR_BIN });
+const gitApi = createGitApi({ httpError, readJson, resolveEpic, ticketSummary: (key) => summaryCache.get(key), editorBin: EDITOR_BIN });
 
 // ---------------------------------------------------------------------------
 // HTTP server
@@ -815,7 +817,7 @@ const server = http.createServer(async (req, res) => {
   try {
     // Reject DNS-rebinding requests: only answer to our own loopback host names.
     if (![`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(req.headers.host)) {
-      return send(res, 421, { error: 'Host không hợp lệ' });
+      return send(res, 421, { error: 'Invalid host' });
     }
     const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -850,7 +852,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/claude-code') {
       const body = await readJson(req);
       const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
-      if (!prompt || prompt.length > MAX_PROMPT) return send(res, 400, { error: 'Prompt rỗng hoặc quá dài' });
+      if (!prompt || prompt.length > MAX_PROMPT) return send(res, 400, { error: 'Prompt is empty or too long' });
       await openInEditor(`${EDITOR_URI_SCHEME}://anthropic.claude-code/open?prompt=${encodeURIComponent(prompt)}`);
       return send(res, 200, { ok: true });
     }
@@ -865,7 +867,7 @@ const server = http.createServer(async (req, res) => {
       // Viewing someone else: the same JQL with currentUser() swapped for their account id.
       const user = url.searchParams.get('user') || '';
       if (user) {
-        if (!/^[A-Za-z0-9:_-]{1,128}$/.test(user)) return send(res, 400, { error: 'accountId không hợp lệ' });
+        if (!/^[A-Za-z0-9:_-]{1,128}$/.test(user)) return send(res, 400, { error: 'Invalid accountId' });
         jql = jql.replace(/currentUser\(\)/g, `"${user}"`);
       }
       const issues = await listIssues(jql);
@@ -879,7 +881,7 @@ const server = http.createServer(async (req, res) => {
       if (m[2] && req.method === 'GET') return send(res, 200, { transitions: await listTransitions(key) });
       if (m[2] && req.method === 'POST') {
         const body = await readJson(req);
-        if (!body || !/^\d+$/.test(String(body.id))) return send(res, 400, { error: 'Thiếu transition id' });
+        if (!body || !/^\d+$/.test(String(body.id))) return send(res, 400, { error: 'Missing transition id' });
         return send(res, 200, await doTransition(key, body.id));
       }
     }
@@ -887,7 +889,7 @@ const server = http.createServer(async (req, res) => {
     send(res, 404, { error: 'Not found' });
   } catch (e) {
     const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 502;
-    const message = e.name === 'TimeoutError' ? 'Atlassian MCP phản hồi quá chậm (timeout)' : e.message;
+    const message = e.name === 'TimeoutError' ? 'Atlassian MCP timed out' : e.message;
     if (req.url.startsWith('/oauth/')) return sendHtml(res, status, message);
     send(res, status, { error: message, login: status === 401 });
   }
@@ -903,7 +905,7 @@ server.listen(PORT, HOST, () => {
 setInterval(() => {
   const own = readOwn();
   if (own?.refreshToken && own.expiresAt - 30 * 60_000 < Date.now()) {
-    refreshOwn().catch((e) => console.warn(`[oauth] Refresh lỗi: ${e.message}`));
+    refreshOwn().catch((e) => console.warn(`[oauth] Refresh failed: ${e.message}`));
   }
 }, 10 * 60_000).unref();
 
@@ -925,7 +927,7 @@ function sendHtml(res, status, message) {
   res.end(
     `<!doctype html><meta charset="utf-8"><title>Jira dashboard</title>` +
       `<body style="font:15px system-ui;max-width:560px;margin:15vh auto;padding:0 16px">` +
-      `<p>${esc}</p><p><a href="/oauth/login">Thử đăng nhập lại</a> · <a href="/">Về dashboard</a></p></body>`,
+      `<p>${esc}</p><p><a href="/oauth/login">Try signing in again</a> · <a href="/">Back to the dashboard</a></p></body>`,
   );
 }
 
@@ -936,7 +938,7 @@ function readJson(req) {
     req.on('data', (c) => {
       size += c.length;
       if (size > 64_000) {
-        reject(httpError(413, 'Body quá lớn'));
+        reject(httpError(413, 'Request body too large'));
         req.destroy();
       } else chunks.push(c);
     });

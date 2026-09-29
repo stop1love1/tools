@@ -33,7 +33,7 @@ const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', GIT_SEQUENCE_EDI
 const GLAB_BIN = process.env.GLAB_BIN || 'glab';
 const MR_DAYS = 90; // MRs updated within this window are matched to branches
 
-function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
+function createGitApi({ httpError, readJson, resolveEpic, ticketSummary = () => null, editorBin }) {
   // -------------------------------------------------------------------------
   // Plumbing
 
@@ -340,6 +340,9 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     ]);
     out.pending = vsUat?.onlyA ?? null;
     out.behindUat = vsUat?.onlyB ?? null;
+    // Last time GitLab merged this epic into uat ("Merge branch 'epic/X' into 'uat'").
+    const [mSha, mDate, mSubject] = (await git(cwd, ['log', 'origin/uat', '--first-parent', '--merges', SINCE, '-n1', '-F', '--format=%h%x00%cI%x00%s', '--grep', `'${name}'`])).stdout.trim().split('\0');
+    out.mergedToUat = mSha ? { sha: mSha, date: mDate, subject: mSubject } : null;
 
     const FMT = '--format=%H%x00%P%x00%s%x00%an%x00%cI';
     const parse = (l) => {
@@ -397,95 +400,19 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       for (const g of groups) for (const c of g.commits) if (c.ticket === t && onBranch.has(c.subject)) c.onDevBranch = true;
     }
     out.branches = branches;
+    // Jira decides which tickets belong to this epic; commits of other epics' tickets must not be picked from here.
+    out.ticketEpics = {};
+    out.ticketTitles = {};
+    await pool([...tickets], 4, async (t) => {
+      out.ticketEpics[t] = await resolveEpic(t).catch(() => null);
+      out.ticketTitles[t] = ticketSummary(t) || '';
+    });
     out.groups = groups.reverse(); // newest first
     out.total = chain.length;
     return out;
   }
 
   const strip = ({ parents, ...c }) => c;
-
-  // -------------------------------------------------------------------------
-  // Read: git stage of many tickets at once (task list). Lighter than repoFlow: subject matching only.
-
-  const summaryCache = new Map(); // keys → { at, promise }
-
-  function summary(keys) {
-    const id = keys.join(',');
-    const hit = summaryCache.get(id);
-    if (hit && Date.now() - hit.at < 20_000) return hit.promise;
-    const promise = (async () => {
-      const entries = await Promise.all(Object.keys(REPOS).map(async (r) => [r, await repoSummary(r, keys).catch((e) => ({ error: e.message }))]));
-      return { repos: Object.fromEntries(entries) };
-    })();
-    summaryCache.clear();
-    summaryCache.set(id, { at: Date.now(), promise });
-    return promise;
-  }
-
-  async function repoSummary(repo, keys) {
-    const cwd = REPOS[repo];
-    const [{ local, remote }, main] = await Promise.all([refs(cwd), wtState(cwd)]);
-    const all = [...new Set([...local.keys(), ...remote.keys()])];
-    const date = (b) => Math.max(local.get(b)?.date || 0, remote.get(b)?.date || 0);
-    const tipOf = (b) => (local.has(b) ? `refs/heads/${b}` : `origin/${b}`);
-    const dirty = main.files.filter((f) => f.xy !== '??').length;
-
-    // Branches GitLab merged into uat or an epic ("Merge branch 'x' into 'y'").
-    const merged = new Set();
-    const targets = ['uat', ...[...remote.keys()].filter((b) => b.startsWith('epic/'))];
-    await pool(targets, 6, async (t) => {
-      const r = await git(cwd, ['log', `origin/${t}`, '--first-parent', '--merges', SINCE, '--format=%s']);
-      for (const line of r.stdout.split('\n')) {
-        const m = line.match(/^Merge branch '([^']+)'/);
-        if (m) merged.add(m[1]);
-      }
-    });
-    const nums = keys.map((k) => k.split('-')[1]);
-    const subjectsOn = async (refs, ids) =>
-      new Set((await git(cwd, ['log', '--no-merges', '-E', SINCE, '--format=%s', ...ids.flatMap((n) => ['--grep', `^VLEARN-${n}:`]), ...[refs].flat(), '--'])).stdout.split('\n').filter(Boolean));
-    const epicRefs = targets.filter((t) => t !== 'uat').map((t) => `origin/${t}`);
-    const [inUat, inDevelop, onEpics] = await Promise.all([
-      subjectsOn('origin/uat', nums),
-      subjectsOn('origin/develop', nums),
-      epicRefs.length ? subjectsOn(epicRefs, nums) : new Set(),
-    ]);
-
-    const out = {};
-    await pool(keys, 8, async (key) => {
-      const num = key.split('-')[1];
-      const pick = (suffix) =>
-        all
-          .filter((b) => {
-            const m = b.match(TASK_RE);
-            return m && m[4] === suffix && m[2].split('-').includes(num);
-          })
-          .sort((a, b) => (b === main.branch) - (a === main.branch) || date(b) - date(a))[0] || null;
-      const uat = pick('uat');
-      const dev = pick('develop');
-      if (!uat && !dev) return;
-      const ids = ticketIds(uat || dev);
-      const commits = await ticketCommits(cwd, [tipOf(uat || dev)], ids);
-      const onDevBranch = dev ? await subjectsOn(tipOf(dev), ids) : new Set();
-      const current = [uat, dev].includes(main.branch) ? main.branch : null;
-      out[key] = {
-        uat,
-        dev,
-        current,
-        dirty: current ? dirty : 0,
-        pushed: !!uat && remote.has(uat),
-        unpushed: uat && local.has(uat) && remote.has(uat) ? (await counts(cwd, `refs/heads/${uat}`, `origin/${uat}`))?.onlyA || 0 : 0,
-        inEpic: !!uat && merged.has(uat),
-        // on an epic, but without the task's merge commit (can't be reverted in one step)
-        onEpicNoMerge: !!uat && !merged.has(uat) && commits.length > 0 && commits.every((c) => onEpics.has(c.subject)),
-        commits: commits.length,
-        inUat: commits.length > 0 && commits.every((c) => inUat.has(c.subject)),
-        picked: commits.filter((c) => inDevelop.has(c.subject) || onDevBranch.has(c.subject)).length,
-        inDevelop: commits.length > 0 && commits.every((c) => inDevelop.has(c.subject)),
-        devPushed: !!dev && remote.has(dev),
-      };
-    });
-    return { current: main.branch, tickets: out };
-  }
 
   async function flow(key, epicKey) {
     const epic = epicKey || (await resolveEpic(key).catch(() => key));
@@ -574,7 +501,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       execFile(GLAB_BIN, ['api', '--hostname', host, '--paginate', endpoint], { timeout: 20_000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (err) {
           const text = String(stderr || err.message);
-          const why = err.code === 'ENOENT' ? 'không tìm thấy glab' : err.killed || /timeout|dial tcp/i.test(text) ? 'GitLab không phản hồi (VPN?)' : text.trim().split('\n').pop();
+          const why = err.code === 'ENOENT' ? 'glab not found' : err.killed || /timeout|dial tcp/i.test(text) ? 'GitLab not reachable (VPN?)' : text.trim().split('\n').pop();
           return reject(httpError(502, why));
         }
         // --paginate prints one JSON array per page.
@@ -586,7 +513,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
 
   async function projectMrs(repo) {
     const web = await webUrl(REPOS[repo]);
-    if (!web) throw httpError(400, 'origin không phải repo GitLab');
+    if (!web) throw httpError(400, 'origin is not a GitLab repository');
     const u = new URL(web);
     const since = new Date(Date.now() - MR_DAYS * 86_400_000).toISOString();
     const list = await glabApi(u.host, `projects/${encodeURIComponent(u.pathname.slice(1))}/merge_requests?state=all&per_page=100&updated_after=${since}`);
@@ -647,7 +574,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
         const text = (r.stdout + (r.stdout && r.stderr ? '\n' : '') + r.stderr).trim();
         if (text) job.log.push(text.length > 8000 ? '…' + text.slice(-8000) : text);
         if (r.timedOut) job.log.push('(timeout)');
-        if (r.code && !opts.allowFail) throw new Error(opts.failMsg || `git ${args[0]} thất bại (exit ${r.code})`);
+        if (r.code && !opts.allowFail) throw new Error(opts.failMsg || `git ${args[0]} failed (exit ${r.code})`);
         return r;
       },
     };
@@ -663,10 +590,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
           job.error = e.message;
         },
       )
-      .finally(() => {
-        job.endedAt = Date.now();
-        summaryCache.clear();
-      });
+      .finally(() => (job.endedAt = Date.now()));
     return job;
   }
 
@@ -685,9 +609,9 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
 
   async function ensureClean(dir, what) {
     const s = await wtState(dir);
-    if (s.op) throw httpError(409, `${tilde(dir)} đang dở ${s.op} — xử lý (Continue / Abort) trước.`);
+    if (s.op) throw httpError(409, `${tilde(dir)} is in the middle of a ${s.op} — Continue or Abort it first.`);
     const changed = s.files.filter((f) => f.xy !== '??');
-    if (changed.length) throw httpError(409, `${tilde(dir)} có ${changed.length} file chưa commit${what ? ` (${what})` : ''} — commit hoặc stash trước.`);
+    if (changed.length) throw httpError(409, `${tilde(dir)} has ${changed.length} uncommitted file(s)${what ? ` (${what})` : ''} — commit or stash first.`);
     return s;
   }
 
@@ -702,9 +626,9 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     }
     const dir = path.join(SCRATCH_ROOT, `dash-${repo}`);
     if (!wts.some((w) => path.resolve(w.path) === dir)) {
-      if (fs.existsSync(dir)) throw httpError(409, `${tilde(dir)} đã tồn tại nhưng không phải worktree của ${repo}.`);
+      if (fs.existsSync(dir)) throw httpError(409, `${tilde(dir)} exists but is not a worktree of ${repo}.`);
       fs.mkdirSync(SCRATCH_ROOT, { recursive: true });
-      ctx.log(`Tạo worktree tạm ${tilde(dir)} để không đụng vào checkout đang làm việc.`);
+      ctx.log(`Creating scratch worktree ${tilde(dir)} so your own checkout is left alone.`);
       await ctx.run(cwd, ['worktree', 'add', '--detach', dir, 'origin/uat'], { noHooks: true, timeout: 600_000 });
     }
     await ensureClean(dir);
@@ -718,11 +642,11 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     if (!sha) return null;
     const ref = `${BACKUP_NS}${branch}/${stamp()}`;
     await ctx.run(cwd, ['update-ref', ref, sha]);
-    ctx.log(`↳ đã lưu backup ${sha.slice(0, 9)} (Undo để quay lại)`);
+    ctx.log(`↳ backed up ${sha.slice(0, 9)} (Undo restores it)`);
     return ref;
   }
 
-  const fetchOrigin = (ctx, repo) => ctx.run(REPOS[repo], ['fetch', 'origin', '--prune'], { timeout: 300_000, failMsg: 'git fetch thất bại (VPN / SSH key?)' });
+  const fetchOrigin = (ctx, repo) => ctx.run(REPOS[repo], ['fetch', 'origin', '--prune'], { timeout: 300_000, failMsg: 'git fetch failed (VPN / SSH key?)' });
 
   const remoteHas = async (repo, branch) => !!(await git(REPOS[repo], ['rev-parse', '--verify', '-q', `refs/remotes/origin/${branch}`])).stdout.trim();
   const localHas = async (repo, branch) => !!(await git(REPOS[repo], ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])).stdout.trim();
@@ -741,7 +665,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     args.push('origin', branch);
     await ctx.run(REPOS[repo], args, {
       timeout: 300_000,
-      failMsg: force ? 'Push thất bại — origin đã có commit mới, fetch lại rồi thử lần nữa.' : 'Push bị từ chối — nhánh local lệch origin (cần Rebase trước?).',
+      failMsg: force ? 'Push failed — origin has new commits; fetch and try again.' : 'Push rejected — the local branch diverged from origin (rebase first?).',
     });
   }
 
@@ -753,28 +677,28 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     async 'ensure-epic'(ctx, { repo, epic }) {
       const name = `epic/${issueKey(epic)}`;
       await fetchOrigin(ctx, repo);
-      if (await remoteHas(repo, name)) return ctx.log(`${name} đã có trên origin — dùng lại.`);
+      if (await remoteHas(repo, name)) return ctx.log(`${name} already exists on origin — reusing it.`);
       await ctx.run(REPOS[repo], ['push', 'origin', `refs/remotes/origin/uat:refs/heads/${name}`], { timeout: 300_000 });
-      ctx.log(`Đã tạo ${name} từ origin/uat.`);
+      ctx.log(`Created ${name} from origin/uat.`);
     },
 
     async 'create-task'(ctx, { repo, epic, branch }) {
       branch = taskBranch(branch, 'uat');
       const epicName = `epic/${issueKey(epic)}`;
       await fetchOrigin(ctx, repo);
-      if ((await localHas(repo, branch)) || (await remoteHas(repo, branch))) throw httpError(409, `${branch} đã tồn tại.`);
+      if ((await localHas(repo, branch)) || (await remoteHas(repo, branch))) throw httpError(409, `${branch} already exists.`);
       if (!(await remoteHas(repo, epicName))) {
         await ctx.run(REPOS[repo], ['push', 'origin', `refs/remotes/origin/uat:refs/heads/${epicName}`], { timeout: 300_000 });
-        ctx.log(`Chưa có ${epicName} → đã tạo từ origin/uat.`);
+        ctx.log(`${epicName} did not exist → created from origin/uat.`);
       }
       const cwd = REPOS[repo];
       const main = await wtState(cwd);
       if (!main.op && !main.files.some((f) => f.xy !== '??')) {
         await ctx.run(cwd, ['switch', '--no-track', '-c', branch, `origin/${epicName}`]);
-        ctx.log(`Đã checkout ${branch} trong ${tilde(cwd)}.`);
+        ctx.log(`Checked out ${branch} in ${tilde(cwd)}.`);
       } else {
         await ctx.run(cwd, ['branch', '--no-track', branch, `origin/${epicName}`]);
-        ctx.log(`${tilde(cwd)} đang có thay đổi chưa commit nên chỉ tạo nhánh, chưa checkout.`);
+        ctx.log(`${tilde(cwd)} has uncommitted changes, so the branch was created but not checked out.`);
       }
     },
 
@@ -783,7 +707,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     async 'start-task'(ctx, { repos, key: ticket, epic, branch, stash }) {
       branch = taskBranch(branch, 'uat');
       const list = (Array.isArray(repos) ? repos : []).filter((r) => Object.hasOwn(REPOS, r));
-      if (!list.length) throw httpError(400, 'Chọn ít nhất 1 repo.');
+      if (!list.length) throw httpError(400, 'Pick at least one repo.');
       const epicKey = issueKey(epic || (await resolveEpic(issueKey(ticket)).catch(() => ticket)));
       const epicName = `epic/${epicKey}`;
       ctx.log(`Epic: ${epicName}`);
@@ -791,43 +715,43 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       for (const repo of list) {
         const cwd = REPOS[repo];
         ctx.log(`\n── ${repo} ──`);
-        await ctx.run(cwd, ['fetch', 'origin', '--prune'], { timeout: 300_000, failMsg: 'git fetch thất bại (VPN / SSH key?)' });
+        await ctx.run(cwd, ['fetch', 'origin', '--prune'], { timeout: 300_000, failMsg: 'git fetch failed (VPN / SSH key?)' });
         const exists = (await localHas(repo, branch)) || (await remoteHas(repo, branch));
         if (!exists && !(await remoteHas(repo, epicName))) {
           await ctx.run(cwd, ['push', 'origin', `refs/remotes/origin/uat:refs/heads/${epicName}`], { timeout: 300_000 });
-          ctx.log(`Chưa có ${epicName} → đã tạo từ origin/uat.`);
+          ctx.log(`${epicName} did not exist → created from origin/uat.`);
         }
         const wt = (await worktrees(cwd)).find((w) => w.branch === branch);
-        if (wt && path.resolve(wt.path) !== path.resolve(cwd)) throw httpError(409, `${branch} đang checkout ở ${tilde(wt.path)}.`);
+        if (wt && path.resolve(wt.path) !== path.resolve(cwd)) throw httpError(409, `${branch} is checked out at ${tilde(wt.path)}.`);
         const s = await wtState(cwd);
-        if (s.op) throw httpError(409, `${tilde(cwd)} đang dở ${s.op} — xử lý trước.`);
+        if (s.op) throw httpError(409, `${tilde(cwd)} is in the middle of a ${s.op} — finish it first.`);
         if (s.branch === branch) {
-          ctx.log(`Đang ở ${branch} rồi.`);
+          ctx.log(`Already on ${branch}.`);
           done.push(repo);
           continue;
         }
         if (s.files.some((f) => f.xy !== '??')) {
-          if (!stash) throw httpError(409, `${tilde(cwd)} có thay đổi chưa commit trên ${s.branch} — bật "stash" hoặc commit trước.`);
+          if (!stash) throw httpError(409, `${tilde(cwd)} has uncommitted changes on ${s.branch} — enable "stash" or commit first.`);
           await ctx.run(cwd, ['stash', 'push', '--include-untracked', '-m', `dashboard: ${s.branch || 'detached'} before ${branch}`]);
-          ctx.log(`↳ thay đổi trên ${s.branch} đã stash (Pop lại ở tab Git).`);
+          ctx.log(`↳ changes on ${s.branch} stashed (pop them from the Workspace tab).`);
         }
         await ctx.run(cwd, exists ? ['switch', branch] : ['switch', '--no-track', '-c', branch, `origin/${epicName}`], { timeout: 600_000 });
         done.push(repo);
       }
-      ctx.log(`\nSẵn sàng code trên ${branch} (${done.join(', ')}). Commit: "${branch.match(/VLEARN-\d+/)[0]}: <mô tả tiếng Anh>".`);
+      ctx.log(`\nReady to code on ${branch} (${done.join(', ')}). Commit as "${branch.match(/VLEARN-\d+/)[0]}: <what changed, in English>".`);
       return { branch, repos: done, epic: epicKey };
     },
 
     async 'stash-pop'(ctx, { repo, ref }) {
-      if (typeof ref !== 'string' || !/^stash@\{\d+\}$/.test(ref)) throw httpError(400, 'Stash không hợp lệ.');
+      if (typeof ref !== 'string' || !/^stash@\{\d+\}$/.test(ref)) throw httpError(400, 'Invalid stash.');
       const cwd = REPOS[repo];
       try {
         await ctx.run(cwd, ['stash', 'pop', ref]);
       } catch (e) {
         const files = (await git(cwd, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
         if (!files.length) throw e;
-        ctx.log('Pop bị conflict — stash vẫn được giữ; sửa file rồi commit hoặc `git checkout -- <file>`.');
-        throw new Error(`Conflict khi pop: ${files.join(', ')}`);
+        ctx.log('Pop hit a conflict — the stash is kept; fix the files, then commit or `git checkout -- <file>`.');
+        throw new Error(`Conflict while popping: ${files.join(', ')}`);
       }
     },
 
@@ -836,31 +760,31 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       const cwd = REPOS[repo];
       await ensureClean(cwd, 'checkout');
       const wt = (await worktrees(cwd)).find((w) => w.branch === branch);
-      if (wt) throw httpError(409, `${branch} đang được checkout ở ${tilde(wt.path)}.`);
+      if (wt) throw httpError(409, `${branch} is checked out at ${tilde(wt.path)}.`);
       await ctx.run(cwd, ['switch', branch], { timeout: 600_000 });
     },
 
     async commit(ctx, { repo, message, files }) {
       const cwd = REPOS[repo];
       message = typeof message === 'string' ? message.trim() : '';
-      if (!/^VLEARN-\d+: \S/.test(message)) throw httpError(400, 'Commit message phải có dạng "VLEARN-123: <mô tả tiếng Anh>".');
+      if (!/^VLEARN-\d+: \S/.test(message)) throw httpError(400, 'The commit message must look like "VLEARN-123: <what changed, in English>".');
       const s = await wtState(cwd);
-      if (s.op) throw httpError(409, `Đang dở ${s.op} — xử lý trước khi commit.`);
+      if (s.op) throw httpError(409, `A ${s.op} is in progress — finish it before committing.`);
       const branchTicket = (s.branch || '').match(/VLEARN-\d+/)?.[0];
-      if (branchTicket && !message.startsWith(branchTicket + ':')) throw httpError(400, `Nhánh ${s.branch} yêu cầu message bắt đầu bằng "${branchTicket}: ".`);
+      if (branchTicket && !message.startsWith(branchTicket + ':')) throw httpError(400, `Branch ${s.branch} needs messages starting with "${branchTicket}: ".`);
       const known = new Set(s.files.map((f) => f.path));
       const pick = Array.isArray(files) ? files.filter((f) => typeof f === 'string' && known.has(f)) : [];
-      if (!pick.length) throw httpError(400, 'Chưa chọn file nào.');
+      if (!pick.length) throw httpError(400, 'No file selected.');
       const skipStaged = s.files.filter((f) => !pick.includes(f.path) && f.xy[0] !== '.' && f.xy !== '??').map((f) => f.path);
       if (skipStaged.length) await ctx.run(cwd, ['restore', '--staged', '--', ...skipStaged]);
       await ctx.run(cwd, ['add', '-A', '--', ...pick]);
-      ctx.log('Chạy commit (hooks: lint-staged, typecheck, gitleaks… có thể mất vài phút)');
-      await ctx.run(cwd, ['commit', '-m', message], { timeout: 30 * 60_000, env: hookEnv(), failMsg: 'Commit thất bại — xem log hook ở trên.' });
+      ctx.log('Committing (hooks: lint-staged, typecheck, gitleaks… may take a few minutes)');
+      await ctx.run(cwd, ['commit', '-m', message], { timeout: 30 * 60_000, env: hookEnv(), failMsg: 'Commit failed — see the hook output above.' });
     },
 
     async push(ctx, { repo, branch, force }) {
       branch = anyBranch(branch);
-      if (['uat', 'develop', 'main'].includes(branch) || branch.startsWith('release/')) throw httpError(400, `Không push thẳng vào ${branch}.`);
+      if (['uat', 'develop', 'main'].includes(branch) || branch.startsWith('release/')) throw httpError(400, `Never push straight to ${branch}.`);
       await push(ctx, repo, branch, { force: !!force });
     },
 
@@ -869,12 +793,12 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       branch = taskBranch(branch, 'uat');
       const epicName = `epic/${issueKey(epic)}`;
       await fetchOrigin(ctx, repo);
-      if (!(await remoteHas(repo, epicName))) throw httpError(409, `Chưa có ${epicName} trên origin.`);
+      if (!(await remoteHas(repo, epicName))) throw httpError(409, `${epicName} is not on origin.`);
       const dir = await dirFor(ctx, repo, branch);
       if (await remoteHas(repo, branch)) {
         const c = await counts(dir, branch, `origin/${branch}`);
         if (c?.onlyB && !c.onlyA) await ctx.run(dir, ['merge', '--ff-only', `origin/${branch}`]);
-        else if (c?.onlyB) ctx.log(`⚠ Local và origin/${branch} lệch nhau — lấy bản local làm chuẩn.`);
+        else if (c?.onlyB) ctx.log(`⚠ Local and origin/${branch} diverged — keeping the local version.`);
       }
       await backup(ctx, dir, branch);
       try {
@@ -890,11 +814,11 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     async 'rebase-epic'(ctx, { repo, epic }) {
       const name = `epic/${issueKey(epic)}`;
       await fetchOrigin(ctx, repo);
-      if (!(await remoteHas(repo, name))) throw httpError(409, `Chưa có ${name} trên origin.`);
+      if (!(await remoteHas(repo, name))) throw httpError(409, `${name} is not on origin.`);
       const lease = (await git(REPOS[repo], ['rev-parse', `origin/${name}`])).stdout.trim();
       const dir = await dirFor(ctx, repo, name);
       const c = await counts(dir, name, `origin/${name}`);
-      if (c?.onlyA) throw httpError(409, `${name} local có ${c.onlyA} commit chưa có trên origin — kiểm tra lại trước khi rebase epic dùng chung.`);
+      if (c?.onlyA) throw httpError(409, `Local ${name} has ${c.onlyA} commit(s) not on origin — check them before rebasing a shared epic.`);
       if (c?.onlyB) await ctx.run(dir, ['merge', '--ff-only', `origin/${name}`]);
       await backup(ctx, dir, name);
       try {
@@ -903,29 +827,35 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
         return conflictOr(e, dir);
       }
       await push(ctx, repo, name, { force: true, lease });
-      ctx.log('⚠ Báo team: các nhánh task đang mở cần Rebase lại lên epic.');
+      ctx.log('⚠ Tell the team: open task branches need a rebase onto the epic.');
       return { dir };
     },
 
     // Cherry-pick the task's regular commits onto the -develop branch (rule "Develop track").
     async 'pick-develop'(ctx, { repo, branch, shas }) {
       branch = taskBranch(branch, 'develop');
-      if (!Array.isArray(shas) || !shas.length || shas.length > 100 || !shas.every((s) => SHA_RE.test(s))) throw httpError(400, 'Danh sách commit không hợp lệ.');
+      if (!Array.isArray(shas) || !shas.length || shas.length > 100 || !shas.every((s) => SHA_RE.test(s))) throw httpError(400, 'Invalid commit list.');
       await fetchOrigin(ctx, repo);
+      // The rule picks regular commits only; a merge commit would stop cherry-pick with a fatal error.
+      // A -develop branch carries its own tickets only (never another task's or another epic's commits).
+      const own = ticketIds(branch);
+      const regular = [];
+      const foreign = [];
+      for (const sha of shas) {
+        const [parentLine, subject] = (await git(REPOS[repo], ['log', '-1', '--format=%P%x00%s', sha])).stdout.trim().split('\0');
+        const id = subject?.match(/^VLEARN-(\d+):/)?.[1];
+        if (parentLine.split(' ').length > 1) ctx.log(`Skipping merge commit ${sha.slice(0, 9)}.`);
+        else if (id && own.length && !own.includes(id)) foreign.push(`${sha.slice(0, 9)} ${subject}`);
+        else regular.push(sha);
+      }
+      if (foreign.length) throw httpError(400, `These commits belong to other tickets than ${branch}:\n${foreign.join('\n')}`);
+      if (!regular.length) throw httpError(400, 'No regular commits to cherry-pick.');
       const exists = (await localHas(repo, branch)) || (await remoteHas(repo, branch));
       const dir = exists ? await dirFor(ctx, repo, branch) : await dirFor(ctx, repo, branch, { createFrom: 'origin/develop' });
       if (exists && (await remoteHas(repo, branch))) {
         const c = await counts(dir, branch, `origin/${branch}`);
         if (c?.onlyB && !c.onlyA) await ctx.run(dir, ['merge', '--ff-only', `origin/${branch}`]);
       }
-      // The rule picks regular commits only; a merge commit would stop cherry-pick with a fatal error.
-      const regular = [];
-      for (const sha of shas) {
-        const parents = (await git(dir, ['rev-list', '--parents', '-n1', sha])).stdout.trim().split(' ').length - 1;
-        if (parents > 1) ctx.log(`Bỏ qua merge commit ${sha.slice(0, 9)}.`);
-        else regular.push(sha);
-      }
-      if (!regular.length) throw httpError(400, 'Không có commit thường nào để cherry-pick.');
       await backup(ctx, dir, branch);
       try {
         await ctx.run(dir, ['cherry-pick', ...regular], { noHooks: true, timeout: 600_000 });
@@ -946,17 +876,17 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       dir = wt.path;
       if (wt.scratch) ctx.scratchDir = dir;
       const op = await operation(dir);
-      if (!op || op === 'merge') throw httpError(409, 'Không có rebase / cherry-pick nào đang dở ở đây.');
+      if (!op || op === 'merge') throw httpError(409, 'No rebase or cherry-pick in progress here.');
       const unmerged = (await git(dir, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
       const marked = unmerged.filter((f) => /^(<{7}|>{7}) /m.test(safeRead(path.join(dir, f))));
-      if (marked.length) throw httpError(409, `Còn conflict marker trong: ${marked.join(', ')}`);
+      if (marked.length) throw httpError(409, `Conflict markers are still in: ${marked.join(', ')}`);
       if (unmerged.length) await ctx.run(dir, ['add', '--', ...unmerged]);
       try {
         await ctx.run(dir, [op, '--continue'], { noHooks: true, timeout: 600_000 });
       } catch (e) {
         return conflictOr(e, dir);
       }
-      ctx.log(`Xong ${op}. Bấm Push để đưa lên origin.`);
+      ctx.log(`${op} finished. Push to update origin.`);
       return { dir };
     },
 
@@ -965,7 +895,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       dir = wt.path;
       if (wt.scratch) ctx.scratchDir = dir;
       const op = await operation(dir);
-      if (op !== 'rebase' && op !== 'cherry-pick') throw httpError(409, 'Không có rebase / cherry-pick nào đang dở ở đây.');
+      if (op !== 'rebase' && op !== 'cherry-pick') throw httpError(409, 'No rebase or cherry-pick in progress here.');
       try {
         await ctx.run(dir, [op, '--skip'], { noHooks: true, timeout: 600_000 });
       } catch (e) {
@@ -979,7 +909,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       dir = wt.path;
       if (wt.scratch) ctx.scratchDir = dir;
       const op = await operation(dir);
-      if (!op) throw httpError(409, 'Không có thao tác nào đang dở ở đây.');
+      if (!op) throw httpError(409, 'Nothing in progress here.');
       await ctx.run(dir, [op, '--abort'], { noHooks: true });
     },
 
@@ -988,7 +918,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       branch = anyBranch(branch);
       const cwd = REPOS[repo];
       const [latest] = await backupsOf(cwd, branch);
-      if (!latest) throw httpError(404, `Không có backup nào cho ${branch}.`);
+      if (!latest) throw httpError(404, `No backup for ${branch}.`);
       const wt = (await worktrees(cwd)).find((w) => w.branch === branch);
       if (wt) await ensureClean(wt.path, branch);
       const current = (await git(cwd, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])).stdout.trim();
@@ -999,22 +929,22 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
         await ctx.run(cwd, ['branch', '-f', branch, latest.ref]);
       }
       await ctx.run(cwd, ['update-ref', '-d', latest.ref]);
-      ctx.log(`${branch} đã về ${latest.sha}. Nếu nhánh đã push, dùng "Force push" để đồng bộ origin.`);
+      ctx.log(`${branch} is back at ${latest.sha}. If it was pushed, force-push to update origin.`);
     },
 
     async 'delete-branches'(ctx, { repo, branches: names }) {
-      if (!Array.isArray(names) || !names.length) throw httpError(400, 'Chưa chọn nhánh nào.');
+      if (!Array.isArray(names) || !names.length) throw httpError(400, 'No branch selected.');
       const cwd = REPOS[repo];
       const wts = await worktrees(cwd);
       for (const raw of names) {
         const branch = anyBranch(raw);
         if (['uat', 'develop', 'main'].includes(branch)) {
-          ctx.log(`Bỏ qua ${branch} (nhánh chính).`);
+          ctx.log(`Skipping ${branch} (main branch).`);
           continue;
         }
         const wt = wts.find((w) => w.branch === branch);
         if (wt) {
-          ctx.log(`Bỏ qua ${branch} (đang checkout ở ${tilde(wt.path)}).`);
+          ctx.log(`Skipping ${branch} (checked out at ${tilde(wt.path)}).`);
           continue;
         }
         await backup(ctx, cwd, branch);
@@ -1027,9 +957,9 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
       const limit = Date.now() - Math.max(1, Number(days) || 14) * 86_400_000;
       const list = (await git(cwd, ['for-each-ref', '--format=%(refname)', BACKUP_NS])).stdout.split('\n').filter(Boolean);
       const old = list.filter((r) => stampTime(r) < limit);
-      if (!old.length) return ctx.log('Không có backup nào cũ hơn hạn.');
+      if (!old.length) return ctx.log('No backups older than the limit.');
       await ctx.run(cwd, ['update-ref', '--stdin'], { input: old.map((r) => `delete ${r}\n`).join('') });
-      ctx.log(`Đã xoá ${old.length} backup ref.`);
+      ctx.log(`Deleted ${old.length} backup ref(s).`);
     },
   };
 
@@ -1057,13 +987,13 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
   // Validation helpers
 
   function issueKey(k) {
-    if (typeof k !== 'string' || !KEY_RE.test(k)) throw httpError(400, 'Epic key không hợp lệ.');
+    if (typeof k !== 'string' || !KEY_RE.test(k)) throw httpError(400, 'Invalid epic key.');
     return k;
   }
 
   function anyBranch(b) {
     if (typeof b !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/.test(b) || b.includes('..') || b.endsWith('.lock') || b.endsWith('/')) {
-      throw httpError(400, `Tên nhánh không hợp lệ: ${b}`);
+      throw httpError(400, `Invalid branch name: ${b}`);
     }
     return b;
   }
@@ -1071,7 +1001,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
   function taskBranch(b, suffix) {
     anyBranch(b);
     if (!BRANCH_RE.test(b) || !b.endsWith(`-${suffix}`)) {
-      throw httpError(400, `Tên nhánh phải dạng feature|bugfix/VLEARN-<id>-<mô-tả>-${suffix} (chữ thường, không dấu).`);
+      throw httpError(400, `Branch names must look like feature|bugfix/VLEARN-<id>-<description>-${suffix} (lowercase, ASCII).`);
     }
     return b;
   }
@@ -1079,7 +1009,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
   async function knownDir(repo, dir) {
     const wts = await worktrees(REPOS[repo]);
     const hit = wts.find((w) => path.resolve(w.path) === path.resolve(String(dir || REPOS[repo])));
-    if (!hit) throw httpError(400, 'Worktree không thuộc repo này.');
+    if (!hit) throw httpError(400, 'That worktree does not belong to this repo.');
     return hit;
   }
 
@@ -1097,7 +1027,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
   return async function handle(req, url) {
     const p = url.pathname.slice('/api/git'.length);
     const repoParam = (r) => {
-      if (!Object.hasOwn(REPOS, r)) throw httpError(400, 'repo phải là backend hoặc frontend');
+      if (!Object.hasOwn(REPOS, r)) throw httpError(400, 'repo must be backend or frontend');
       return r;
     };
 
@@ -1106,24 +1036,20 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     if (req.method === 'GET' && p === '/flow') {
       const k = url.searchParams.get('key') || '';
       const epic = url.searchParams.get('epic') || '';
-      if (!KEY_RE.test(k) || (epic && !KEY_RE.test(epic))) throw httpError(400, 'Issue key không hợp lệ');
+      if (!KEY_RE.test(k) || (epic && !KEY_RE.test(epic))) throw httpError(400, 'Invalid issue key');
       return flow(k, epic || null);
     }
     if (req.method === 'GET' && p === '/epic') {
       const k = url.searchParams.get('key') || '';
-      if (!KEY_RE.test(k)) throw httpError(400, 'Epic key không hợp lệ');
+      if (!KEY_RE.test(k)) throw httpError(400, 'Invalid epic key');
       return epicView(k);
-    }
-    if (req.method === 'GET' && p === '/summary') {
-      const keys = [...new Set((url.searchParams.get('keys') || '').split(',').filter((k) => KEY_RE.test(k)))].slice(0, 300);
-      return keys.length ? summary(keys) : { repos: {} };
     }
     if (req.method === 'GET' && p === '/mrs') return mrs(repoParam(url.searchParams.get('repo')), url.searchParams.has('fresh'));
     if (req.method === 'GET' && p === '/jobs') return { jobs: [...jobs.values()].reverse().map(({ log, ...j }) => j) };
     const jm = p.match(/^\/jobs\/([0-9a-f-]{36})$/);
     if (req.method === 'GET' && jm) {
       const job = jobs.get(jm[1]);
-      if (!job) throw httpError(404, 'Không tìm thấy job');
+      if (!job) throw httpError(404, 'Job not found');
       return jobDto(job);
     }
     if (req.method === 'POST' && p === '/open') {
@@ -1134,7 +1060,7 @@ function createGitApi({ httpError, readJson, resolveEpic, editorBin }) {
     if (req.method === 'POST' && p === '/action') {
       const body = (await readJson(req)) || {};
       const run = ACTIONS[body.action];
-      if (!run || !Object.hasOwn(ACTIONS, body.action)) throw httpError(400, 'Action không hợp lệ');
+      if (!run || !Object.hasOwn(ACTIONS, body.action)) throw httpError(400, 'Invalid action');
       const repo = body.action === 'start-task' && !body.repo ? 'backend' : repoParam(body.repo);
       const where = body.action === 'start-task' && Array.isArray(body.repos) ? body.repos.join(' + ') : repo;
       const job = startJob(`${TITLES[body.action]} · ${where}`, repo, (ctx) => run(ctx, { ...body, repo }));

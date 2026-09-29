@@ -32,6 +32,7 @@ const gitState = {
   epics: new Map(), // epic key → Promise<epic view>
   epicOpen: new Set(), // `${repo}:${ticket}` rows expanded in the epic view
   epicTitles: new Map(), // epic key → { ticket: summary }
+  jiraMrs: new Map(), // ticket → MR links recorded on Jira (shown when GitLab can't be reached)
   cleanupAll: false,
 };
 
@@ -144,7 +145,6 @@ async function loadGit() {
 function refreshGit() {
   gitState.flows.clear();
   gitState.epics.clear();
-  loadGitSummary();
   gitState.mrs.clear();
   for (const r of GIT_REPOS) gitState.mrStale.add(r);
   if (state.view === 'git') loadGit();
@@ -249,13 +249,19 @@ function mrDescription(key, epicBranch, devBranch) {
 const linkBtn = (href, label, primary) =>
   h('a', { class: `btn sm${primary ? ' primary' : ''}`, href, target: '_blank', rel: 'noopener' }, icon('mr'), label);
 
-const actBtn = (label, onClick, { primary, danger, iconName, title, disabled } = {}) =>
-  h('button', { class: `btn sm${primary ? ' primary' : ''}${danger ? ' danger' : ''}`, title, disabled, onClick }, iconName && icon(iconName), label);
+// iconOnly: secondary / repeated actions show just their icon (label becomes the tooltip + aria-label).
+const actBtn = (label, onClick, { primary, danger, iconName, title, disabled, iconOnly } = {}) =>
+  iconOnly
+    ? h('button', { class: `icon-btn sm outline gicon${danger ? ' danger' : ''}`, title: title || label, 'aria-label': label, disabled, onClick }, icon(iconName))
+    : h('button', { class: `btn sm${primary ? ' primary' : ''}${danger ? ' danger' : ''}`, title, disabled, onClick }, iconName && icon(iconName), label);
+
+const iconLink = (href, iconName, label) =>
+  h('a', { class: 'icon-btn sm outline gicon', href, target: '_blank', rel: 'noopener', title: label, 'aria-label': label }, icon(iconName));
 
 // Buttons shown wherever a rebase / cherry-pick is stopped on a conflict.
 function conflictActions(repo, dir, op) {
   return [
-    actBtn('Open in Cursor', () => openInCursor(repo, dir), { iconName: 'code' }),
+    actBtn('Open in Cursor', () => openInCursor(repo, dir), { iconName: 'code', iconOnly: true }),
     actBtn('Continue', () => gitAction({ action: 'continue', repo, dir }), { primary: true, title: 'Stage the resolved files and continue' }),
     actBtn('Skip commit', () => gitAction({ action: 'skip', repo, dir }, `Skip the current commit of this ${op}?`)),
     actBtn('Abort', () => gitAction({ action: 'abort', repo, dir }, `Abort the ${op} and go back to where it started?`), { danger: true }),
@@ -263,41 +269,8 @@ function conflictActions(repo, dir, op) {
 }
 
 // ---------------------------------------------------------------------------
-// Task list: one-click start
-
-gitState.summary = null; // { backend: { tickets }, frontend: { tickets } }
-
-async function loadGitSummary() {
-  const keys = state.issues.map((i) => i.key);
-  if (!keys.length) return;
-  try {
-    const d = await api(`/api/git/summary?keys=${keys.join(',')}`);
-    gitState.summary = d.repos;
-  } catch {
-    return; // git status is a bonus on the list; the list works without it
-  }
-  if (state.view === 'list') render();
-}
-
-// Task rows only get a "Start" button when the ticket has no branch in either repo; its git state lives in the drawer.
-function gitCell(issue) {
-  if (!gitState.summary || GIT_REPOS.some((r) => gitState.summary[r]?.tickets?.[issue.key])) return null;
-  // Only for work not started / in development; later statuses can still start from the drawer.
-  if (!(issue.status.category === 'new' || /develop|progress/i.test(issue.status.name))) return null;
-  return h(
-    'button',
-    {
-      class: 'gstart',
-      title: `Start ${issue.key}: create the task branch off its epic and check it out`,
-      onClick: (e) => {
-        e.stopPropagation();
-        startTaskPop(issue);
-      },
-    },
-    icon('branch'),
-    'Start',
-  );
-}
+// Start a ticket (from its drawer). The task list itself shows no git state: nothing git-related is fetched
+// until a ticket's detail is opened.
 
 // Everything needed to start coding a ticket, in one popover: type + short description (+ BE/FE, stash, Jira status).
 async function startTaskPop(issue, { repos, preset } = {}) {
@@ -381,8 +354,9 @@ function branchForm(issue, preset) {
 // ---------------------------------------------------------------------------
 // Issue drawer: where this ticket stands in the flow, per repo
 
-function gitFlowBlock(issue) {
+function gitFlowBlock(issue, detail) {
   if (/epic/i.test(issue.type?.name || '')) return epicBlock(issue);
+  if (detail) gitState.jiraMrs.set(issue.key, detail.links.filter((l) => l.kind === 'mr'));
   const box = h(
     'section',
     { class: 'block git-flow', id: 'git-flow' },
@@ -520,7 +494,7 @@ function epicCard(issue, e, M) {
     );
   }
 
-  const tickets = epicTickets(e);
+  const tickets = epicTickets(e, issue.key);
   const commits = tickets.flatMap((t) => t.commits);
   const onDev = commits.filter((c) => c.inDevelop || c.onDevBranch).length;
   const todo = tickets.filter((t) => t.missing.length);
@@ -529,65 +503,80 @@ function epicCard(issue, e, M) {
   const showAll = LS.get(filterKey, false) || !todo.length;
   const epicMr = mrsOf(M, e.name, 'uat').find((m) => m.state === 'opened') || mrsOf(M, e.name, 'uat')[0];
 
-  const card = h('div', { class: `gsum ${todo.length || e.behindUat > 0 ? 't-warn' : 't-ok'}` });
+  const card = h('div', { class: `gsum ${todo.length || e.behindUat > 0 ? 't-accent' : 't-ok'}` });
   const redraw = () => card.replaceWith(epicCard(issue, e, M));
+  // append() prints null/false as text: drop the empty slots.
   card.append(
-    h('div', { class: 'gsum-top' }, h('b', null, label), h('button', { class: 'gcode gbranch', title: `${e.name}\nClick to copy`, onClick: () => copyText(e.name, 'Branch name copied') }, e.name)),
+    ...[
+      h('div', { class: 'gsum-top' }, h('b', null, label), h('button', { class: 'gcode gbranch', title: `${e.name}\nClick to copy`, onClick: () => copyText(e.name, 'Branch name copied') }, e.name)),
 
-    // uat side: the one epic → uat MR
-    h(
-      'div',
-      { class: 'eline' },
-      h('b', null, 'UAT'),
-      h('span', null, e.pending ? `${e.pending} commit(s) waiting to go to uat` : 'everything is in uat', e.behindUat > 0 && gitChip(`${e.behindUat} behind uat`, 'warn'), epicMr && mrChip(epicMr), epicMr && mrFacts(epicMr)),
-      h(
-        'span',
-        { class: 'gstep-act' },
-        epicMr?.state === 'opened'
-          ? linkBtn(epicMr.url, `Open MR !${epicMr.iid}`, false)
-          : e.pending > 0 && (M?.byBranch ? linkBtn(mrUrl(e.web, e.name, 'uat', `${issue.key}: ${issue.summary}`, mrDescription(issue.key, e.name)), 'Create MR → uat', false) : linkBtn(mrListUrl(e.web, e.name), 'Epic MRs')),
-        e.behindUat > 0 &&
-          actBtn('Rebase onto uat', () =>
-            gitAction({ action: 'rebase-epic', repo, epic: issue.key }, `Rebase ${e.name} onto origin/uat (keeping each task's merge commit) and FORCE-PUSH it?\n\nThe epic is shared: tell the team first. Open task branches will need a rebase afterwards.`),
-            { danger: true },
-          ),
-      ),
-    ),
-
-    // develop side: progress, then one row per ticket
-    commits.length
-      ? h(
-          'div',
-          { class: 'eline' },
-          h('b', null, 'Develop'),
-          h(
-            'span',
-            null,
-            `${onDev}/${commits.length} commits on develop`,
-            todo.length ? gitChip(`${todo.length} ticket(s) to pick`, 'warn') : gitChip('all picked', 'ok'),
-            h('span', { class: 'eprog' }, h('i', { style: `width:${Math.round((onDev / commits.length) * 100)}%` })),
-          ),
-        )
-      : h('div', { class: 'muted small' }, 'No commits of its own yet.'),
-    noMr > 0 && h('div', { class: 'gsum-detail warn-text' }, `⚠ ${noMr} ticket(s) were committed straight to the epic (no MR) — they can't be reverted with one merge commit.`),
-    tickets.length > 0 &&
+      // uat side: the one epic → uat MR
       h(
         'div',
-        { class: 'etools' },
+        { class: 'eline' },
+        h('b', null, 'UAT'),
+        h('span', null, uatState(e), e.behindUat > 0 && gitChip(`${e.behindUat} behind uat`, 'warn', 'uat has commits the epic does not — rebase if the MR conflicts'), epicMr && mrChip(epicMr), epicMr && mrFacts(epicMr)),
         h(
-          'div',
-          { class: 'gtabs' },
-          h('button', { 'aria-selected': String(!showAll), disabled: !todo.length, onClick: () => (LS.set(filterKey, false), redraw()) }, `Needs pick (${todo.length})`),
-          h('button', { 'aria-selected': String(showAll), onClick: () => (LS.set(filterKey, true), redraw()) }, `All tickets (${tickets.length})`),
+          'span',
+          { class: 'gstep-act' },
+          epicMr?.state === 'opened'
+            ? linkBtn(epicMr.url, `Open MR !${epicMr.iid}`, false)
+            : e.pending > 0 && (M?.byBranch ? linkBtn(mrUrl(e.web, e.name, 'uat', `${issue.key}: ${issue.summary}`, mrDescription(issue.key, e.name)), 'Create MR → uat', false) : iconLink(mrListUrl(e.web, e.name), 'mr', 'MRs of the epic on GitLab')),
+          e.behindUat > 0 &&
+            actBtn('Rebase the epic onto uat', () =>
+              gitAction({ action: 'rebase-epic', repo, epic: issue.key }, `Rebase ${e.name} onto origin/uat (keeping each task's merge commit) and FORCE-PUSH it?\n\nThe epic is shared: tell the team first. Open task branches will need a rebase afterwards.`),
+              { danger: true, iconOnly: true, iconName: 'rebase', title: `Rebase ${e.name} onto uat (${e.behindUat} behind) — force-push` },
+            ),
         ),
       ),
-    tickets.length > 0 && h('ul', { class: 'etickets' }, (showAll ? tickets : todo).map((t) => ticketRow(repo, t, redraw))),
+
+      // develop side: progress, then one row per ticket
+      commits.length
+        ? h(
+            'div',
+            { class: 'eline' },
+            h('b', null, 'Develop'),
+            h(
+              'span',
+              null,
+              `${onDev}/${commits.length} commits on develop`,
+              todo.length ? gitChip(`${todo.length} ticket(s) to pick`, 'warn') : gitChip('all picked', 'ok'),
+              h('span', { class: 'eprog' }, h('i', { style: `width:${Math.round((onDev / commits.length) * 100)}%` })),
+            ),
+          )
+        : h('div', { class: 'muted small' }, 'No commits of its own yet.'),
+      noMr > 0 && h('div', { class: 'gsum-detail' }, `${noMr} ticket(s) were committed straight to the epic without a task MR (no merge commit to revert).`),
+      mrUnavailable(repo, M, null),
+      tickets.length > 0 &&
+        h(
+          'div',
+          { class: 'etools' },
+          h(
+            'div',
+            { class: 'gtabs' },
+            h('button', { 'aria-selected': String(!showAll), disabled: !todo.length, onClick: () => (LS.set(filterKey, false), redraw()) }, `Needs pick (${todo.length})`),
+            h('button', { 'aria-selected': String(showAll), onClick: () => (LS.set(filterKey, true), redraw()) }, `All tickets (${tickets.length})`),
+          ),
+        ),
+      tickets.length > 0 && h('ul', { class: 'etickets' }, (showAll ? tickets : todo).map((t) => ticketRow(repo, t, redraw))),
+    ].filter(Boolean),
   );
   return card;
 }
 
+// Has the epic reached uat? Answered from git: the merge commit on uat, and what the epic still has that uat lacks.
+function uatState(e) {
+  const m = e.mergedToUat;
+  const when = m && h('span', { class: 'muted', title: `${m.sha} ${m.subject}` }, `${fmtDate(m.date)} · ${m.sha}`);
+  if (!e.pending) return m ? [h('b', { class: 'ok-text' }, '✓ Merged into uat'), when] : h('b', { class: 'ok-text' }, '✓ In uat');
+  if (m) return [h('b', null, 'Merged into uat'), when, gitChip(`${e.pending} new commit(s) since`, 'warn', 'Committed after the last epic → uat merge; they go up with the next MR')];
+  return [h('b', null, 'Not merged into uat'), gitChip(`${e.pending} commit(s) waiting`, '')];
+}
+
 // The epic's commits per ticket: which are on develop, which still need picking, and where they should go.
-function epicTickets(e) {
+// Only tickets of this epic (per Jira) are listed; commits of other epics' tickets — e.g. from an epic this one
+// was stacked on — and commits without a ticket are left out entirely.
+function epicTickets(e, epicKey) {
   const map = new Map();
   for (const g of e.groups) {
     for (const c of g.commits) {
@@ -601,15 +590,19 @@ function epicTickets(e) {
       } else t.direct = true;
     }
   }
-  const tickets = [...map.values()];
+  const belongs = (t) => t.key.startsWith('VLEARN-') && (!e.ticketEpics?.[t.key] || e.ticketEpics[t.key] === epicKey);
+  const all = [...map.values()];
+  const tickets = all.filter(belongs);
   for (const t of tickets) {
     t.commits.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
     t.missing = t.commits.filter((c) => !c.inDevelop && !c.onDevBranch);
+    t.title = e.ticketTitles?.[t.key] || '';
     const b = e.branches?.[t.key] || {};
     t.target = b.develop || (t.uatBranch || b.uat || '').replace(/-uat$/, '-develop') || '';
     t.latest = Math.max(...t.commits.map((c) => Date.parse(c.date)));
   }
-  return tickets.sort((a, b) => (b.missing.length > 0) - (a.missing.length > 0) || b.latest - a.latest);
+  tickets.sort((a, b) => (b.missing.length > 0) - (a.missing.length > 0) || b.latest - a.latest);
+  return tickets;
 }
 
 function ticketRow(repo, t, redraw) {
@@ -618,7 +611,7 @@ function ticketRow(repo, t, redraw) {
     open ? gitState.epicOpen.delete(`${repo}:${t.key}`) : gitState.epicOpen.add(`${repo}:${t.key}`);
     redraw();
   };
-  const summary = state.issues.find((i) => i.key === t.key)?.summary || gitState.titles?.[t.key] || '';
+  const summary = state.issues.find((i) => i.key === t.key)?.summary || t.title || gitState.titles?.[t.key] || '';
   const picked = t.commits.length - t.missing.length;
   const boxes = t.missing.map((c) => h('input', { type: 'checkbox', checked: true, value: c.sha, 'aria-label': c.subject }));
 
@@ -656,11 +649,18 @@ function ticketRow(repo, t, redraw) {
     { class: `eticket${open ? ' open' : ''}${t.missing.length ? '' : ' complete'}` },
     h(
       'div',
-      { class: 'eticket-head', onClick: (ev) => !ev.target.closest('a,button') && toggle() },
+      {
+        class: 'eticket-head',
+        role: 'button',
+        tabindex: '0',
+        'aria-expanded': String(open),
+        onClick: (ev) => !ev.target.closest('a,button') && toggle(),
+        onKeydown: (ev) => (ev.key === 'Enter' || ev.key === ' ') && ev.target === ev.currentTarget && (ev.preventDefault(), toggle()),
+      },
       h('span', { class: 'fold-icon' }, icon('chevRight')),
       t.key.startsWith('VLEARN') ? h('a', { class: 'key', href: '#' + t.key, onClick: (ev) => (ev.preventDefault(), openDetail(t.key)) }, t.key) : h('span', { class: 'muted' }, t.key),
       h('span', { class: 'gsubj muted', title: summary }, summary),
-      t.direct && gitChip('no MR', 'warn', 'Committed straight to the epic'),
+      t.direct && h('span', { class: 'gnomr', title: 'Committed straight to the epic, without a task MR', 'aria-label': 'no task MR' }, icon('unlink')),
       h('span', { class: `small ${t.missing.length ? '' : 'ok-text'}` }, `${picked}/${t.commits.length}`),
       t.missing.length > 0 ? actBtn(`Pick ${t.missing.length}`, pick, { primary: true, title: t.target ? `→ ${t.target}` : 'Choose the -develop branch' }) : h('span', { class: 'emark ok' }, '✓'),
     ),
@@ -729,7 +729,7 @@ function repoStatus(issue, f, r, M) {
   const missing = commits.filter((c) => !c.picked);
   const milestones = [
     { label: 'Code', done: pushed && commits.length > 0 },
-    { label: 'Epic', done: inEpic, warn: uat?.onEpicWithoutMerge > 0 && !uat?.mergedToEpic },
+    { label: 'Epic', done: inEpic },
     { label: 'UAT', done: inUat },
     { label: 'Develop', done: inDev },
   ];
@@ -784,31 +784,33 @@ function repoStatus(issue, f, r, M) {
     out.detail = m ? `${uat.name} → ${epic.name}` : `Merge it with “Create merge commit” (one merge commit per task).`;
     if (m && !m.resolved) out.tone = 'warn';
     out.actions.push(m ? openBtn(m) : newMr(uat.name, epic.name, 'Create MR → epic'));
-    if (!M?.byBranch && !m) out.actions.push(linkBtn(mrListUrl(r.web, uat.name), 'MRs'));
+    if (!M?.byBranch && !m) out.actions.push(iconLink(mrListUrl(r.web, uat.name), 'mr', 'MRs of this branch on GitLab'));
   } else {
     // In the epic: two independent tracks left, uat (via the epic MR) and develop (cherry-pick + MR).
     // A task MR can still be open when its commits reached the epic another way — it still needs attention.
     const taskMr = openMr(uat.name, epic.name);
     if (taskMr) out.lines.push({ label: 'Epic', mr: taskMr, text: `task MR !${taskMr.iid} still open`, actions: [openBtn(taskMr, false)] });
-    out.headline = inUat && inDev ? 'Done — in uat and develop' : uat.onEpicWithoutMerge && !uat.mergedToEpic ? 'On the epic (without a merge commit)' : 'Merged into the epic';
-    out.tone = inUat && inDev ? 'ok' : uat.onEpicWithoutMerge && !uat.mergedToEpic ? 'warn' : 'ok';
+    const noMerge = uat.onEpicWithoutMerge && !uat.mergedToEpic;
+    out.headline = inUat && inDev ? 'Done — in uat and develop' : noMerge ? 'On the epic' : 'Merged into the epic';
+    out.note = noMerge ? 'Reached the epic without a task MR, so there is no merge commit to revert it with.' : null;
+    out.tone = 'ok';
 
-    if (inUat) out.lines.push({ label: 'UAT', ok: true, text: 'in uat' });
+    if (inUat) out.lines.push({ label: 'UAT', ok: true, text: 'In uat' });
     else {
       const m = openMr(epic.name, 'uat');
       out.lines.push({
         label: 'UAT',
         mr: m,
-        text: m ? `${m.conflicts ? 'epic MR' : 'waiting for the epic MR'} !${m.iid}${m.draft ? ' (draft)' : ''}` : epic.pending > 0 ? 'needs the one epic → uat MR' : 'waiting for the epic to reach uat',
-        actions: m ? [openBtn(m, false)] : epic.pending > 0 ? [M?.byBranch ? newMr(epic.name, 'uat', 'Create epic MR → uat', false) : linkBtn(mrListUrl(r.web, epic.name), 'Epic MRs')] : [],
+        text: m ? `Epic MR !${m.iid}${m.draft ? ' (draft)' : ''}` : epic.pending > 0 ? 'Waiting for the epic MR → uat' : 'Waiting for the epic to reach uat',
+        actions: m ? [openBtn(m, false)] : epic.pending > 0 ? [M?.byBranch ? newMr(epic.name, 'uat', 'Create epic MR → uat', false) : iconLink(mrListUrl(r.web, epic.name), 'mr', 'MRs of the epic on GitLab')] : [],
       });
     }
 
-    if (inDev) out.lines.push({ label: 'Develop', ok: true, text: 'in develop' });
+    if (inDev) out.lines.push({ label: 'Develop', ok: true, text: 'In develop' });
     else if (missing.length) {
       out.lines.push({
         label: 'Develop',
-        text: `${missing.length} of ${commits.length} commit(s) to cherry-pick onto ${devName}`,
+        text: `${missing.length} of ${commits.length} commit(s) to cherry-pick`,
         actions: [
           actBtn(`Cherry-pick ${missing.length} → develop`, () =>
             gitAction(
@@ -819,13 +821,13 @@ function repoStatus(issue, f, r, M) {
         ],
       });
     } else if (dev && (!dev.remote || dev.sync?.onlyA > 0)) {
-      out.lines.push({ label: 'Develop', text: 'picked, not pushed', actions: [push(dev, false)] });
+      out.lines.push({ label: 'Develop', text: 'Picked · not pushed', actions: [push(dev, false)] });
     } else {
       const m = dev && openMr(dev.name, 'develop');
       out.lines.push({
         label: 'Develop',
         mr: m,
-        text: m ? `MR !${m.iid}${m.conflicts ? '' : ' waiting for review'}` : 'picked — needs the MR → develop (same title as uat)',
+        text: m ? `MR !${m.iid}${m.conflicts ? '' : ' in review'}` : 'Picked · needs an MR into develop',
         actions: [m ? openBtn(m, false) : dev ? newMr(dev.name, 'develop', 'Create MR → develop', false) : null],
       });
     }
@@ -857,6 +859,7 @@ function repoCard2(issue, f, r, M, missingRepos) {
     ),
     h('div', { class: 'gsum-headline' }, st.headline),
     st.detail && h('div', { class: 'gsum-detail' }, st.detail),
+    st.note && h('div', { class: 'gsum-detail' }, st.note),
     st.mr && mrFacts(st.mr).length > 0 && h('div', { class: 'gstep-note' }, mrFacts(st.mr)),
     h(
       'ol',
@@ -878,6 +881,7 @@ function repoCard2(issue, f, r, M, missingRepos) {
       h('summary', null, 'All steps'),
       flowSteps(issue, f, r, M),
     ),
+    mrUnavailable(repo, M, issue.key),
     missingRepos.length > 0 &&
       r.uat &&
       h(
@@ -887,6 +891,25 @@ function repoCard2(issue, f, r, M, missingRepos) {
           h('button', { class: 'link-btn', onClick: () => startTaskPop(issue, { repos: [x], preset: r.uat.name }) }, `+ Start in ${x === 'backend' ? 'Backend' : 'Frontend'} (same branch name)`),
         ),
       ),
+  );
+}
+
+// GitLab unreachable (VPN off…): say so, offer a retry, and fall back to the MR links recorded on Jira.
+function mrUnavailable(repo, M, key) {
+  if (!M?.error) return null;
+  const jira = (key && gitState.jiraMrs.get(key)) || [];
+  const retry = () => {
+    gitState.mrs.delete(repo);
+    gitState.mrStale.add(repo);
+    delete gitState.mrData[repo];
+    refreshGit();
+  };
+  return h(
+    'div',
+    { class: 'gmr-off' },
+    h('div', { class: 'gstep-note' }, h('span', { class: 'warn-text' }, 'MR status unavailable'), h('span', { class: 'muted', title: M.error }, `(${M.error})`), h('button', { class: 'link-btn', onClick: retry }, 'Retry')),
+    jira.length > 0 &&
+      h('ul', { class: 'link-list compact' }, jira.map((l) => h('li', null, icon('mr'), h('a', { href: l.url, target: '_blank', rel: 'noopener', title: l.url }, l.title.replace(/^Merge request - /, '')), h('span', { class: 'tag muted small' }, 'from Jira')))),
   );
 }
 
@@ -907,7 +930,6 @@ function flowChecks(key, r, M) {
   if (uat && mrsOf(M, uat.name, 'uat').length) checks.push(['MR from the task branch straight into ', code('uat'), ' — it must go into the epic.']);
   if (mrsOf(M, epic.name, 'uat').filter((m) => m.state === 'opened').length > 1) checks.push(['More than one open MR ', code(`${epic.name} → uat`), ' — keep exactly one.']);
   if (uat && mrsOf(M, uat.name).some((m) => m.target.startsWith('epic/') && m.target !== epic.name)) checks.push(['The task MR targets a different epic than ', code(epic.name), '.']);
-  if (uat?.onEpicWithoutMerge && !uat.mergedToEpic) checks.push(['Commits reached the epic without a merge commit — this task cannot be reverted with one ', code('git revert -m 1'), '.']);
   return checks;
 }
 
@@ -936,7 +958,8 @@ function flowSteps(issue, f, r, M) {
     b?.backups?.length > 0 &&
     actBtn('Undo', () => gitAction({ action: 'undo', repo, branch: b.name }, `Reset ${b.name} to its backup from ${fmtDate(b.backups[0].at)}?`), {
       iconName: 'undo',
-      title: `Back to ${b.backups[0].sha} (backed up ${rel(b.backups[0].at)})`,
+      iconOnly: true,
+      title: `Undo: back to ${b.backups[0].sha} (backed up ${rel(b.backups[0].at)})`,
     });
   // Push, or force-push with lease once local and origin diverged (after a rebase or an undo).
   const pushBtn = (b, primary) => {
@@ -961,7 +984,7 @@ function flowSteps(issue, f, r, M) {
     const list = mrsOf(M, source, target);
     const open = list.find((m) => m.state === 'opened');
     if (open) return [linkBtn(open.url, `Open !${open.iid}`, primary)];
-    return [linkBtn(mrUrl(r.web, source, target, title, desc), `New MR → ${target === epic.name ? 'epic' : target}`, primary), linkBtn(mrListUrl(r.web, source), 'MRs')];
+    return [linkBtn(mrUrl(r.web, source, target, title, desc), `New MR → ${target === epic.name ? 'epic' : target}`, primary), iconLink(mrListUrl(r.web, source), 'mr', 'MRs of this branch on GitLab')];
   };
   const mrNote = (source, target) => mrsOf(M, source, target).slice(0, 3).map(mrChip);
 
@@ -987,7 +1010,7 @@ function flowSteps(issue, f, r, M) {
               { action: 'rebase-epic', repo, epic: f.epic },
               `Rebase ${epic.name} onto origin/uat (keeping each task's merge commit) and FORCE-PUSH it?\n\nThe epic is shared: tell the team first. Open task branches will need a rebase afterwards.`,
             ),
-            { danger: true },
+            { danger: true, iconOnly: true, iconName: 'rebase', title: `Rebase ${epic.name} onto uat — force-push` },
           ),
         undo(epic),
       ],
@@ -1044,7 +1067,7 @@ function flowSteps(issue, f, r, M) {
 
     // 4. MR task → epic
     if (uat.mergedToEpic) {
-      step('done', 'MR task → epic', note(mrNote(uat.name, epic.name), gitChip(`merged ${uat.mergedToEpic.sha}`, 'ok', uat.mergedToEpic.subject), ' ', rel(uat.mergedToEpic.at)), linkBtn(mrListUrl(r.web, uat.name), 'MRs'));
+      step('done', 'MR task → epic', note(mrNote(uat.name, epic.name), gitChip(`merged ${uat.mergedToEpic.sha}`, 'ok', uat.mergedToEpic.subject), ' ', rel(uat.mergedToEpic.at)), iconLink(mrListUrl(r.web, uat.name), 'mr', 'MRs of this branch on GitLab'));
     } else {
       const skipped = uat.onEpicWithoutMerge > 0;
       step(
@@ -1392,7 +1415,7 @@ function renderGitView() {
   const head = h(
     'div',
     { class: 'git-head' },
-    h('h2', { class: 'section-title' }, icon('branch'), 'Git', ov && h('span', { class: 'muted small' }, ov.root)),
+    h('h2', { class: 'section-title' }, icon('branch'), 'Workspace', ov && h('span', { class: 'muted small' }, ov.root)),
     h('span', { class: 'spacer' }),
     GIT_REPOS.some((r) => gitState.mrData[r]?.error) &&
       h('span', { class: 'small warn-text', title: GIT_REPOS.map((r) => `${r}: ${gitState.mrData[r]?.error || 'ok'}`).join('\n') }, 'MR status unavailable (VPN?)'),
@@ -1407,7 +1430,6 @@ function renderGitView() {
     { class: 'git-view' },
     head,
     h('div', { class: 'grepos' }, GIT_REPOS.map((r) => repoCard(ov.repos[r]))),
-    ticketsInFlight(),
     cleanupSection(),
     jobsSection(),
   );
@@ -1436,8 +1458,8 @@ function repoCard(r) {
       { class: 'gstep-act' },
       changed > 0 && !m.op && actBtn('Commit…', () => openCommitDialog(r.repo), { primary: true }),
       task && (!m.upstream || m.ahead > 0) && actBtn('Push', () => gitAction({ action: 'push', repo: r.repo, branch: m.branch }), { iconName: 'upload' }),
-      actBtn('Fetch', () => gitAction({ action: 'fetch', repo: r.repo }), { iconName: 'download' }),
-      actBtn('Cursor', () => openInCursor(r.repo, r.dir), { iconName: 'code' }),
+      actBtn('Fetch from origin', () => gitAction({ action: 'fetch', repo: r.repo }), { iconName: 'download', iconOnly: true }),
+      actBtn('Open in Cursor', () => openInCursor(r.repo, r.dir), { iconName: 'code', iconOnly: true }),
     ),
     r.stashes?.length > 0 &&
       h(
@@ -1474,64 +1496,11 @@ function repoCard(r) {
               'li',
               null,
               h('div', null, code(w.path), ' ', w.branch ? code(w.branch) : gitChip('detached'), w.scratch && gitChip('dashboard', '', 'Scratch worktree the dashboard uses'), w.op && gitChip(`${w.op} in progress`, 'warn'), w.dirty > 0 && gitChip(`${w.dirty} changed`, 'warn')),
-              w.op ? h('div', { class: 'gstep-act' }, conflictActions(r.repo, w.path, w.op)) : h('div', { class: 'gstep-act' }, actBtn('Cursor', () => openInCursor(r.repo, w.path), { iconName: 'code' })),
+              w.op ? h('div', { class: 'gstep-act' }, conflictActions(r.repo, w.path, w.op)) : h('div', { class: 'gstep-act' }, actBtn('Open in Cursor', () => openInCursor(r.repo, w.path), { iconName: 'code', iconOnly: true })),
             ),
           ),
         ),
       ),
-  );
-}
-
-// Tickets that have -uat / -develop branches locally, newest first.
-function ticketsInFlight() {
-  const tickets = new Map();
-  for (const repo of GIT_REPOS) {
-    for (const b of gitState.branches[repo]?.branches || []) {
-      if (b.kind !== 'task' || !b.tickets.length) continue;
-      const t = tickets.get(b.tickets[0]) || { key: b.tickets[0], date: 0, repos: {} };
-      t.date = Math.max(t.date, b.date);
-      (t.repos[repo] ||= []).push(b);
-      tickets.set(t.key, t);
-    }
-  }
-  const list = [...tickets.values()].sort((a, b) => b.date - a.date).slice(0, 25);
-  const chip = (repo, b) => {
-    const mr = mrsOf(gitState.mrData[repo], b.name)[0];
-    if (mr) {
-      const conflict = mr.state === 'opened' && mr.conflicts;
-      return h(
-        'a',
-        { class: `gchip ${conflict ? 'danger' : MR_STATE[mr.state]?.[1] || ''}`, href: mr.url, target: '_blank', rel: 'noopener', title: `${b.name}\n!${mr.iid} ${mr.title} → ${mr.target}\n${mrFactsText(mr)}`, onClick: (e) => e.stopPropagation() },
-        `${b.suffix} · !${mr.iid} ${conflict ? 'conflict' : mrLabel(mr)}${mr.comments ? ` · 💬${mr.comments}` : ''}`,
-      );
-    }
-    const kind = b.gone ? 'gone' : b.mergedToUat ? 'ok' : b.worktree ? 'accent' : '';
-    const known = !!gitState.mrData[repo]?.byBranch; // MR list loaded: absence means there is none
-    const why = [b.name, known && 'no MR', b.gone && 'origin branch deleted', b.mergedToUat && 'already in uat', b.worktree && `checked out: ${b.worktree}`].filter(Boolean).join('\n');
-    return gitChip(`${b.suffix || 'branch'}${known ? ' · no MR' : ''}`, kind, why);
-  };
-  return h(
-    'section',
-    { class: 'gsection' },
-    h('h2', { class: 'section-title' }, 'Tickets in flight', h('span', { class: 'muted small' }, list.length)),
-    list.length
-      ? h(
-          'div',
-          { class: 'gtable' },
-          h('div', { class: 'gtr gth' }, h('div', null, 'Ticket'), h('div', null, 'Summary'), h('div', null, 'Backend'), h('div', null, 'Frontend'), h('div', null, 'Last commit')),
-          list.map((t) => {
-            const issue = state.issues.find((i) => i.key === t.key);
-            return h(
-              'div',
-              { class: 'gtr', onClick: () => openDetail(t.key) },
-              h('div', null, h('a', { class: 'key', href: '#' + t.key }, t.key)),
-              h('div', { class: 'gsubj' }, issue ? issue.summary : h('span', { class: 'muted' }, '—')),
-              GIT_REPOS.map((r) => h('div', { class: 'gchips' }, (t.repos[r] || []).sort((a, b) => (a.suffix === 'uat' ? 0 : 1) - (b.suffix === 'uat' ? 0 : 1)).map((b) => chip(r, b)))),
-              h('div', { class: 'muted small' }, rel(new Date(t.date * 1000).toISOString())),
-            );
-          }),
-        )
-      : h('div', { class: 'empty-state' }, 'No task branches.'),
   );
 }
 
@@ -1550,11 +1519,24 @@ function cleanupSection() {
     const rows = data.branches.filter((b) => !['uat', 'develop', 'main'].includes(b.name) && (gitState.cleanupAll || reasons(repo, b).length));
     const boxes = new Map();
     const count = h('span', null, 'Delete selected (0)');
-    const update = () => (count.textContent = `Delete selected (${[...boxes.values()].filter((x) => x.checked).length})`);
+    const allBox = h('input', { type: 'checkbox', 'aria-label': 'Select all', onChange: (e) => (boxes.forEach((b) => (b.checked = e.target.checked)), update()) });
+    const update = () => {
+      const n = [...boxes.values()].filter((x) => x.checked).length;
+      count.textContent = `Delete selected (${n})`;
+      allBox.checked = n > 0 && n === boxes.size;
+      allBox.indeterminate = n > 0 && n < boxes.size;
+    };
     return h(
       'div',
       { class: 'gcard' },
-      h('div', { class: 'gcard-head' }, h('h3', null, repo), h('span', { class: 'muted small' }, `${rows.length} branch(es)`)),
+      h(
+        'div',
+        { class: 'gcard-head' },
+        h('h3', null, repo),
+        h('span', { class: 'muted small' }, `${rows.length} branch(es)`),
+        h('span', { class: 'spacer' }),
+        rows.length > 0 && h('label', { class: 'gcheck-all small' }, allBox, 'Select all'),
+      ),
       h(
         'ul',
         { class: 'gbranches' },
