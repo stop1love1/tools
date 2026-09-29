@@ -90,20 +90,23 @@ const PRESETS = [
 ];
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
+// Read URL params on init
+const initParams = new URLSearchParams(location.search);
+
 const state = {
   issues: [],
   jql: LS.get('jql', ''),
   usedJql: '',
   defaultJql: '',
-  view: LS.get('view', 'list') === 'docs' ? 'docs' : 'list',
+  view: initParams.get('view') || LS.get('view', 'list') === 'docs' ? 'docs' : 'list',
   me: null,
-  user: LS.get('user', ''),
+  user: initParams.get('user') || LS.get('user', ''),
   users: null,
-  q: '',
-  type: 'all',
-  status: null,
-  sprint: LS.get('sprint', null),
-  urgentOnly: false,
+  q: initParams.get('q') || '',
+  type: initParams.get('type') || 'all',
+  status: initParams.get('status') || null,
+  sprint: initParams.has('sprint') ? (initParams.get('sprint') ? Number(initParams.get('sprint')) : null) : LS.get('sprint', null),
+  urgentOnly: initParams.get('urgent') === '1',
   loading: false,
   error: null,
   errorLogin: false,
@@ -117,6 +120,21 @@ const state = {
 };
 const cache = { transitions: new Map(), details: new Map() };
 const recentlyTransitioned = new Map();
+
+// Sync state to URL query params
+function syncUrl() {
+  const params = new URLSearchParams();
+  if (state.q) params.set('q', state.q);
+  if (state.type !== 'all') params.set('type', state.type);
+  if (state.status) params.set('status', state.status);
+  if (state.urgentOnly) params.set('urgent', '1');
+  if (state.user) params.set('user', state.user);
+  if (state.sprint) params.set('sprint', String(state.sprint));
+  if (state.view !== 'list') params.set('view', state.view);
+  const query = params.toString();
+  const url = location.pathname + (query ? '?' + query : '') + location.hash;
+  history.replaceState(null, '', url);
+}
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -661,6 +679,7 @@ function render() {
   renderProgress();
   renderFocus();
   renderStats();
+  syncUrl();
 
   const main = $('#main');
   if (state.error) {
@@ -712,6 +731,7 @@ function renderTypes() {
   );
   select.value = state.type;
   select.hidden = counts.size < 2;
+  syncUrl();
 }
 
 function renderSprints() {
@@ -741,6 +761,7 @@ function renderSprints() {
   );
   select.value = state.sprint || '';
   select.hidden = false;
+  syncUrl();
 }
 
 function renderFocus() {
@@ -779,6 +800,7 @@ function renderFocus() {
                 class: 'link-btn',
                 onClick: () => {
                   state.urgentOnly = true;
+                  syncUrl();
                   render();
                 },
               },
@@ -804,16 +826,19 @@ function renderStats() {
     pill('Tất cả', all.length, null, !state.status && !state.urgentOnly, () => {
       state.status = null;
       state.urgentOnly = false;
+      syncUrl();
       render();
     }),
     pill('Gấp', all.filter(isUrgent).length, 'hot', state.urgentOnly, () => {
       state.urgentOnly = !state.urgentOnly;
+      syncUrl();
       render();
     }),
     ...statusList(all).map((s) =>
       pill(s.name, all.filter((i) => i.status.name === s.name).length, tone(s), state.status === s.name, () => {
         state.status = state.status === s.name ? null : s.name;
         state.urgentOnly = false;
+        syncUrl();
         render();
       }),
     ),
@@ -1438,6 +1463,7 @@ function toast(message, kind = 'ok', link) {
 function setView(view) {
   state.view = view;
   LS.set('view', view);
+  syncUrl();
   render();
 }
 
@@ -1476,6 +1502,7 @@ async function loadUsers() {
     ...opts,
   );
   select.value = state.user;
+  syncUrl();
   renderMeta();
 }
 
@@ -1500,6 +1527,7 @@ function init() {
     h('option', { value: 'custom', disabled: true }, 'JQL tuỳ chỉnh'),
   );
   $('#jql').value = state.jql;
+  $('#search').value = state.q;
   syncPreset();
 
   $('#preset').addEventListener('change', (e) => {
@@ -1512,6 +1540,7 @@ function init() {
   $('#jql').addEventListener('keydown', (e) => e.key === 'Enter' && applyJql(e.target.value));
   $('#search').addEventListener('input', (e) => {
     state.q = e.target.value;
+    syncUrl();
     render();
   });
   $('#refresh').append(icon('refresh'));
@@ -1523,16 +1552,19 @@ function init() {
     LS.set('user', state.user);
     state.status = null;
     state.urgentOnly = false;
+    syncUrl();
     load();
   });
   $('#refresh').addEventListener('click', () => load());
   $('#type-filter').addEventListener('change', (e) => {
     state.type = e.target.value;
+    syncUrl();
     render();
   });
   $('#sprint-filter').addEventListener('change', (e) => {
     state.sprint = e.target.value ? Number(e.target.value) : null;
     LS.set('sprint', state.sprint);
+    syncUrl();
     render();
   });
   $('#jql-toggle').addEventListener('click', (e) => {
