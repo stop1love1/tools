@@ -132,11 +132,19 @@ async function brief(opts) {
       L.push(`- ${repo}: ${r.error}`);
       continue;
     }
-    const b = (x) => (x ? `${x.name}${x.remote ? '' : ' (local only)'}${x.sync?.onlyA ? ` (${x.sync.onlyA} to push)` : ''}` : 'none');
+    const b = (x) => (x ? `${x.name}${x.legacy ? ` (older name without -${s.uat}: keep using it)` : ''}${x.remote ? '' : ' (local only)'}${x.sync?.onlyA ? ` (${x.sync.onlyA} to push)` : ''}` : 'none');
     L.push(
       `- ${repo} (${s.repos[repo]}): checked out ${r.current || 'detached'}${r.dirty ? `, ${r.dirty} uncommitted file(s)` : ''}${r.op ? `, ${r.op} in progress` : ''}`,
       `  epic ${r.epic.name}${r.epic.remote ? '' : ' (not on origin yet)'} · task ${b(r.uat)} · develop ${b(r.develop)} · ${r.commits?.length || 0} ${o.key} commit(s)`,
     );
+    const conflicts = [
+      r.uat?.conflictEpic && `task → epic (${r.uat.conflictEpic.files.join(', ')})`,
+      r.epic.conflictUat && `epic → ${s.uat} (${r.epic.conflictUat.files.join(', ')})`,
+      r.develop?.conflictDevelop && `${r.develop.name} → ${s.develop} (${r.develop.conflictDevelop.files.join(', ')})`,
+    ].filter(Boolean);
+    if (conflicts.length) L.push(`  MERGE CONFLICTS (git merge-tree): ${conflicts.join('; ')}`);
+    const more = [...(r.branches?.uat || []), ...(r.branches?.develop || [])].filter((x) => x.name !== r.uat?.name && x.name !== r.develop?.name);
+    if (more.length) L.push(`  other ${o.key} branches: ${more.map((x) => `${x.name}${x.open ? ` (${x.open} commit(s) not merged)` : ''}${x.superseded ? ' (older)' : ''}`).join(', ')}`);
     if (r.otherBranches?.length) L.push(`  also names ${o.key} (non-standard): ${r.otherBranches.join(', ')}`);
   }
 

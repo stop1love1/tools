@@ -84,7 +84,15 @@ function epicCard(issue, e, M) {
         'div',
         { class: 'eline' },
         h('b', null, 'UAT'),
-        h('span', null, uatState(e), e.behindUat > 0 && gitChip(`${e.behindUat} behind ${UAT()}`, 'warn', `${UAT()} has commits the epic does not — rebase if the MR conflicts`), epicMr && mrChip(epicMr), epicMr && mrFacts(epicMr)),
+        h(
+          'span',
+          null,
+          uatState(e),
+          e.behindUat > 0 && gitChip(`${e.behindUat} behind ${UAT()}`, 'warn', `${UAT()} has commits the epic does not — rebase if the MR conflicts`),
+          conflictChip(conflictOf(epicMr, e.conflictUat), UAT()),
+          epicMr && mrChip(sansConflict(epicMr)),
+          epicMr && mrFacts(sansConflict(epicMr)),
+        ),
         h(
           'span',
           { class: 'gstep-act' },
@@ -167,7 +175,8 @@ function epicTickets(e, epicKey) {
     t.missing = t.commits.filter((c) => !c.inDevelop && !c.onDevBranch);
     t.title = e.ticketTitles?.[t.key] || '';
     const b = e.branches?.[t.key] || {};
-    t.target = b.develop || (t.uatBranch || b.uat || '').replace(uatSuffixRe(), `-${DEV()}`) || '';
+    const uatBranch = t.uatBranch || b.uat;
+    t.target = b.develop || (uatBranch ? toDevName(uatBranch) : '');
     t.latest = Math.max(...t.commits.map((c) => Date.parse(c.date)));
   }
   tickets.sort((a, b) => (b.missing.length > 0) - (a.missing.length > 0) || b.latest - a.latest);

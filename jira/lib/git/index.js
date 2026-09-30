@@ -28,7 +28,13 @@ async function handle(req, url) {
     const k = url.searchParams.get('key') || '';
     const epic = url.searchParams.get('epic') || '';
     if (!KEY_RE.test(k) || (epic && !KEY_RE.test(epic))) throw httpError(400, 'Invalid issue key');
-    return flow(k, epic || null);
+    // pin=<repo>:<branch>: the task branch the user chose when the ticket has several.
+    const pins = {};
+    for (const v of url.searchParams.getAll('pin')) {
+      const i = v.indexOf(':');
+      if (i > 0) pins[repoParam(v.slice(0, i))] = v.slice(i + 1);
+    }
+    return flow(k, epic || null, pins);
   }
   if (req.method === 'GET' && p === '/epic') {
     const k = url.searchParams.get('key') || '';

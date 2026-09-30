@@ -53,6 +53,18 @@ const counts = async (cwd, a, b) => {
   return { onlyA, onlyB };
 };
 
+// Would merging `source` into `target` conflict? The merge GitLab does for an MR, simulated in memory (no worktree
+// touched). → { files } when it conflicts, null when clean, undefined when it can't tell (bad ref, old git, timeout).
+async function mergeConflicts(cwd, target, source) {
+  const r = await git(cwd, ['merge-tree', '--write-tree', '--name-only', '--no-messages', target, source], { timeout: 60_000 });
+  // Exit 1 is also used for errors (a missing ref): only a result that starts with the merged tree id is a conflict.
+  const [tree, ...files] = r.stdout.split('\n');
+  if (r.timedOut || (r.code !== 0 && r.code !== 1) || !/^[0-9a-f]{40,64}$/.test(tree)) return undefined;
+  if (r.code === 0) return null;
+  // Then one conflicted path per line (a path can repeat, one line per stage).
+  return { files: [...new Set(files.filter(Boolean))] };
+}
+
 async function refs(cwd) {
   const text = await out(cwd, [
     'for-each-ref',
@@ -159,4 +171,4 @@ function stampTime(ref) {
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : 0;
 }
 
-module.exports = { BACKUP_NS, git, out, hookEnv, counts, refs, worktrees, operation, wtState, webUrl, fetchedAt, backupsOf, stamp, stampTime };
+module.exports = { BACKUP_NS, git, out, hookEnv, counts, mergeConflicts, refs, worktrees, operation, wtState, webUrl, fetchedAt, backupsOf, stamp, stampTime };

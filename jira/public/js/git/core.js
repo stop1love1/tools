@@ -10,6 +10,8 @@ const UAT = () => CFG.git.uat;
 const DEV = () => CFG.git.develop;
 const KEY = () => CFG.git.projectKey;
 const uatSuffixRe = () => new RegExp(`-${UAT()}$`);
+// The -develop twin of a -uat (or older suffix-less) task branch; same rule as the server's toDevelop.
+const toDevName = (b) => (uatSuffixRe().test(b) ? b.replace(uatSuffixRe(), `-${DEV()}`) : `${b}-${DEV()}`);
 const devBranchRe = () => new RegExp(`^(${CFG.git.branchTypes.join('|')})/${KEY()}-\\d+-[a-z0-9._-]+-${DEV()}$`);
 
 const gitState = {
@@ -36,11 +38,25 @@ function epicOverride(key) {
   return LS.get('gitEpic', {})[key] || '';
 }
 
+// The task branch the user chose per repo when a ticket has several: { [repo]: branch }.
+const branchPins = (key) => LS.get('gitBranch', {})[key] || {};
+function pinBranch(key, repo, branch) {
+  const all = LS.get('gitBranch', {});
+  const mine = { ...all[key], [repo]: branch || undefined };
+  all[key] = Object.values(mine).some(Boolean) ? mine : undefined;
+  LS.set('gitBranch', all);
+  refreshGit();
+}
+
 function getFlow(key, { fresh = false } = {}) {
   const epic = epicOverride(key);
-  const id = `${key}|${epic}`;
+  const pins = Object.entries(branchPins(key)).filter(([, b]) => b);
+  const id = `${key}|${epic}|${pins.map((p) => p.join(':')).join(',')}`;
   if (fresh || !gitState.flows.has(id)) {
-    const p = api(`/api/git/flow?key=${encodeURIComponent(key)}${epic ? '&epic=' + encodeURIComponent(epic) : ''}`);
+    const q = new URLSearchParams({ key });
+    if (epic) q.set('epic', epic);
+    for (const p of pins) q.append('pin', p.join(':'));
+    const p = api(`/api/git/flow?${q}`);
     p.catch(() => gitState.flows.delete(id));
     gitState.flows.set(id, p);
   }
@@ -88,6 +104,15 @@ function mrFacts(m) {
   if (st && !['conflict', 'unresolved threads', 'draft'].includes(st)) out.push(gitChip(st, st === 'ready to merge' ? 'ok' : ''));
   return out;
 }
+
+// Does a merge conflict? The server's local check (`git merge-tree`: works off VPN, before the MR exists and while
+// GitLab still says "checking"), else GitLab's has_conflicts on the open MR. → { files } or null.
+const conflictOf = (m, local) => local || (m?.state === 'opened' && m.conflicts ? { files: [] } : null);
+const conflictChip = (c, target) =>
+  c ? gitChip(`⚠ conflicts with ${target}${c.files.length ? ` · ${c.files.length} file${c.files.length > 1 ? 's' : ''}` : ''}`, 'danger', c.files.length ? `Merging would conflict in:\n${c.files.join('\n')}` : 'GitLab reports merge conflicts') : null;
+// An MR whose conflict is already shown by conflictChip: keep its other facts, drop the duplicate conflict chip.
+const sansConflict = (m) => m && { ...m, conflicts: false };
+const conflictFiles = (c) => (c?.files.length ? ` in ${c.files.slice(0, 3).join(', ')}${c.files.length > 3 ? ` +${c.files.length - 3}` : ''}` : '');
 
 const mrFactsText = (m) =>
   [m.state === 'opened' && m.conflicts && 'CONFLICT', m.comments && `${m.comments} comment(s)`, m.state === 'opened' && !m.resolved && 'unresolved threads', m.state === 'opened' && MERGE_STATUS[m.status]]
@@ -146,14 +171,31 @@ function refreshGit() {
   if (block && issue) block.replaceWith(gitFlowBlock(issue));
 }
 
+// An MR opened / created on GitLab in another tab: re-read MR states when the user comes back.
+let mrVisited = false;
+for (const type of ['click', 'auxclick']) document.addEventListener(type, (e) => e.target.closest?.('a[href*="/-/merge_requests"]') && (mrVisited = true), true);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !mrVisited) return;
+  mrVisited = false;
+  refreshGit();
+});
+
+// Getters: branch names can change in Settings without a reload.
 const ACTION_TITLES = {
   'ensure-epic': 'Create epic',
   'create-task': 'Create branch',
   checkout: 'Checkout',
   push: 'Push',
   'sync-task': 'Rebase onto epic',
-  'rebase-epic': `Rebase epic onto ${UAT()}`,
-  'pick-develop': `Cherry-pick to ${DEV()}`,
+  get 'sync-develop'() {
+    return `Rebase onto ${DEV()}`;
+  },
+  get 'rebase-epic'() {
+    return `Rebase epic onto ${UAT()}`;
+  },
+  get 'pick-develop'() {
+    return `Cherry-pick to ${DEV()}`;
+  },
   skip: 'Skip commit',
   abort: 'Abort',
   undo: 'Undo',
@@ -174,11 +216,47 @@ async function gitAction(body, confirmText) {
   }
   try {
     const { id } = await api('/api/git/action', { method: 'POST', body: JSON.stringify(body) });
-    return await showJob(id);
+    return await showJob(id, { started: true });
   } catch (e) {
     toast(e.message, 'error');
     return null;
   }
+}
+
+// Local and origin diverged (after a rebase / undo): replace origin's version, with lease.
+const forcePushBtn = (repo, branch) =>
+  actBtn('Force-push', () => gitAction({ action: 'push', repo, branch, force: true }, `${branch} on origin differs from local (after a rebase / undo).\n\nForce-push with lease, replacing origin's version?`), {
+    danger: true,
+    iconName: 'upload',
+  });
+
+// The epic is behind / conflicts with uat: rebase it (keeping each task's merge commit) and force-push. Shared branch → confirm.
+const rebaseEpicBtn = (repo, epicKey, { iconOnly = true } = {}) =>
+  actBtn(
+    `Rebase epic onto ${UAT()}`,
+    () =>
+      gitAction(
+        { action: 'rebase-epic', repo, epic: epicKey },
+        `Rebase epic/${epicKey} onto origin/${UAT()} (keeping each task's merge commit) and FORCE-PUSH it?\n\nThe epic is shared: tell the team first. Open task branches will need a rebase afterwards.`,
+      ),
+    { danger: true, iconOnly, iconName: 'rebase', title: `Rebase epic/${epicKey} onto ${UAT()} — force-push` },
+  );
+
+// The -develop branch conflicts with develop: rebase it onto develop and push (own branch, backup kept → no confirm).
+const syncDevBtn = (repo, branch) =>
+  actBtn(`Rebase onto ${DEV()}`, () => gitAction({ action: 'sync-develop', repo, branch }), {
+    primary: true,
+    iconName: 'rebase',
+    title: `Rebase ${branch} onto origin/${DEV()} and force-push it (with lease) — a backup is kept (Undo)`,
+  });
+
+// Switch the repo's own checkout; uncommitted work is stashed (after asking) and comes back on the way back.
+function checkoutBranch(repo, branch, dirty) {
+  if (!dirty) return gitAction({ action: 'checkout', repo, branch });
+  return gitAction(
+    { action: 'checkout', repo, branch, stash: true },
+    `${dirty} uncommitted file(s) in ${repoLabel(repo)}.\n\nStash them and switch to ${branch}? They are re-applied when you switch back from the dashboard.`,
+  );
 }
 
 async function openInCursor(repo, dir) {
@@ -254,7 +332,8 @@ const iconLink = (href, iconName, label) =>
 // Buttons shown wherever a rebase / cherry-pick is stopped on a conflict.
 function conflictActions(repo, dir, op) {
   return [
-    actBtn('Open in Cursor', () => openInCursor(repo, dir), { iconName: 'code', iconOnly: true }),
+    // Step one of resolving: the conflict may sit in the dashboard's scratch worktree, a folder the user never opened.
+    actBtn('Open in Cursor', () => openInCursor(repo, dir), { iconName: 'code', title: dir }),
     actBtn('Continue', () => gitAction({ action: 'continue', repo, dir }), { primary: true, title: 'Stage the resolved files and continue' }),
     actBtn('Skip commit', () => gitAction({ action: 'skip', repo, dir }, `Skip the current commit of this ${op}?`)),
     actBtn('Abort', () => gitAction({ action: 'abort', repo, dir }, `Abort the ${op} and go back to where it started?`), { danger: true }),

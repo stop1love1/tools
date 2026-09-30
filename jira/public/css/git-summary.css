@@ -136,7 +136,47 @@
   grid-row: auto;
   justify-content: flex-start;
 }
+/* All the ticket's branches in a repo */
+.gsum-branches ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.gsum-branches li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.gsum-branches li.on {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.gsum-branches .gbranch {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gsum-branches .gchips {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.gsum-branches .gstep-act {
+  grid-column: auto;
+  grid-row: auto;
+}
 .gsum-checks summary,
+.gsum-branches summary,
 .gsum-all summary {
   cursor: pointer;
   font-size: 12px;

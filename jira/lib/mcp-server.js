@@ -152,7 +152,7 @@ const TOOLS = [
   {
     name: 'git_flow',
     description:
-      "Where a ticket stands in the team git flow, per repo: its epic branch, task branch (-uat), develop branch, the ticket's commits and whether each is in the epic / uat / develop, sync with origin, conflicts and rule warnings.",
+      "Where a ticket stands in the team git flow, per repo: its epic branch, task branch (-uat) — the primary one, plus all the ticket's branches with unmerged-commit counts under `branches` —, develop branch, the ticket's commits and whether each is in the epic / uat / develop, sync with origin, conflicts and rule warnings.",
     inputSchema: { type: 'object', properties: { key: str('Issue key'), epic: str('Epic key to use instead of the parent Epic on Jira') }, required: ['key'] },
     run: ({ key, epic }) => gitRead.flow(issueKey(key), epic ? issueKey(epic) : null),
   },
@@ -227,9 +227,9 @@ const TOOLS = [
       'Actions and their params (all take repo unless noted):',
       '- fetch; checkout {branch}; push {branch, force?}; stash-pop {ref}',
       '- ensure-epic {epic}; start-task {key, repos[], branch, epic?, stash?} (no repo; branch <type>/<KEY>-<id>-<desc>-uat)',
-      '- create-task {epic, branch}; sync-task {epic, branch} (rebase task onto epic + push); rebase-epic {epic}',
-      '- pick-develop {branch (…-develop), shas[]}; commit {message "<KEY>-123: …", files[]}',
-      '- continue / skip / abort {dir?}; undo {branch}; delete-branches {branches[]}; prune-backups {days}',
+      '- create-task {epic, branch}; sync-task {epic, branch} (rebase task onto epic + push); sync-develop {branch (…-develop)} (rebase onto develop + push); rebase-epic {epic}',
+      '- pick-develop {branch (…-develop), shas[]}; commit {message "<KEY>-123: …", files[], push?}',
+      '- continue / skip / abort {dir?} (continue / skip also do the push the stopped step owed); undo {branch}; delete-branches {branches[]}; prune-backups {days}',
       'Waits for the job up to waitSeconds (default 120) and returns its status and log.',
     ].join('\n'),
     inputSchema: {

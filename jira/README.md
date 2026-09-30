@@ -65,12 +65,17 @@ Nút Claude ở cột cuối mỗi dòng (và nút **Claude** trong chi tiết t
 Quản lý nhánh / commit / cherry-pick theo đúng flow trong `lms/.cursor/rules/git-workflow.mdc`, ngay trong dashboard:
 
 - **Khối "Git flow" trong chi tiết task**: từng bước epic → nhánh task `-uat` → commit / rebase lên epic / push → MR task → epic → MR epic → uat (chỉ 1) → cherry-pick sang `-develop` → MR → develop, riêng cho Backend và Frontend. Mỗi bước hiện trạng thái và nút cho việc tiếp theo. Epic lấy theo Epic cha trên Jira (bấm chip `epic/…` để đổi); nếu commit của ticket nằm ở epic khác, dashboard gợi ý.
+- **Nhiều nhánh cho 1 task**: nhận cả nhánh gộp nhiều task (`feature/VLEARN-4546-4547-…-uat`) và nhánh tên cũ không có hậu tố `-uat`. Mỗi repo có danh sách mọi nhánh của task kèm số commit chưa vào epic/uat (bản rebase / cherry-pick không tính). Nhánh chính được chọn theo thứ tự: đã ghim (**Use**) → đang checkout → còn commit chưa merge → tên đúng chuẩn → mới nhất. Nhánh cũ bị nhánh mới hơn bao trùm (cùng các task) được đánh dấu *older* và không được lấy commit sang develop.
 - **Tab Git** (icon nhánh trên header): trạng thái 2 repo + commit/push/fetch, ticket đang có nhánh, dọn nhánh local (`backup/*`, đã mất trên origin, đã vào uat, tên sai chuẩn), log các job gần đây.
+- **Conflict của MR**: dashboard tự mô phỏng merge bằng `git merge-tree` (không đụng working tree) cho task → epic, epic → uat và nhánh `-develop` → develop — chạy được khi tắt VPN, trước khi tạo MR và khi GitLab còn "checking". Có conflict thì hiện `⚠ conflicts with …` kèm danh sách file và nút xử lý: **Rebase & push** (task), **Rebase epic onto uat** (epic, có hỏi), **Rebase onto develop** (nhánh develop). Kết hợp với `has_conflicts` của GitLab khi có.
 - **MR**: mở trang "New merge request" của GitLab đã điền sẵn source/target/title/description theo mẫu — không cần `glab` hay API token.
 - **An toàn**:
   - Thao tác trên nhánh không được checkout thì chạy trong worktree tạm `~/Documents/lms-worktrees/dash-<repo>` → không đụng code đang làm dở. Xong job worktree tạm tự nhả nhánh.
   - Trước khi rebase / cherry-pick / reset / xoá nhánh, tip được lưu vào `refs/dash-backup/<nhánh>/<thời gian>` (thay cho việc tự tạo `backup/*`). Nút **Undo** đưa nhánh về bản backup gần nhất; nhánh đã xoá khôi phục bằng `git branch <tên> refs/dash-backup/<tên>/<thời gian>`.
-  - Conflict được giữ nguyên để sửa trong Cursor, rồi **Continue / Skip / Abort** từ dashboard. Continue từ chối nếu file còn conflict marker.
+  - Conflict được giữ nguyên để sửa trong Cursor, rồi **Continue / Skip / Abort** từ dashboard. Continue từ chối nếu file còn conflict marker; xong thì tự push tiếp như bước ban đầu (rebase → force-push with lease, cherry-pick → push).
+  - Checkout / Start khi còn thay đổi chưa commit: stash lại (có hỏi), và tự áp lại khi chuyển về nhánh đó từ dashboard. Pop lỗi thì stash vẫn giữ trong tab Git.
+- Commit: message được kiểm tra format trước khi gửi và giữ nháp nếu commit lỗi (hook fail…); tick *Push after commit* để commit + push trong một lần.
+- Tạo / mở MR trên GitLab xong quay lại tab dashboard: trạng thái MR tự tải lại.
   - Force-push luôn dùng `--force-with-lease`; không bao giờ push thẳng vào `uat` / `develop` / `release/*`. Mỗi lúc chỉ chạy 1 job git.
 - Commit chạy đủ hook của repo (lint-staged, typecheck, gitleaks…); `VSF_APP_TOKEN` được đọc từ `lms/dev.sh` nếu server không được chạy từ `dev.sh`.
 

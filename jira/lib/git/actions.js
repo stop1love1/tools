@@ -70,16 +70,54 @@ const fetchOrigin = (ctx, repo) => ctx.run(ctx.s.repos[repo], ['fetch', 'origin'
 const remoteHas = async (ctx, repo, branch) => !!(await git(ctx.s.repos[repo], ['rev-parse', '--verify', '-q', `refs/remotes/origin/${branch}`])).stdout.trim();
 const localHas = async (ctx, repo, branch) => !!(await git(ctx.s.repos[repo], ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])).stdout.trim();
 
+// Leaving a branch with uncommitted work: stash it under a message that says which branch it belongs to…
+const STASH_MSG = (from, to) => `dashboard: ${from || 'detached'} before ${to}`;
+async function stashFor(ctx, cwd, st, to) {
+  await ctx.run(cwd, ['stash', 'push', '--include-untracked', '-m', STASH_MSG(st.branch, to)]);
+  ctx.log(`↳ changes on ${st.branch} stashed — they come back when you switch to it from the dashboard.`);
+}
+
+// …and put it back when the dashboard switches to that branch again. A pop that fails keeps the stash (Workspace tab).
+async function restoreStash(ctx, cwd, branch) {
+  const list = (await git(cwd, ['stash', 'list', '--format=%gd%x00%s'])).stdout.split('\n').filter(Boolean);
+  // `git stash list` shows the message as "On <branch>: <message>".
+  const hit = list.map((l) => l.split('\0')).find(([, subject]) => subject?.includes(`: ${STASH_MSG(branch, '')}`));
+  if (!hit) return;
+  const r = await ctx.run(cwd, ['stash', 'pop', hit[0]], { allowFail: true });
+  if (!r.code) return ctx.log(`↳ restored your earlier uncommitted changes on ${branch}.`);
+  const files = (await git(cwd, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
+  ctx.log(
+    files.length
+      ? `⚠ Re-applying ${hit[0]} conflicted in ${files.join(', ')} — fix them in the editor; the stash is kept until you drop it.`
+      : `⚠ Could not re-apply ${hit[0]} (${hit[1]}) — it is kept; pop it from the Workspace tab.`,
+  );
+}
+
 // Creates epic/<key> on origin from the tip of origin/<uat>.
 const createEpic = (ctx, repo, epicName) =>
   ctx.run(ctx.s.repos[repo], ['push', 'origin', `refs/remotes/origin/${ctx.s.uat}:refs/heads/${epicName}`], { timeout: 300_000 });
 
-// After a failed rebase / cherry-pick: leave the conflict for the user, or rethrow.
-async function conflictOr(e, dir) {
+// The push a step still owes once its conflict is resolved: worktree dir → { repo, branch, force, lease, epic }.
+// Continue / Skip do it when the rebase / cherry-pick completes; Abort drops it. Lost on restart (the log then says to push).
+const pendingPush = new Map();
+
+// After a failed rebase / cherry-pick: leave the conflict for the user (remembering `then`, the push to do after it), or rethrow.
+async function conflictOr(e, dir, then) {
   const op = await operation(dir);
   if (!op) throw e;
+  if (then) pendingPush.set(path.resolve(dir), then);
   const files = (await git(dir, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
   return { conflict: true, op, dir, files };
+}
+
+// The rebase / cherry-pick in dir just completed: do the push its step was going to do.
+async function finishPending(ctx, repo, dir, op) {
+  const p = pendingPush.get(path.resolve(dir));
+  pendingPush.delete(path.resolve(dir));
+  if (!p || p.repo !== repo) return ctx.log(`${op} finished. Push to update origin.`);
+  ctx.log(`${op} finished — pushing ${p.branch}.`);
+  await push(ctx, repo, p.branch, p);
+  if (p.epic) ctx.log('⚠ Tell the team: open task branches need a rebase onto the epic.');
 }
 
 async function push(ctx, repo, branch, { force = false, lease } = {}) {
@@ -90,6 +128,26 @@ async function push(ctx, repo, branch, { force = false, lease } = {}) {
     timeout: 300_000,
     failMsg: force ? 'Push failed — origin has new commits; fetch and try again.' : 'Push rejected — the local branch diverged from origin (rebase first?).',
   });
+}
+
+// Rebase a task branch onto `onto` and push it (force-with-lease when it's on origin). A conflict is left to resolve;
+// Continue then does the push.
+async function rebaseAndPush(ctx, repo, branch, onto) {
+  const dir = await dirFor(ctx, repo, branch);
+  if (await remoteHas(ctx, repo, branch)) {
+    const c = await counts(dir, branch, `origin/${branch}`);
+    if (c?.onlyB && !c.onlyA) await ctx.run(dir, ['merge', '--ff-only', `origin/${branch}`]);
+    else if (c?.onlyB) ctx.log(`⚠ Local and origin/${branch} diverged — keeping the local version.`);
+  }
+  await backup(ctx, dir, branch);
+  const force = await remoteHas(ctx, repo, branch);
+  try {
+    await ctx.run(dir, ['rebase', onto], { noHooks: true, timeout: 600_000 });
+  } catch (e) {
+    return conflictOr(e, dir, { repo, branch, force });
+  }
+  await push(ctx, repo, branch, { force });
+  return { dir };
 }
 
 // -------------------------------------------------------------------------
@@ -107,9 +165,11 @@ function anyBranch(b) {
   return b;
 }
 
-function taskBranch(s, b, suffix) {
+// New branches must carry the suffix; `existing` also accepts an older suffix-less task branch on the uat track.
+function taskBranch(s, b, suffix, { existing = false } = {}) {
   anyBranch(b);
-  if (!s.branchRe.test(b) || !b.endsWith(`-${suffix}`)) {
+  const legacyOk = existing && suffix === s.uat && s.taskMatch(b)?.legacy;
+  if (!s.branchRe.test(b) || !(b.endsWith(`-${suffix}`) || legacyOk)) {
     throw httpError(400, `Branch names must look like feature|bugfix/${s.key}-<id>-<description>-${suffix} (lowercase, ASCII).`);
   }
   return b;
@@ -171,7 +231,8 @@ const ACTIONS = {
   // the epic → uncommitted work stashed → checked out. Starting again on an existing branch just switches to it.
   async 'start-task'(ctx, { repos, key: ticket, epic, branch, stash }) {
     const { s } = ctx;
-    branch = taskBranch(s, branch, s.uat);
+    branch = taskBranch(s, branch, s.uat, { existing: true });
+    const legacy = s.taskMatch(branch).legacy;
     const list = (Array.isArray(repos) ? repos : []).filter((r) => Object.hasOwn(s.repos, r));
     if (!list.length) throw httpError(400, 'Pick at least one repo.');
     const epicKey = issueKey(epic || (await resolveEpic(issueKey(ticket)).catch(() => ticket)));
@@ -183,6 +244,7 @@ const ACTIONS = {
       ctx.log(`\n── ${repo} ──`);
       await fetchOrigin(ctx, repo);
       const exists = (await localHas(ctx, repo, branch)) || (await remoteHas(ctx, repo, branch));
+      if (legacy && !exists) throw httpError(400, `${branch} is not in ${repo}; new branches need the -${s.uat} suffix.`);
       if (!exists && !(await remoteHas(ctx, repo, epicName))) {
         await createEpic(ctx, repo, epicName);
         ctx.log(`${epicName} did not exist → created from origin/${s.uat}.`);
@@ -198,10 +260,10 @@ const ACTIONS = {
       }
       if (st.files.some((f) => f.xy !== '??')) {
         if (!stash) throw httpError(409, `${tilde(cwd)} has uncommitted changes on ${st.branch} — enable "stash" or commit first.`);
-        await ctx.run(cwd, ['stash', 'push', '--include-untracked', '-m', `dashboard: ${st.branch || 'detached'} before ${branch}`]);
-        ctx.log(`↳ changes on ${st.branch} stashed (pop them from the Workspace tab).`);
+        await stashFor(ctx, cwd, st, branch);
       }
       await ctx.run(cwd, exists ? ['switch', branch] : ['switch', '--no-track', '-c', branch, `origin/${epicName}`], { timeout: 600_000 });
+      if (exists) await restoreStash(ctx, cwd, branch);
       done.push(repo);
     }
     ctx.log(`\nReady to code on ${branch} (${done.join(', ')}). Commit as "${branch.match(s.ticketRe)[0]}: <what changed, in English>".`);
@@ -221,16 +283,19 @@ const ACTIONS = {
     }
   },
 
-  async checkout(ctx, { repo, branch }) {
+  async checkout(ctx, { repo, branch, stash }) {
     branch = anyBranch(branch);
     const cwd = ctx.s.repos[repo];
-    await ensureClean(cwd, 'checkout');
     const wt = (await worktrees(cwd)).find((w) => w.branch === branch);
     if (wt) throw httpError(409, `${branch} is checked out at ${tilde(wt.path)}.`);
+    const st = await wtState(cwd);
+    if (stash && !st.op && st.files.some((f) => f.xy !== '??')) await stashFor(ctx, cwd, st, branch);
+    else await ensureClean(cwd, 'checkout');
     await ctx.run(cwd, ['switch', branch], { timeout: 600_000 });
+    await restoreStash(ctx, cwd, branch);
   },
 
-  async commit(ctx, { repo, message, files }) {
+  async commit(ctx, { repo, message, files, push: andPush }) {
     const { s } = ctx;
     const cwd = s.repos[repo];
     message = typeof message === 'string' ? message.trim() : '';
@@ -247,6 +312,11 @@ const ACTIONS = {
     await ctx.run(cwd, ['add', '-A', '--', ...pick]);
     ctx.log('Committing (hooks: lint-staged, typecheck, gitleaks… may take a few minutes)');
     await ctx.run(cwd, ['commit', '-m', message], { timeout: 30 * 60_000, env: hookEnv(), failMsg: 'Commit failed — see the hook output above.' });
+    if (!andPush || !st.branch) return;
+    if (s.isProtected(st.branch)) return ctx.log(`Not pushing ${st.branch} (main branch).`);
+    await push(ctx, repo, st.branch).catch((e) => {
+      throw new Error(`Committed, but the push failed: ${e.message}`);
+    });
   },
 
   async push(ctx, { repo, branch, force }) {
@@ -257,24 +327,18 @@ const ACTIONS = {
 
   // Rebase the task onto the tip of its epic and force-push it (rule step 3).
   async 'sync-task'(ctx, { repo, epic, branch }) {
-    branch = taskBranch(ctx.s, branch, ctx.s.uat);
+    branch = taskBranch(ctx.s, branch, ctx.s.uat, { existing: true });
     const epicName = `epic/${issueKey(epic)}`;
     await fetchOrigin(ctx, repo);
     if (!(await remoteHas(ctx, repo, epicName))) throw httpError(409, `${epicName} is not on origin.`);
-    const dir = await dirFor(ctx, repo, branch);
-    if (await remoteHas(ctx, repo, branch)) {
-      const c = await counts(dir, branch, `origin/${branch}`);
-      if (c?.onlyB && !c.onlyA) await ctx.run(dir, ['merge', '--ff-only', `origin/${branch}`]);
-      else if (c?.onlyB) ctx.log(`⚠ Local and origin/${branch} diverged — keeping the local version.`);
-    }
-    await backup(ctx, dir, branch);
-    try {
-      await ctx.run(dir, ['rebase', `origin/${epicName}`], { noHooks: true, timeout: 600_000 });
-    } catch (e) {
-      return conflictOr(e, dir);
-    }
-    await push(ctx, repo, branch, { force: await remoteHas(ctx, repo, branch) });
-    return { dir };
+    return rebaseAndPush(ctx, repo, branch, `origin/${epicName}`);
+  },
+
+  // The -develop branch conflicts with develop (its MR can't merge): rebase it onto develop and force-push it.
+  async 'sync-develop'(ctx, { repo, branch }) {
+    branch = taskBranch(ctx.s, branch, ctx.s.develop);
+    await fetchOrigin(ctx, repo);
+    return rebaseAndPush(ctx, repo, branch, `origin/${ctx.s.develop}`);
   },
 
   // Epic fell behind uat: rebase it keeping each task's merge commit, then force-push (rule step 5).
@@ -292,7 +356,7 @@ const ACTIONS = {
     try {
       await ctx.run(dir, ['rebase', '--rebase-merges', `origin/${s.uat}`], { noHooks: true, timeout: 600_000 });
     } catch (e) {
-      return conflictOr(e, dir);
+      return conflictOr(e, dir, { repo, branch: name, force: true, lease, epic: true });
     }
     await push(ctx, repo, name, { force: true, lease });
     ctx.log('⚠ Tell the team: open task branches need a rebase onto the epic.');
@@ -329,7 +393,7 @@ const ACTIONS = {
     try {
       await ctx.run(dir, ['cherry-pick', ...regular], { noHooks: true, timeout: 600_000 });
     } catch (e) {
-      return conflictOr(e, dir).catch(async (err) => {
+      return conflictOr(e, dir, { repo, branch }).catch(async (err) => {
         // Not a conflict (e.g. bad commit): don't leave a half-done sequence behind.
         await git(dir, ['cherry-pick', '--quit']);
         throw err;
@@ -354,7 +418,7 @@ const ACTIONS = {
     } catch (e) {
       return conflictOr(e, dir);
     }
-    ctx.log(`${op} finished. Push to update origin.`);
+    await finishPending(ctx, repo, dir, op);
     return { dir };
   },
 
@@ -369,6 +433,7 @@ const ACTIONS = {
     } catch (e) {
       return conflictOr(e, dir);
     }
+    await finishPending(ctx, repo, dir, op);
     return { dir };
   },
 
@@ -379,6 +444,7 @@ const ACTIONS = {
     const op = await operation(dir);
     if (!op) throw httpError(409, 'Nothing in progress here.');
     await ctx.run(dir, [op, '--abort'], { noHooks: true });
+    pendingPush.delete(path.resolve(dir));
   },
 
   // Put a branch back to its latest dashboard backup (the current tip is backed up first).
@@ -441,6 +507,7 @@ const TITLES = {
   commit: 'Commit',
   push: 'Push',
   'sync-task': 'Rebase task onto epic',
+  'sync-develop': 'Rebase onto develop',
   'rebase-epic': 'Rebase epic',
   'pick-develop': 'Cherry-pick to develop',
   continue: 'Continue',

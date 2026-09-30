@@ -19,6 +19,7 @@ function flowChecks(key, r, M) {
   if (uat && mrsOf(M, uat.name, UAT()).length) checks.push(['MR from the task branch straight into ', code(UAT()), ' — it must go into the epic.']);
   if (mrsOf(M, epic.name, UAT()).filter((m) => m.state === 'opened').length > 1) checks.push(['More than one open MR ', code(`${epic.name} → ${UAT()}`), ' — keep exactly one.']);
   if (uat && mrsOf(M, uat.name).some((m) => m.target.startsWith('epic/') && m.target !== epic.name)) checks.push(['The task MR targets a different epic than ', code(epic.name), '.']);
+  if (r.otherBranches?.length) checks.push([`Other branches name ${key} outside the flow: `, r.otherBranches.map(code)]);
   return checks;
 }
 
@@ -29,7 +30,7 @@ function flowSteps(issue, f, r, M) {
   const uat = r.uat;
   const commits = r.commits || [];
   const title = commits[0]?.subject || `${key}: ${issue.summary}`;
-  const devName = r.develop?.name || (uat ? uat.name.replace(uatSuffixRe(), `-${DEV()}`) : null);
+  const devName = r.develop?.name || (uat ? toDevName(uat.name) : null);
   const desc = mrDescription(key, epic.name, devName);
   const steps = [];
   const step = (status, name, body, actions) =>
@@ -53,12 +54,7 @@ function flowSteps(issue, f, r, M) {
   // Push, or force-push with lease once local and origin diverged (after a rebase or an undo).
   const pushBtn = (b, primary) => {
     if (!b || (b.remote && !(b.sync?.onlyA > 0))) return null;
-    if (b.sync?.onlyB > 0) {
-      return actBtn('Force-push', () => gitAction({ action: 'push', repo, branch: b.name, force: true }, `${b.name} on origin differs from local (after a rebase / undo).\n\nForce-push with lease, replacing origin's version?`), {
-        danger: true,
-        iconName: 'upload',
-      });
-    }
+    if (b.sync?.onlyB > 0) return forcePushBtn(repo, b.name);
     return actBtn('Push', () => gitAction({ action: 'push', repo, branch: b.name }), { primary, iconName: 'upload' });
   };
   const where = (b) => [
@@ -85,24 +81,15 @@ function flowSteps(issue, f, r, M) {
   } else {
     const behind = epic.behindUat > 0;
     step(
-      behind ? 'warn' : 'done',
+      behind || epic.conflictUat ? 'warn' : 'done',
       ['Epic ', code(epic.name)],
       note(
         gitChip(`${epic.pending} commit${epic.pending === 1 ? '' : 's'} not in ${UAT()}`, epic.pending ? '' : 'ok'),
         behind && gitChip(`${epic.behindUat} behind ${UAT()}`, 'warn', `Rebase the epic onto ${UAT()} (--rebase-merges) when it has conflicts with ${UAT()}`),
+        conflictChip(epic.conflictUat, UAT()),
         epic.mergedToUat && gitChip(`merged to ${UAT()} ${epic.mergedToUat.sha}`, 'ok', epic.mergedToUat.subject),
       ),
-      [
-        behind &&
-          actBtn(`Rebase epic onto ${UAT()}`, () =>
-            gitAction(
-              { action: 'rebase-epic', repo, epic: f.epic },
-              `Rebase ${epic.name} onto origin/${UAT()} (keeping each task's merge commit) and FORCE-PUSH it?\n\nThe epic is shared: tell the team first. Open task branches will need a rebase afterwards.`,
-            ),
-            { danger: true, iconOnly: true, iconName: 'rebase', title: `Rebase ${epic.name} onto ${UAT()} — force-push` },
-          ),
-        undo(epic),
-      ],
+      [behind && rebaseEpicBtn(repo, f.epic), undo(epic)],
     );
   }
 
@@ -111,10 +98,10 @@ function flowSteps(issue, f, r, M) {
     step(
       'done',
       ['Task branch ', code(uat.name)],
-      note(where(uat), uat.others?.length > 0 && gitChip(`+${uat.others.length} other`, '', uat.others.join('\n'))),
+      note(where(uat), uat.others?.length > 0 && gitChip(`+${uat.others.length} other`, '', `${uat.others.join('\n')}\n\nAll of them: the branch list above`)),
       uat.name !== r.current &&
         !uat.worktree &&
-        actBtn('Checkout', () => gitAction({ action: 'checkout', repo, branch: uat.name }), { title: `Switch ${r.dir} to this branch` }),
+        actBtn('Checkout', () => checkoutBranch(repo, uat.name, r.dirty), { title: `Switch ${r.dir} to this branch` }),
     );
   } else {
     step(
@@ -129,26 +116,28 @@ function flowSteps(issue, f, r, M) {
     // 3. Commit, keep up with the epic, push
     const s = uat.sync;
     const toPush = !uat.remote || s?.onlyA > 0;
-    const behindEpic = uat.behindEpic > 0 && !uat.mergedToEpic; // once merged the epic moves on without it
+    // Once merged the epic moves on without it — unless newer commits on the branch conflict with it.
+    const behindEpic = (uat.behindEpic > 0 && !uat.mergedToEpic) || !!uat.conflictEpic;
     const dirtyHere = uat.name === r.current && r.dirty > 0;
     step(
-      dirtyHere || toPush || behindEpic ? 'todo' : 'done',
+      uat.conflictEpic ? 'warn' : dirtyHere || toPush || behindEpic ? 'todo' : 'done',
       'Commit · rebase onto epic · push',
       note(
         dirtyHere && gitChip(`${r.dirty} uncommitted`, 'warn'),
         commits.length > 0 && gitChip(`${commits.length} ${key} commit${commits.length > 1 ? 's' : ''}`),
         !uat.remote ? gitChip('not pushed', 'warn') : s?.onlyA > 0 && gitChip(`${s.onlyA} to push`, 'warn'),
         s?.onlyB > 0 && gitChip(`${s.onlyB} only on origin`, 'warn', 'Local and origin diverged'),
-        behindEpic && gitChip(`${uat.behindEpic} behind epic`, 'warn'),
+        uat.behindEpic > 0 && behindEpic && gitChip(`${uat.behindEpic} behind epic`, 'warn'),
+        conflictChip(uat.conflictEpic, 'epic'),
         !dirtyHere && !toPush && !behindEpic && gitChip('up to date with epic & origin', 'ok'),
       ),
       [
         dirtyHere && actBtn('Commit…', () => openCommitDialog(repo), { primary: true }),
         behindEpic
-          ? actBtn(uat.remote ? 'Rebase & force-push' : 'Rebase & push', () =>
-              gitAction({ action: 'sync-task', repo, epic: f.epic, branch: uat.name }, `Rebase ${uat.name} onto origin/${epic.name} and ${uat.remote ? 'force-push (with lease)' : 'push'}?`),
-              { primary: !dirtyHere },
-            )
+          ? actBtn(uat.remote ? 'Rebase & force-push' : 'Rebase & push', () => gitAction({ action: 'sync-task', repo, epic: f.epic, branch: uat.name }), {
+              primary: !dirtyHere,
+              title: `Rebase ${uat.name} onto origin/${epic.name} and ${uat.remote ? 'force-push (with lease)' : 'push'} — a backup is kept (Undo)`,
+            })
           : toPush && pushBtn(uat, !dirtyHere),
         undo(uat),
       ],
@@ -164,6 +153,7 @@ function flowSteps(issue, f, r, M) {
         'MR task → epic',
         note(
           mrNote(uat.name, epic.name),
+          conflictChip(uat.conflictEpic, 'epic'),
           skipped
             ? [gitChip(`${uat.onEpicWithoutMerge} commit(s) already on the epic without a merge commit`, 'warn'), ' — this task cannot be reverted with one ', code('git revert -m 1'), '.']
             : uat.remote
@@ -183,6 +173,7 @@ function flowSteps(issue, f, r, M) {
       `MR epic → ${UAT()}`,
       note(
         mrNote(epic.name, UAT()),
+        conflictChip(epic.conflictUat, UAT()),
         done ? gitChip(`everything on the epic is in ${UAT()}`, 'ok') : 'Only ONE MR per epic per repo; tasks merged into the epic later show up in it.',
       ),
       !done &&
@@ -237,14 +228,16 @@ function flowSteps(issue, f, r, M) {
   // 7. MR → develop (same title + description as the uat one)
   if (commits.length) {
     const inDevelop = commits.every((c) => c.inDevelop) || (dev && mrsOf(M, dev.name, DEV()).some((m) => m.state === 'merged'));
+    const devConflict = !inDevelop && dev && conflictOf(mrsOf(M, dev.name, DEV()).find((m) => m.state === 'opened'), dev.conflictDevelop);
     step(
-      inDevelop ? 'done' : dev?.remote ? 'todo' : 'na',
+      inDevelop ? 'done' : devConflict ? 'warn' : dev?.remote ? 'todo' : 'na',
       `MR → ${DEV()}`,
       note(
         dev && mrNote(dev.name, DEV()),
+        conflictChip(devConflict, DEV()),
         inDevelop ? gitChip(`all commits are in ${DEV()}`, 'ok') : dev?.remote ? `Title and description identical to the ${UAT()} MR.` : `Push the ${DEV()} branch first.`,
       ),
-      !inDevelop && dev?.remote && mrButtons(dev.name, DEV(), true),
+      !inDevelop && [devConflict && syncDevBtn(repo, dev.name), dev?.remote && mrButtons(dev.name, DEV(), !devConflict)],
     );
   }
 

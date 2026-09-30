@@ -66,8 +66,8 @@ function branchForm(issue, preset) {
   // Other tickets sharing this branch: feature/<KEY>-4546-4547-<desc>-uat belongs to both (the Git flow of each finds it).
   const also = h('input', { class: 'gin mono', placeholder: `e.g. 4547, ${KEY()}-4548`, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Other tickets on this branch' });
   const own = issue.key.split('-')[1];
-  // Reuse an existing branch name (the ticket already has it in the other repo).
-  const m = preset?.match(new RegExp(`^([a-z]+)/${KEY()}-(\\d+(?:-\\d+)*)-(.+)-${UAT()}$`));
+  // Reuse an existing branch name (the ticket already has it in the other repo); an older suffix-less one gets -uat here.
+  const m = preset?.match(new RegExp(`^([a-z]+)/${KEY()}-(\\d+(?:-\\d+)*)-(.+?)(?:-${UAT()})?$`));
   if (m && CFG.git.branchTypes.includes(m[1])) {
     type.value = m[1];
     desc.value = m[3];
@@ -79,12 +79,10 @@ function branchForm(issue, preset) {
   const ids = () => [own, ...others()].join('-');
   const branch = () => (slug() ? `${type.value}/${KEY()}-${ids()}-${slug()}-${UAT()}` : '');
   const update = () => (preview.textContent = branch() || `${type.value}/${KEY()}-${ids()}-…-${UAT()}`);
-  let submit = () => {};
+  // Enter submits through the popover.
   type.addEventListener('change', update);
   desc.addEventListener('input', update);
   also.addEventListener('input', update);
-  also.addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), submit()));
-  desc.addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), submit()));
   update();
   return {
     el: h(
@@ -98,6 +96,5 @@ function branchForm(issue, preset) {
     others: () => others().map((n) => `${KEY()}-${n}`),
     input: desc,
     focus: () => desc.focus(),
-    onSubmit: (fn) => (submit = fn),
   };
 }

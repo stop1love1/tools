@@ -53,7 +53,11 @@ function repoCard(r) {
       'div',
       { class: 'gstep-act' },
       changed > 0 && !m.op && actBtn('Commit…', () => openCommitDialog(r.repo), { primary: true }),
-      task && (!m.upstream || m.ahead > 0) && actBtn('Push', () => gitAction({ action: 'push', repo: r.repo, branch: m.branch }), { iconName: 'upload' }),
+      task &&
+        (!m.upstream || m.ahead > 0) &&
+        (m.behind > 0
+          ? forcePushBtn(r.repo, m.branch)
+          : actBtn('Push', () => gitAction({ action: 'push', repo: r.repo, branch: m.branch }), { iconName: 'upload' })),
       actBtn('Fetch from origin', () => gitAction({ action: 'fetch', repo: r.repo }), { iconName: 'download', iconOnly: true }),
       actBtn('Open in Cursor', () => openInCursor(r.repo, r.dir), { iconName: 'code', iconOnly: true }),
     ),

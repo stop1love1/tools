@@ -87,10 +87,13 @@ function fillFlow(box, issue, f) {
 // Nothing in git yet: one button that does the whole setup the rule asks for.
 function startPanel(issue, f) {
   const epicReady = gitRepos().some((r) => f.repos[r]?.epic?.remote);
+  const other = gitRepos().flatMap((r) => (f.repos[r]?.otherBranches || []).map((b) => [r, b]));
   return h(
     'div',
     { class: 'gsum gsum-start' },
     h('div', { class: 'gsum-headline' }, 'Not started in git yet'),
+    other.length > 0 &&
+      h('div', { class: 'gstep-note' }, gitChip('check first', 'warn'), `Branches naming ${issue.key} outside the flow: `, other.map(([r, b]) => [code(b), h('span', { class: 'muted small' }, ` (${repoLabel(r)}) `)])),
     h(
       'ol',
       { class: 'gsum-plan' },
@@ -111,7 +114,7 @@ function repoStatus(issue, f, r, M) {
   const dev = r.develop;
   const commits = r.commits || [];
   const title = commits[0]?.subject || `${key}: ${issue.summary}`;
-  const devName = dev?.name || (uat ? uat.name.replace(uatSuffixRe(), `-${DEV()}`) : `feature/${key}-${slugify(issue.summary)}-${DEV()}`);
+  const devName = dev?.name || (uat ? toDevName(uat.name) : `feature/${key}-${slugify(issue.summary)}-${DEV()}`);
   const desc = mrDescription(key, epic.name, devName);
   const mrs = (src, tgt) => (src ? mrsOf(M, src, tgt) : []);
   const openMr = (src, tgt) => mrs(src, tgt).find((m) => m.state === 'opened');
@@ -120,8 +123,15 @@ function repoStatus(issue, f, r, M) {
   const openBtn = (m, primary = true) => linkBtn(m.url, `Open MR !${m.iid}`, primary);
   const push = (b, primary = true) =>
     b.sync?.onlyB > 0
-      ? actBtn('Force-push', () => gitAction({ action: 'push', repo, branch: b.name, force: true }, `${b.name} on origin differs from local (after a rebase / undo).\n\nForce-push with lease, replacing origin's version?`), { danger: true, iconName: 'upload' })
+      ? forcePushBtn(repo, b.name)
       : actBtn('Push', () => gitAction({ action: 'push', repo, branch: b.name }), { primary, iconName: 'upload' });
+
+  // The task branch is the user's own and a backup is kept (Undo), so no confirm.
+  const rebaseBtn = () =>
+    actBtn('Rebase & push', () => gitAction({ action: 'sync-task', repo, epic: f.epic, branch: uat.name }), {
+      primary: true,
+      title: `Rebase ${uat.name} onto origin/${epic.name} and force-push it (with lease) — a backup is kept (Undo)`,
+    });
 
   const pushed = !!uat?.remote && !(uat.sync?.onlyA > 0);
   const inEpic = !!uat?.mergedToEpic || !!mergedMr(uat?.name, epic.name) || uat?.onEpicWithoutMerge > 0;
@@ -152,29 +162,29 @@ function repoStatus(issue, f, r, M) {
   } else if (!commits.length) {
     out.headline = 'Branch ready — no commits yet';
     out.detail = uat.name === r.current ? 'Checked out: start coding.' : 'Check it out to start coding.';
-    if (uat.name !== r.current && !uat.worktree) out.actions.push(actBtn('Checkout', () => gitAction({ action: 'checkout', repo, branch: uat.name }), { primary: true }));
+    if (uat.name !== r.current && !uat.worktree) out.actions.push(actBtn('Checkout', () => checkoutBranch(repo, uat.name, r.dirty), { primary: true }));
+  } else if (conflictOf(openMr(uat.name, epic.name), uat.conflictEpic)) {
+    // Before "push": the rebase pushes too, and pushing as is would only open a conflicting MR. Also when the task is
+    // already in the epic: its newer commits need another MR.
+    const m = openMr(uat.name, epic.name);
+    const c = conflictOf(m, uat.conflictEpic);
+    out.headline = m ? `MR !${m.iid} conflicts with the epic` : inEpic ? 'New commits conflict with the epic — rebase before the MR' : 'Conflicts with the epic — rebase before the MR';
+    out.detail = `Merging into ${epic.name} would conflict${conflictFiles(c)}. Rebase onto the epic, resolve them in Cursor, Continue — it pushes (a backup is kept).`;
+    out.tone = 'warn';
+    out.conflict = conflictChip(c, 'epic');
+    out.mr = sansConflict(m);
+    out.actions.push(rebaseBtn());
+    if (m) out.actions.push(openBtn(m, false));
   } else if (!uat.remote || uat.sync?.onlyA > 0) {
     out.headline = !uat.remote ? 'Not pushed yet' : `${uat.sync.onlyA} commit(s) not pushed`;
     out.detail = 'Push, then open the MR into the epic.';
     out.tone = 'warn';
     out.actions.push(push(uat));
-  } else if (!inEpic && openMr(uat.name, epic.name)?.conflicts) {
-    const m = openMr(uat.name, epic.name);
-    out.headline = `MR !${m.iid} has conflicts with the epic`;
-    out.detail = 'Rebase onto the epic, resolve the conflicts, then it force-pushes (a backup is kept).';
-    out.tone = 'warn';
-    out.mr = m;
-    out.actions.push(
-      actBtn('Rebase & push', () => gitAction({ action: 'sync-task', repo, epic: f.epic, branch: uat.name }, `Rebase ${uat.name} onto origin/${epic.name} and force-push it (with lease)?`), { primary: true }),
-      openBtn(m, false),
-    );
   } else if (!inEpic && uat.behindEpic > 0) {
     out.headline = 'Epic moved on — rebase before the MR';
     out.detail = `${uat.behindEpic} new commit(s) on ${epic.name}. Rebasing keeps the MR clean (a backup is kept).`;
     out.tone = 'warn';
-    out.actions.push(
-      actBtn('Rebase & push', () => gitAction({ action: 'sync-task', repo, epic: f.epic, branch: uat.name }, `Rebase ${uat.name} onto origin/${epic.name} and force-push it (with lease)?`), { primary: true }),
-    );
+    out.actions.push(rebaseBtn());
     const m = openMr(uat.name, epic.name);
     if (m) out.actions.push(openBtn(m, false));
     out.mr = m;
@@ -199,11 +209,16 @@ function repoStatus(issue, f, r, M) {
     if (inUat) out.lines.push({ label: 'UAT', ok: true, text: `In ${UAT()}` });
     else {
       const m = openMr(epic.name, UAT());
+      const c = conflictOf(m, epic.conflictUat);
       out.lines.push({
         label: 'UAT',
-        mr: m,
+        mr: sansConflict(m),
+        conflict: conflictChip(c, UAT()),
         text: m ? `Epic MR !${m.iid}${m.draft ? ' (draft)' : ''}` : epic.pending > 0 ? `Waiting for the epic MR → ${UAT()}` : `Waiting for the epic to reach ${UAT()}`,
-        actions: m ? [openBtn(m, false)] : epic.pending > 0 ? [M?.byBranch ? newMr(epic.name, UAT(), `Create epic MR → ${UAT()}`, false) : iconLink(mrListUrl(r.web, epic.name), 'mr', 'MRs of the epic on GitLab')] : [],
+        actions: [
+          c && rebaseEpicBtn(repo, f.epic, { iconOnly: false }),
+          ...(m ? [openBtn(m, false)] : epic.pending > 0 ? [M?.byBranch ? newMr(epic.name, UAT(), `Create epic MR → ${UAT()}`, false) : iconLink(mrListUrl(r.web, epic.name), 'mr', 'MRs of the epic on GitLab')] : []),
+        ],
       });
     }
 
@@ -225,13 +240,16 @@ function repoStatus(issue, f, r, M) {
       out.lines.push({ label: 'Develop', text: 'Picked · not pushed', actions: [push(dev, false)] });
     } else {
       const m = dev && openMr(dev.name, DEV());
+      const c = dev && conflictOf(m, dev.conflictDevelop);
       out.lines.push({
         label: 'Develop',
-        mr: m,
-        text: m ? `MR !${m.iid}${m.conflicts ? '' : ' in review'}` : `Picked · needs an MR into ${DEV()}`,
-        actions: [m ? openBtn(m, false) : dev ? newMr(dev.name, DEV(), `Create MR → ${DEV()}`, false) : null],
+        mr: sansConflict(m),
+        conflict: conflictChip(c, DEV()),
+        text: m ? `MR !${m.iid}${c ? '' : ' in review'}` : `Picked · needs an MR into ${DEV()}`,
+        actions: [c && syncDevBtn(repo, dev.name), m ? openBtn(m, false) : dev ? newMr(dev.name, DEV(), `Create MR → ${DEV()}`, false) : null],
       });
     }
+    if (out.lines.some((l) => l.conflict)) out.tone = 'warn';
   }
   return out;
 }
@@ -254,6 +272,7 @@ function repoCard2(issue, f, r, M, missingRepos) {
       h('b', null, label),
       branch && h('button', { class: 'gcode gbranch', title: `${branch}\nClick to copy`, onClick: () => copyText(branch, 'Branch name copied') }, branch),
       branch && branch === r.current && gitChip('checked out', 'accent'),
+      r.uat?.legacy && gitChip(`no -${UAT()} suffix`, 'warn', `Older naming: used as this ticket's task branch. New branches are named …-${UAT()}.`),
     ),
     (r.conflicts || []).map((c) =>
       h('div', { class: 'gconflict' }, h('div', null, h('b', null, `${c.op} stopped on a conflict`), ' in ', code(c.dir)), h('div', { class: 'gstep-act' }, conflictActions(repo, c.dir, c.op))),
@@ -261,7 +280,7 @@ function repoCard2(issue, f, r, M, missingRepos) {
     h('div', { class: 'gsum-headline' }, st.headline),
     st.detail && h('div', { class: 'gsum-detail' }, st.detail),
     st.note && h('div', { class: 'gsum-detail' }, st.note),
-    st.mr && mrFacts(st.mr).length > 0 && h('div', { class: 'gstep-note' }, mrFacts(st.mr)),
+    (st.conflict || (st.mr && mrFacts(st.mr).length > 0)) && h('div', { class: 'gstep-note' }, st.conflict, st.mr && mrFacts(st.mr)),
     h(
       'ol',
       { class: 'gtrack' },
@@ -271,9 +290,10 @@ function repoCard2(issue, f, r, M, missingRepos) {
       h(
         'ul',
         { class: 'gsum-lines' },
-        st.lines.map((l) => h('li', { class: l.ok ? 'ok' : '' }, h('b', null, l.label), h('span', { class: 'gline-text' }, l.ok ? '✓ ' + l.text : l.text, mrFacts(l.mr)), l.actions?.length > 0 && h('span', { class: 'gstep-act' }, l.actions))),
+        st.lines.map((l) => h('li', { class: l.ok ? 'ok' : '' }, h('b', null, l.label), h('span', { class: 'gline-text' }, l.ok ? '✓ ' + l.text : l.text, l.conflict, mrFacts(l.mr)), l.actions?.filter(Boolean).length > 0 && h('span', { class: 'gstep-act' }, l.actions))),
       ),
     st.actions.length > 0 && h('div', { class: 'gstep-act' }, st.actions),
+    branchList(issue, r),
     checks.length > 0 &&
       h('details', { class: 'gsum-checks' }, h('summary', null, `⚠ ${checks.length} flow warning${checks.length > 1 ? 's' : ''}`), h('ul', null, checks.map((c) => h('li', null, c)))),
     h(
@@ -292,6 +312,49 @@ function repoCard2(issue, f, r, M, missingRepos) {
           h('button', { class: 'link-btn', onClick: () => startTaskPop(issue, { repos: [x], preset: r.uat.name }) }, `+ Start in ${repoLabel(x)} (same branch name)`),
         ),
       ),
+  );
+}
+
+// All the ticket's task branches in a repo (a ticket can have several), with what each still carries.
+// The primary one drives the card; "Use" pins another one for this ticket.
+function branchList(issue, r) {
+  const list = [...(r.branches?.uat || []), ...(r.branches?.develop || [])];
+  if (list.length < 2 && !list.some((b) => b.legacy)) return null;
+  const primary = [r.uat?.name, r.develop?.name];
+  const pinned = branchPins(issue.key)[r.repo];
+  const open = (b) => (b.open > 0 ? gitChip(`${b.open} not in ${b.track === 'uat' ? UAT() : DEV()}`, b.superseded ? '' : 'warn', `${b.open} ${issue.key} commit(s) on this branch are not in ${b.track === 'uat' ? `the epic / ${UAT()}` : DEV()} (copies counted as in)`) : null);
+  const row = (b) =>
+    h(
+      'li',
+      { class: primary.includes(b.name) ? 'on' : '' },
+      h('button', { class: 'gcode gbranch', title: `${b.name}\nClick to copy`, onClick: () => copyText(b.name, 'Branch name copied') }, b.name),
+      h(
+        'span',
+        { class: 'gchips' },
+        primary.includes(b.name) && gitChip(b.name === pinned ? 'in use · pinned' : 'in use', 'accent'),
+        b.name === r.current && gitChip('checked out', 'accent'),
+        b.track === 'develop' && gitChip(DEV()),
+        b.legacy && gitChip(`no -${UAT()}`, '', 'Older naming without the suffix'),
+        b.mergedToEpic ? gitChip('merged → epic', 'ok', b.mergedToEpic.subject) : b.mergedToUat ? gitChip(`merged → ${UAT()}`, 'ok', b.mergedToUat.subject) : b.open === 0 && gitChip('nothing left', 'ok', 'All its commits are in the target already'),
+        open(b),
+        b.superseded && gitChip('older', '', `A newer branch covers the same tickets: ${b.superseded}`),
+        !b.remote && gitChip('not pushed', 'warn'),
+      ),
+      h('span', { class: 'muted small' }, b.date ? rel(new Date(b.date * 1000).toISOString()) : ''),
+      h(
+        'span',
+        { class: 'gstep-act' },
+        b.track === 'uat' && !primary.includes(b.name) && actBtn('Use', () => pinBranch(issue.key, r.repo, b.name), { title: 'Make this the branch the steps work on, for this ticket' }),
+        b.name === pinned && actBtn('Auto', () => pinBranch(issue.key, r.repo, null), { title: 'Go back to picking the branch automatically' }),
+        b.name !== r.current && !b.worktree && actBtn('Checkout', () => checkoutBranch(r.repo, b.name, r.dirty), { iconName: 'branch', iconOnly: true }),
+      ),
+    );
+  const busy = list.filter((b) => b.open > 0 && !primary.includes(b.name) && !b.superseded).length;
+  return h(
+    'details',
+    { class: 'gsum-branches', open: busy > 0 || !!pinned },
+    h('summary', null, `${list.length} branch${list.length > 1 ? 'es' : ''} for ${issue.key}`, busy > 0 && [' · ', h('span', { class: 'warn-text' }, `${busy} other with unmerged work`)]),
+    h('ul', null, list.map(row)),
   );
 }
 
