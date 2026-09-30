@@ -526,15 +526,19 @@ function renderProgress() {
   ].filter((p) => p[2] > 0);
   
   // Story Points calculation
-  const totalSP = base.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
-  const doneSP = base.filter((i) => i.status.category === 'done' && !isCancelled(i)).reduce((sum, i) => sum + (i.storyPoints || 0), 0);
-  const doingSP = base.filter((i) => i.status.category === 'indeterminate').reduce((sum, i) => sum + (i.storyPoints || 0), 0);
-  const todoSP = totalSP - doneSP - doingSP;
-  const spPct = totalSP ? Math.round((doneSP / totalSP) * 100) : 0;
+  const sumSP = (list) => list.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+  const totalSP = sumSP(base);
+  const cancelledSP = sumSP(base.filter(isCancelled));
+  const doneSP = sumSP(base.filter((i) => i.status.category === 'done' && !isCancelled(i)));
+  const doingSP = sumSP(base.filter((i) => i.status.category === 'indeterminate'));
+  const todoSP = totalSP - doneSP - doingSP - cancelledSP;
+  const countedSP = totalSP - cancelledSP;
+  const spPct = countedSP ? Math.round((doneSP / countedSP) * 100) : 0;
   const spParts = [
     ['done', 'Done', doneSP],
     ['prog', 'In progress', doingSP],
     ['new', 'To do', todoSP],
+    ['void', 'Cancelled', cancelledSP],
   ].filter((p) => p[2] > 0);
   
   const cards = [
@@ -568,7 +572,7 @@ function renderProgress() {
         h(
           'div',
           { class: 'progress-top' },
-          h('span', { class: 'progress-title' }, h('b', null, `${doneSP}/${totalSP}`), ' story points', h('span', { class: 'pct' }, `${spPct}%`)),
+          h('span', { class: 'progress-title' }, h('b', null, `${doneSP}/${countedSP}`), ' story points', h('span', { class: 'pct' }, `${spPct}%`)),
           h(
             'div',
             { class: 'track', role: 'img', 'aria-label': spParts.map(([, label, n]) => `${label} ${n}`).join(', ') },

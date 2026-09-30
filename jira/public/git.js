@@ -297,12 +297,12 @@ async function startTaskPop(issue, { repos, preset } = {}) {
       const picked = repoBoxes.filter((b) => b.checked).map((b) => b.value);
       if (!branch) return void (toast('Type a short description, e.g. add-export', 'error'), form.focus());
       if (!picked.length) return void toast('Pick Backend and/or Frontend', 'error');
-      return { branch, repos: picked, stash: stash.checked, jira: jira.checked };
+      return { branch, repos: picked, stash: stash.checked, jira: jira.checked, others: form.others() };
     },
   });
   if (!values) return;
   const job = await gitAction({ action: 'start-task', key: issue.key, epic: epicOverride(issue.key) || undefined, branch: values.branch, repos: values.repos, stash: values.stash });
-  if (job?.status === 'ok' && values.jira) moveToInDevelopment(issue);
+  if (job?.status === 'ok' && values.jira) for (const i of [issue, ...values.others.map((key) => ({ key }))]) moveToInDevelopment(i);
 }
 
 async function moveToInDevelopment(issue) {
@@ -325,16 +325,27 @@ function branchForm(issue, preset) {
   const type = h('select', { class: 'gin gtype', 'aria-label': 'Branch type' }, BRANCH_TYPES.map((t) => h('option', { value: t }, t)));
   type.value = /bug/i.test(issue.type.name) ? 'bugfix' : 'feature';
   const desc = h('input', { class: 'gin mono gdesc', placeholder: 'short-description', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Short description' });
+  // Other tickets sharing this branch: feature/VLEARN-4546-4547-<desc>-uat belongs to both (the Git flow of each finds it).
+  const also = h('input', { class: 'gin mono', placeholder: 'e.g. 4547, VLEARN-4548', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Other tickets on this branch' });
+  const own = issue.key.split('-')[1];
   // Reuse an existing branch name (the ticket already has it in the other repo).
-  const m = preset?.match(/^([a-z]+)\/[A-Z]+-\d+-(.+)-uat$/);
-  if (m && BRANCH_TYPES.includes(m[1])) (type.value = m[1]), (desc.value = m[2]);
+  const m = preset?.match(/^([a-z]+)\/VLEARN-(\d+(?:-\d+)*)-(.+)-uat$/);
+  if (m && BRANCH_TYPES.includes(m[1])) {
+    type.value = m[1];
+    desc.value = m[3];
+    also.value = m[2].split('-').filter((n) => n !== own).join(', ');
+  }
+  const others = () => [...new Set(also.value.match(/\d+/g) || [])].filter((n) => n !== own);
   const preview = h('code', { class: 'gcode' });
   const slug = () => slugify(desc.value, 10).replace(/^vlearn-\d+-?/, '');
-  const branch = () => (slug() ? `${type.value}/${issue.key}-${slug()}-uat` : '');
-  const update = () => (preview.textContent = branch() || `${type.value}/${issue.key}-…-uat`);
+  const ids = () => [own, ...others()].join('-');
+  const branch = () => (slug() ? `${type.value}/VLEARN-${ids()}-${slug()}-uat` : '');
+  const update = () => (preview.textContent = branch() || `${type.value}/VLEARN-${ids()}-…-uat`);
   let submit = () => {};
   type.addEventListener('change', update);
   desc.addEventListener('input', update);
+  also.addEventListener('input', update);
+  also.addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), submit()));
   desc.addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), submit()));
   update();
   return {
@@ -342,9 +353,11 @@ function branchForm(issue, preset) {
       'div',
       { class: 'gform' },
       h('div', { class: 'gform-row' }, type, h('span', { class: 'mono muted gfix' }, `/${issue.key}-`), desc, h('span', { class: 'mono muted gfix' }, '-uat')),
+      h('div', { class: 'gform-row' }, h('span', { class: 'muted small gfix' }, 'Also for tickets'), also),
       h('div', { class: 'gstep-note' }, '→ ', preview),
     ),
     branch,
+    others: () => others().map((n) => `VLEARN-${n}`),
     input: desc,
     focus: () => desc.focus(),
     onSubmit: (fn) => (submit = fn),
