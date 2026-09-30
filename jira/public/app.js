@@ -676,7 +676,7 @@ function renderRecentPanel() {
         state.recentlyViewed = [];
         LS.set('recentlyViewed', []);
         renderRecentPanel();
-      }}, icon('x')),
+      }}, icon('trash')),
       h('button', { class: 'icon-btn sm', title: 'Close', onClick: () => toggleRecent(false) }, icon('x')),
     ),
     h(
