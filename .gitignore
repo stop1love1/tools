@@ -16,6 +16,8 @@ dist/
 *.local
 .oauth.json
 .oauth.json.tmp
+jira/config.json
+jira/config.json.tmp
 
 # Logs
 *.log

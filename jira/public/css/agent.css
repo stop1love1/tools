@@ -1,0 +1,81 @@
+/* "Start with Claude": start dialog and run view. */
+
+.agent-start {
+  display: grid;
+  gap: 14px;
+  width: min(620px, 92vw);
+}
+
+.agent-issue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-issue b {
+  white-space: nowrap;
+}
+
+.agent-issue .gsubj {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-mode {
+  justify-self: start;
+}
+
+.agent-field {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 6px 12px;
+  align-items: start;
+}
+
+.agent-field > b {
+  padding-top: 3px;
+  font-size: 13px;
+}
+
+.agent-implement {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-implement[hidden] {
+  display: none;
+}
+
+.agent-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.agent-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.agent-field select.gin {
+  justify-self: start;
+  min-width: 180px;
+}
+
+.agent-field textarea.gin {
+  width: 100%;
+}
+
+@media (max-width: 600px) {
+  .agent-field {
+    grid-template-columns: 1fr;
+  }
+}
+
+.agent-field[hidden] {
+  display: none;
+}

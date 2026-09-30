@@ -1,0 +1,140 @@
+/* Urgent-attention block and urgency chips. */
+
+/* ---------- urgency ---------- */
+
+.reason {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.reason.r-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.reason.r-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.lvl-danger {
+  --lvl: var(--danger);
+}
+.lvl-warn {
+  --lvl: var(--warn);
+}
+
+.focus {
+  margin: 12px var(--gutter) 0;
+}
+.focus:empty {
+  display: none;
+}
+.focus-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.focus-head.closed {
+  margin-bottom: 0;
+}
+.focus-head.closed .fold-icon svg {
+  transform: none;
+}
+.focus-head .fold-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.focus-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.focus-head h2 svg {
+  width: 16px;
+  height: 16px;
+  color: var(--danger);
+}
+.focus-head .count {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+.focus-head .count.hot {
+  background: var(--danger);
+  color: #fff;
+}
+.focus-list {
+  display: grid;
+  gap: 4px;
+}
+.claude-btn {
+  color: var(--accent);
+}
+.focus-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px 5px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--lvl, var(--border-strong));
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.focus-row:hover {
+  border-color: var(--border-strong);
+  border-left-color: var(--lvl, var(--border-strong));
+}
+.focus-row.done .focus-summary {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.focus-reasons,
+.focus-actions,
+.focus-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.focus-summary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.focus-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.link-btn {
+  justify-self: start;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 2px;
+}

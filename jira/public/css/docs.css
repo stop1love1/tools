@@ -1,0 +1,144 @@
+/* Docs view, error and empty states. */
+
+/* ---------- docs ---------- */
+
+.section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 12px;
+  font-size: 15px;
+}
+.doc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.doc-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.doc-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.doc-title {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.doc-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-title svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--accent);
+}
+.issue-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.issue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font-size: 12px;
+}
+.issue-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.empty-state {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+}
+.error-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  color: var(--danger);
+  background: var(--surface);
+}
+.error-box > div {
+  flex: 1;
+  min-width: 200px;
+}
+
+.link-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.link-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.link-list li a,
+.child-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.link-list li > svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+.link-list .tag {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.link-list li.child {
+  cursor: pointer;
+}
+.link-list li.child:hover {
+  background: var(--surface-2);
+}
+details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 6px 0;
+}

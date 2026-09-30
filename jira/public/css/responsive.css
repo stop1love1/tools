@@ -1,0 +1,210 @@
+/* Breakpoints for the app shell. */
+
+/* ---------- responsive ---------- */
+
+@media (min-width: 861px) and (max-width: 1100px) {
+  .row,
+  .list-head,
+  .group {
+    grid-template-columns: 140px minmax(0, 1fr) 160px 76px 88px 28px;
+    grid-template-areas: 'key sum status docs upd act';
+  }
+  .c-prio,
+  .list-head .h-prio {
+    display: none;
+  }
+  .copy-label {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  :root {
+    --gutter: 16px;
+  }
+  .bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .brand {
+    order: 1;
+  }
+  #search {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 140px;
+  }
+  .bar-icons {
+    order: 3;
+    margin-left: 0;
+    gap: 6px;
+  }
+  .bar-actions {
+    order: 4;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+    gap: 6px;
+  }
+  #preset,
+  #user-filter {
+    flex: 1 1 140px;
+    max-width: none;
+  }
+  .icon-btn {
+    width: 28px;
+    height: 28px;
+  }
+  .icon-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  input[type='search'],
+  select {
+    height: 28px;
+    font-size: 13px;
+  }
+  .seg {
+    height: 28px;
+  }
+  .seg button {
+    height: 28px;
+  }
+  .subbar {
+    flex-wrap: wrap;
+    padding: 8px var(--gutter) 0;
+    gap: 8px;
+  }
+  .pills {
+    flex-basis: 100%;
+  }
+  #type-filter,
+  #sprint-filter {
+    font-size: 12.5px;
+  }
+  .notif-panel {
+    top: 80px;
+  }
+  .bar-meta {
+    display: none;
+  }
+  
+  .group {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      'key upd act'
+      'sum sum sum'
+      'status docs docs';
+    padding: 8px 12px;
+    gap: 6px 8px;
+  }
+  
+  .focus-row {
+    padding: 6px 8px 6px 10px;
+    gap: 8px;
+    font-size: 12.5px;
+  }
+  .focus-head h2 {
+    font-size: 13px;
+  }
+  .reason {
+    height: 18px;
+    font-size: 10.5px;
+    padding: 0 6px;
+  }
+
+  .list-head {
+    display: none;
+  }
+  .row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'key upd act'
+      'sum sum sum'
+      'status docs docs';
+    padding: 10px 12px;
+    gap: 6px 8px;
+  }
+  .row.child {
+    padding-left: 22px;
+  }
+  /* Hide columns not in mobile layout */
+  .c-prio {
+    display: none;
+  }
+  .c-docs {
+    justify-self: end;
+  }
+  .c-sum {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .sum-text {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+    max-height: 2.8em;
+  }
+
+  .focus-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'main actions' 'reasons reasons';
+  }
+  .focus-main {
+    grid-area: main;
+  }
+  .focus-actions {
+    grid-area: actions;
+  }
+  .focus-reasons {
+    grid-area: reasons;
+    flex-wrap: wrap;
+  }
+
+  .drawer.wide .detail-grid {
+    display: flex;
+    flex-direction: column;
+  }
+  .drawer.wide .detail-side {
+    position: static;
+  }
+}
+
+@media (max-width: 560px) {
+  #jql-toggle {
+    display: none;
+  }
+  .expand-toggle {
+    display: none !important;
+  }
+  #login {
+    padding: 0 10px;
+  }
+  .seg button {
+    padding: 0 9px;
+  }
+  .focus-summary {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .focus-main {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .focus-row {
+    grid-template-areas: 'main main' 'reasons actions';
+  }
+  .bar-meta {
+    display: none;
+  }
+  .drawer-head .btn .btn-label {
+    display: none;
+  }
+}

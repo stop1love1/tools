@@ -1,0 +1,295 @@
+/* Git flow block in the drawer: steps, chips, commits. */
+
+/* ---------------------------------------------------------------------------
+   Git flow (drawer block + Git view) */
+
+body[data-view='git'] :is(.subbar, .progress-strip, .focus) {
+  display: none;
+}
+
+.btn.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.btn.danger:hover {
+  background: var(--danger-soft);
+}
+
+.gchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.gchip.ok {
+  background: var(--done-bg);
+  color: var(--done-fg);
+  border-color: transparent;
+}
+.gchip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: transparent;
+}
+.gchip.accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+.gchip.gone {
+  text-decoration: line-through;
+}
+button.gchip.link {
+  cursor: pointer;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  text-transform: none;
+  letter-spacing: 0;
+}
+button.gchip.link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.gcode {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+.gin {
+  width: 100%;
+  margin-top: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+}
+textarea.gin {
+  resize: vertical;
+}
+
+.gtabs {
+  display: inline-flex;
+  justify-self: start;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  margin-bottom: 8px;
+}
+.gtabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  padding: 0 10px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.gtabs button + button {
+  border-left: 1px solid var(--border);
+}
+.gtabs button[aria-selected='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.gtabs button[aria-selected='true'] .dot {
+  background: var(--accent-fg);
+}
+.ghint {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.gsteps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.gstep {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 0 0 8px;
+}
+.gstep::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 16px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.gstep:last-child::before {
+  display: none;
+}
+.gstep-dot {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  color: var(--accent-fg);
+}
+.gstep-dot svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 3;
+}
+.gstep.s-done .gstep-dot {
+  background: var(--done-dot);
+  border-color: var(--done-dot);
+}
+.gstep.s-todo .gstep-dot {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.gstep.s-warn .gstep-dot {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.gstep.s-na {
+  opacity: 0.6;
+}
+.gstep-body {
+  min-width: 0;
+}
+.gstep-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.gstep-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 5px;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.gstep-act {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+}
+.gstep-act:empty {
+  display: none;
+}
+.git-flow .btn.sm,
+.git-view .btn.sm,
+.gmodal .btn.sm {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  gap: 4px;
+  border-radius: 6px;
+}
+.git-flow .btn.sm svg,
+.git-view .btn.sm svg {
+  width: 13px;
+  height: 13px;
+}
+.gcard .gstep-act,
+.gconflict .gstep-act,
+.gmodal .gstep-act {
+  grid-column: auto;
+  grid-row: auto;
+  justify-content: flex-start;
+}
+/* narrow drawer: actions go under the step text */
+@container (max-width: 520px) {
+  .gstep {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+  .gstep-act {
+    grid-column: 2;
+    grid-row: auto;
+    justify-content: flex-start;
+    margin-top: 3px;
+  }
+}
+.git-flow {
+  container-type: inline-size;
+}
+.gform-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+.gform-row .gin {
+  margin: 0;
+}
+.gtype {
+  width: auto;
+  flex: 0 0 auto;
+}
+.gdesc {
+  flex: 1 1 120px;
+  min-width: 90px;
+}
+.gfix {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.gcommits {
+  list-style: none;
+  margin: 3px 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  font-size: 11.5px;
+}
+.gcommits label,
+.gfiles label,
+.gbranches label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+.gsubj,
+.gbname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gconflict {
+  border: 1px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  display: grid;
+  gap: 4px;
+}
+.gfoot {
+  margin-top: 2px;
+}

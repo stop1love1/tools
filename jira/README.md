@@ -17,7 +17,37 @@ Mọi thứ đi qua Atlassian MCP server (`mcp.atlassian.com`) — token của n
 - **Mặc định**: dùng token Claude Code đã lưu khi kết nối Atlassian MCP (`~/.claude/.credentials.json`), chỉ đọc. Hết hạn sau ~8 giờ; tool **không** refresh token này vì refresh token bị xoay vòng — refresh hộ sẽ làm Claude Code bị đăng xuất.
 - **Tự refresh** (khuyên dùng): bấm **Bật tự refresh** trên header → đăng nhập Atlassian một lần. Dashboard tự đăng ký OAuth client riêng, lưu token vào `.oauth.json` (chmod 600, đã gitignore) và tự refresh, độc lập với Claude Code. Xoá `.oauth.json` để quay về token của Claude Code.
 
-Cấu hình tuỳ chọn: xem `.env.example`.
+## Cấu hình
+
+Bấm nút ⚙ (Settings) trên header. Trang này sửa `config.json` (đã gitignore): Jira (site, JQL mặc định, bộ lọc lưu sẵn, field story point / sprint, auto refresh…), editor, git flow (thư mục repo, danh sách repo, project key, tên nhánh uat / develop / main, loại nhánh, số ngày tra commit / MR, checklist MR) và server. Đa số áp dụng ngay; mục có nhãn *needs restart* cần chạy lại `npm start`. `.env` vẫn dùng được làm giá trị mặc định (xem `.env.example`).
+
+## MCP cho Claude Code / Cursor
+
+Cùng server, cùng port: `http://localhost:4747/mcp` (streamable HTTP). Không phải chạy thêm gì.
+
+```bash
+claude mcp add --transport http --scope user jira-dashboard http://localhost:4747/mcp
+```
+
+Cursor (`~/.cursor/mcp.json`): `{ "mcpServers": { "jira-dashboard": { "url": "http://localhost:4747/mcp" } } }`
+
+- Tool đọc: `list_issues`, `get_issue` (mô tả, comment, Confluence, MR), `list_transitions`, `get_notifications`, `git_overview`, `git_flow`, `git_epic`, `git_branches`, `get_git_job`.
+- Tool ghi (tắt mặc định, bật ở Settings → MCP → *Allow write tools*): `transition_issue`, `run_git_action` (các bước git flow giống nút trên dashboard).
+- Chỉ nhận request từ máy này (`127.0.0.1`, kiểm tra `Host` và `Origin`). Tắt hẳn: Settings → MCP → *Serve MCP at /mcp*.
+
+## Start with Claude
+
+Nút Claude ở cột cuối mỗi dòng (và nút **Claude** trong chi tiết task) mở dialog chọn: **Implement & open MR** hoặc **Plan only**, repo, MR cần mở (task → epic, epic → uat, develop), draft MR, tự đổi status Jira, ghi chú. Bấm **Start**: như trước — copy nội dung vào clipboard và mở tab Claude Code trong Cursor — nhưng nội dung giờ là hướng dẫn đầy đủ theo các lựa chọn (đọc ticket + Confluence + git flow qua MCP `jira-dashboard`, quy tắc branch / commit / MR của team) kèm bản chụp ticket.
+
+- Bật Settings → MCP → *Allow write tools* để Claude dùng các bước git của dashboard (có backup) và `create_merge_request` (MR theo mẫu, trả về link). Khi tắt, Claude tự làm bằng git / glab theo cùng quy tắc.
+- Hướng dẫn thêm cho mọi prompt: Settings → Start with Claude.
+
+## Cấu trúc code
+
+- `server.js`: khởi động + router HTTP.
+- `lib/`: `config` (schema + lưu `config.json`), `auth` (OAuth / token Claude Code), `mcp` (client Atlassian MCP), `issues`, `confluence`, `notifications`, `users`, `editor`, `mcp-server` (endpoint `/mcp`), `prompt` (prompt của Start with Claude), `util`.
+- `lib/git/`: `settings` (tên nhánh, regex từ config), `exec` (plumbing git), `read` (flow / epic / workspace), `mrs` (GitLab qua glab), `merge-requests` (tạo MR theo mẫu), `jobs`, `actions` (các bước), `index` (route `/api/git/*`).
+- `public/js/`: script thường (không bundler), nạp theo thứ tự trong `index.html`; `core.js` trước, `app.js` cuối. `public/js/git/`: UI git flow. `public/css/`: style theo từng phần.
 
 ## Có gì
 
@@ -28,9 +58,9 @@ Cấu hình tuỳ chọn: xem `.env.example`.
 - **Copy cho AI**: nút copy trên từng task, trong trang chi tiết (kèm mô tả, bình luận, MR, task con) và cho cả danh sách — Markdown có link Jira/Confluence để AI (vd. Claude với Atlassian MCP) đọc tiếp.
 - **Thông báo** (chuông): thay đổi và bình luận của người khác trên task bạn làm, tạo hoặc theo dõi trong 7 ngày; đánh dấu khi được @mention. Jira không mở API cho chuông thông báo gốc nên đây là bản dựng lại từ changelog/bình luận.
 - **Tài liệu**: mọi trang Confluence được link + file đính kèm Jira.
-- Phím tắt: `/` tìm kiếm, `R` tải lại, `Esc` đóng. Tự tải lại mỗi 5 phút.
+- Phím tắt: `/` tìm kiếm, `R` tải lại, `1`–`9` đổi bộ lọc, `Esc` đóng. Tự tải lại theo chu kỳ trong Settings (mặc định 5 phút).
 
-## Git flow (lms backend + frontend)
+## Git flow (các repo trong Settings, mặc định lms backend + frontend)
 
 Quản lý nhánh / commit / cherry-pick theo đúng flow trong `lms/.cursor/rules/git-workflow.mdc`, ngay trong dashboard:
 

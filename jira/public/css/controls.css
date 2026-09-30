@@ -1,0 +1,282 @@
+/* Buttons, inputs, selects and the theme picker. */
+
+/* ---------- controls ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none !important;
+  color: var(--text);
+}
+.btn:hover {
+  background: var(--surface-2);
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.btn.primary:hover {
+  filter: brightness(1.08);
+}
+.btn.sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.btn svg {
+  width: 15px;
+  height: 15px;
+}
+.btn[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  color: var(--muted);
+}
+.icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.icon-btn.sm {
+  width: 26px;
+  height: 26px;
+}
+.icon-btn.sm svg {
+  width: 15px;
+  height: 15px;
+}
+.icon-btn.outline {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+.icon-btn.accent {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.icon-btn.counted {
+  position: relative;
+}
+.icon-btn.counted .count {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------- Theme picker dropdown ---------- */
+.theme-picker {
+  position: relative;
+}
+
+.theme-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  z-index: 100;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.theme-picker.open .theme-menu {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.theme-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease;
+}
+
+.theme-option:hover {
+  background: var(--surface-2);
+}
+
+.theme-option.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.theme-option .theme-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.theme-option .theme-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.theme-option .theme-label {
+  flex: 1;
+}
+
+.theme-option .theme-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.theme-option .theme-check svg {
+  width: 14px;
+  height: 14px;
+}
+.spin svg {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+input[type='search'],
+select,
+.jql-row input {
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0 10px;
+  min-width: 0;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+.seg button {
+  border: 0;
+  background: none;
+  padding: 0 12px;
+  height: 30px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+.seg button[aria-selected='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.seg.icons button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  padding: 0;
+}
+.seg.icons svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* The ⋯ menu also holds sign-in and Settings. */
+.theme-option[hidden] {
+  display: none;
+}
+a.theme-option {
+  text-decoration: none;
+}
+.menu-label {
+  padding: 6px 10px 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+#theme-toggle {
+  position: relative;
+}
+/* Something in the menu wants attention (token auto-refresh not enabled). */
+#theme-toggle.attn::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}

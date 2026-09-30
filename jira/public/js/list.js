@@ -1,0 +1,469 @@
+'use strict';
+
+// Main render: filters, urgent block, status pills, and the task list grouped by epic / parent.
+
+function render() {
+  closeMenu();
+  renderMeta();
+  for (const b of document.querySelectorAll('#views button')) b.setAttribute('aria-selected', String(b.dataset.view === state.view));
+  document.body.dataset.view = state.view;
+  $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
+  if (state.view === 'git' || state.view === 'settings') {
+    syncUrl();
+    const el = state.view === 'git' ? renderGitView() : renderSettingsView();
+    if ($('#main').firstChild !== el) $('#main').replaceChildren(el);
+    return;
+  }
+  const list = filtered();
+  renderTypes();
+  renderSprints();
+  renderProgress();
+  renderFocus();
+  renderStats();
+  syncUrl();
+
+  const main = $('#main');
+  if (state.error) {
+    main.replaceChildren(
+      h(
+        'div',
+        { class: 'error-box' },
+        h('div', null, h('strong', null, 'Failed to load data. '), state.error),
+        state.errorLogin && h('a', { class: 'btn primary', href: '/oauth/login' }, 'Sign in to Atlassian'),
+      ),
+    );
+    return;
+  }
+  if (!state.fetchedAt) return;
+  if (!state.issues.length) {
+    main.replaceChildren(h('div', { class: 'empty-state' }, 'No tasks match this JQL.'));
+    return;
+  }
+  main.replaceChildren(state.view === 'docs' ? renderDocs(list) : renderList(list));
+  if (state.openKey) refreshDrawerStatus();
+}
+
+function renderMeta() {
+  const parts = [];
+  if (state.me) {
+    parts.push(state.me.name);
+    if (state.me.auth.source === 'own') parts.push('own refresh token');
+    else if (state.me.auth.expiresAt) {
+      parts.push(`Claude Code token expires ${new Date(state.me.auth.expiresAt).toLocaleString('en-US', { timeStyle: 'short', dateStyle: 'short' })}`);
+    }
+  }
+  if (state.fetchedAt) parts.push(`updated ${state.fetchedAt.toLocaleTimeString('en-US', { timeStyle: 'short' })}`);
+  
+  // Set tooltip on login button
+  const login = $('#login');
+  if (login && parts.length) {
+    login.title = parts.join(' · ');
+  }
+}
+
+function renderTypes() {
+  const counts = new Map();
+  for (const i of state.issues) counts.set(i.type.name, (counts.get(i.type.name) || 0) + 1);
+  if (state.type !== 'all' && !counts.has(state.type)) state.type = 'all';
+  const select = $('#type-filter');
+  select.replaceChildren(
+    h('option', { value: 'all' }, `All types (${state.issues.length})`),
+    ...[...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => h('option', { value: name }, `${name} (${n})`)),
+  );
+  select.value = state.type;
+  select.hidden = counts.size < 2;
+  syncUrl();
+}
+
+function renderSprints() {
+  const sprints = new Map();
+  for (const i of state.issues) {
+    if (i.sprint) sprints.set(i.sprint.id, i.sprint);
+  }
+  const select = $('#sprint-filter');
+  if (sprints.size === 0) {
+    select.hidden = true;
+    return;
+  }
+  const sorted = [...sprints.values()].sort((a, b) => {
+    if (a.state === 'active' && b.state !== 'active') return -1;
+    if (a.state !== 'active' && b.state === 'active') return 1;
+    return b.name.localeCompare(a.name);
+  });
+  const counts = new Map();
+  for (const i of state.issues) {
+    if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
+  }
+  select.replaceChildren(
+    h('option', { value: '' }, 'All sprints'),
+    ...sorted.map((s) => 
+      h('option', { value: s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''} (${counts.get(s.id) || 0})`)
+    ),
+  );
+  select.value = state.sprint || '';
+  select.hidden = false;
+  syncUrl();
+}
+
+function renderFocus() {
+  const el = $('#focus');
+  if (state.error || !state.fetchedAt || !state.issues.length) return el.replaceChildren();
+  const urgent = state.issues.filter(isUrgent).sort(byUrgency);
+  if (!urgent.length) return el.replaceChildren();
+  const row = (i) => {
+    const u = urgency(i);
+    const isDone = i.status.category === 'done';
+    return h(
+      'div',
+      { class: `focus-row lvl-${u.level || 'none'}${isDone ? ' done' : ''}`, onClick: (e) => !e.target.closest('a,button') && openDetail(i.key) },
+      h('div', { class: 'focus-reasons' }, reasonChips(i)),
+      h('div', { class: 'focus-main' }, typeBadge(i.type.name), keyLink(i), h('span', { class: 'focus-summary', title: i.summary }, i.summary)),
+      h('div', { class: 'focus-actions' }, statusButton(i), claudeButton(i)),
+    );
+  };
+  const open = LS.get('focusOpen', true);
+  const toggle = () => (LS.set('focusOpen', !open), renderFocus());
+  el.replaceChildren(
+    h(
+      'button',
+      { class: `focus-head${open ? '' : ' closed'}`, 'aria-expanded': String(open), onClick: toggle },
+      h('span', { class: 'fold-icon' }, icon('chevRight')),
+      h('h2', null, icon('flame'), 'Urgent attention'),
+      h('span', { class: `count ${urgent.length ? 'hot' : ''}` }, urgent.length),
+      h('span', { class: 'muted small' }, 'Overdue, due within 3 days, High priority or above, or urgent label'),
+    ),
+    !open ? '' : urgent.length
+      ? h(
+          'div',
+          { class: 'focus-list' },
+          urgent.slice(0, 6).map(row),
+          urgent.length > 6 &&
+            h(
+              'button',
+              {
+                class: 'link-btn',
+                onClick: () => {
+                  state.urgentOnly = true;
+                  syncUrl();
+                  render();
+                },
+              },
+              `View all ${urgent.length} urgent tasks →`,
+            ),
+        )
+      : h('div', { class: 'focus-empty' }, 'No overdue, due-soon, or high-priority tasks.'),
+  );
+}
+
+function renderStats() {
+  const all = state.issues;
+  if (!all.length) return $('#stats').replaceChildren();
+  const pill = (label, value, toneName, pressed, onClick) =>
+    h(
+      'button',
+      { class: `pill ${toneName ? 'tone-' + toneName : ''} ${toneName === 'hot' && value ? 'hot' : ''}`, 'aria-pressed': String(pressed), onClick },
+      toneName && h('span', { class: 'dot' }),
+      label,
+      h('b', null, value),
+    );
+  $('#stats').replaceChildren(
+    pill('All', all.length, null, !state.status && !state.urgentOnly, () => {
+      state.status = null;
+      state.urgentOnly = false;
+      syncUrl();
+      render();
+    }),
+    pill('Urgent', all.filter(isUrgent).length, 'hot', state.urgentOnly, () => {
+      state.urgentOnly = !state.urgentOnly;
+      syncUrl();
+      render();
+    }),
+    ...statusList(all).map((s) =>
+      pill(s.name, all.filter((i) => i.status.name === s.name).length, tone(s), state.status === s.name, () => toggleStatus(s.name)),
+    ),
+  );
+}
+
+function keyLink(i) {
+  return h(
+    'a',
+    {
+      class: 'key',
+      href: '#' + i.key,
+      title: 'Open detail',
+      onClick: (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return; // let the browser open a new tab
+        e.preventDefault();
+        e.stopPropagation();
+        openDetail(i.key);
+      },
+    },
+    i.key,
+  );
+}
+
+function statusButton(issue) {
+  return h(
+    'button',
+    {
+      class: `status tone-${tone(issue.status)}`,
+      title: 'Change status',
+      onClick: (e) => {
+        e.stopPropagation();
+        openStatusMenu(e.currentTarget, issue);
+      },
+    },
+    issue.status.name,
+    icon('chev'),
+  );
+}
+
+const statusPill = (status) => status && h('span', { class: `status static tone-${tone(status)}` }, status.name);
+
+function docBadges(issue) {
+  return [
+    issue.docs.length > 0 &&
+      h('span', { class: 'badge doc', title: issue.docs.map(docTitle).join('\n') }, icon('doc'), issue.docs.length),
+    issue.attachments.length > 0 &&
+      h('span', { class: 'badge', title: issue.attachments.map((a) => a.filename).join('\n') }, icon('clip'), issue.attachments.length),
+  ];
+}
+
+// --- list (grouped by parent; parents fold/unfold on click) ---
+
+// Epic → Story/Task → Sub-task, the same levels as the git flow (epic branch → task branch).
+function renderList(list) {
+  if (!list.length) return h('div', { class: 'empty-state' }, 'No tasks match this filter.');
+  const byKey = new Map(state.issues.map((i) => [i.key, i]));
+  const isEpicIssue = (i) => /epic/i.test(i.type?.name || '');
+  const top = (g) => Math.max(...g.items.map((i) => urgency(i).score));
+  const latest = (g) => Math.max(...g.items.map((i) => Date.parse(i.updated)));
+  const byGroupUrgency = (a, b) => top(b) - top(a) || latest(b) - latest(a);
+
+  // Epic buckets; an Epic that is itself in the list becomes its bucket's header.
+  const buckets = new Map();
+  for (const i of list) {
+    const ek = isEpicIssue(i) ? i.key : i.epic?.key || null;
+    if (!buckets.has(ek)) buckets.set(ek, { epic: ek && (byKey.get(ek) || i.epic || { key: ek, summary: '' }), items: [] });
+    if (!(isEpicIssue(i) && ek === i.key)) buckets.get(ek).items.push(i);
+  }
+
+  // Inside a bucket: sub-tasks grouped under their parent; items hanging straight off the epic stay loose.
+  const groupBucket = (items, epicKey) => {
+    const groups = new Map();
+    for (const i of items) {
+      if (!i.parent || i.parent.key === epicKey) continue;
+      if (!groups.has(i.parent.key)) groups.set(i.parent.key, { parent: byKey.get(i.parent.key) || i.parent, items: [] });
+      groups.get(i.parent.key).items.push(i);
+    }
+    // A parent that is itself one of my issues is shown as its group's header.
+    const loose = items.filter((i) => (!i.parent || i.parent.key === epicKey) && !groups.has(i.key)).sort(byUrgency);
+    for (const g of groups.values()) g.items.sort(byUrgency);
+    return { groups: [...groups.values()].sort(byGroupUrgency), loose };
+  };
+
+  const row = (i, child, deep) => {
+    const u = urgency(i);
+    const isDone = i.status.category === 'done';
+    return h(
+      'div',
+      {
+        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}`,
+        onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
+      },
+      h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
+      h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i)),
+      h('div', { class: 'c-status' }, statusButton(i)),
+      h('div', { class: 'c-prio' }, prio(i.priority), ' ', i.priority || ''),
+      h('div', { class: 'c-docs' }, docBadges(i)),
+      h('div', { class: 'c-upd muted small', title: fmtDate(i.updated) }, rel(i.updated)),
+      h('div', { class: 'c-act' }, claudeButton(i)),
+    );
+  };
+
+  // Groups whose subtasks are all finished (Done or Cancelled) start collapsed; everything else starts expanded.
+  const isClosed = (parent, items) => {
+    // Check if all subtasks in this group are done (including cancelled)
+    const allDone = items.every(i => i.status.category === 'done');
+    const override = state.closedGroups.has(parent.key);
+    // An override flips whatever the auto default would be.
+    const result = override ? !allDone : allDone;
+    return result;
+  };
+
+  const groupRow = (parent, items, nested) => {
+    const mine = parent.url ? parent : null; // full issue DTO when the parent is also assigned to me
+    const closed = isClosed(parent, items);
+    const toggle = () => {
+      // Any click flips the current state; store/remove the override accordingly
+      state.closedGroups.has(parent.key) ? state.closedGroups.delete(parent.key) : state.closedGroups.add(parent.key);
+      LS.set('groupFold', [...state.closedGroups]);
+      render();
+    };
+    
+    // Count by type
+    const typeCounts = new Map();
+    for (const i of items) {
+      const typeName = i.type.name.toLowerCase();
+      let category = 'other';
+      if (typeName.includes('task')) category = 'task';
+      else if (typeName.includes('bug')) category = 'bug';
+      else if (typeName.includes('story')) category = 'story';
+      typeCounts.set(category, (typeCounts.get(category) || 0) + 1);
+    }
+    
+    const parts = [];
+    const taskCount = typeCounts.get('task') || 0;
+    const bugCount = typeCounts.get('bug') || 0;
+    const storyCount = typeCounts.get('story') || 0;
+    const otherCount = typeCounts.get('other') || 0;
+    
+    if (taskCount > 0) parts.push(`${taskCount} task${taskCount > 1 ? 's' : ''}`);
+    if (bugCount > 0) parts.push(`${bugCount} bug${bugCount > 1 ? 's' : ''}`);
+    if (storyCount > 0) parts.push(`${storyCount} stor${storyCount > 1 ? 'ies' : 'y'}`);
+    if (otherCount > 0) parts.push(`${otherCount} other`);
+    
+    const claudeGroupButton = h(
+      'button',
+      {
+        class: 'icon-btn sm claude-btn',
+        title: `Open ${parent.key} + ${items.length} subtasks in Claude Code`,
+        'aria-label': `Open group ${parent.key} in Claude Code`,
+        onClick: async (e) => {
+          e.stopPropagation();
+          // Build combined prompt with parent + all subtasks
+          let combined = `# ${parent.key}: ${parent.summary}\n\n`;
+          if (mine) {
+            combined += issueMarkdown(mine, await getDetail(parent.key).catch(() => null));
+          } else {
+            combined += `- Jira: ${parent.url || siteOf(items[0]) + '/browse/' + parent.key}\n`;
+            combined += `- Type: ${parent.type?.name || parent.type}\n`;
+          }
+          combined += `\n---\n\n## Subtasks (${items.length}):\n\n`;
+          for (const item of items) {
+            combined += `### ${item.key}: ${item.summary}\n`;
+            combined += `- Status: ${item.status.name}\n`;
+            combined += `- Jira: ${item.url}\n`;
+            const u = urgency(item);
+            if (u.reasons.length) combined += `- Needs attention: ${u.reasons.map(r => r.label).join(', ')}\n`;
+            combined += '\n';
+          }
+          combined = combined.slice(0, 11_000);
+          try {
+            await navigator.clipboard.writeText(combined);
+          } catch {
+            // Clipboard unavailable
+          }
+          try {
+            await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt: combined }) });
+            toast(`Opened ${parent.key} + ${items.length} subtasks in Claude Code`);
+          } catch (err) {
+            toast(`Failed to open Claude Code: ${err.message}. Content copied.`, 'error');
+          }
+        },
+      },
+      icon('ai'),
+    );
+    
+    return h(
+      'div',
+      {
+        class: `group${closed ? ' closed' : ''}${nested ? ' nested' : ''}`,
+        role: 'button',
+        tabindex: '0',
+        'aria-expanded': String(!closed),
+        title: closed ? 'Expand' : 'Collapse',
+        onClick: (e) => !e.target.closest('a,button') && toggle(),
+        onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
+      },
+      // c-key: fold icon + type badge + key
+      h('div', { class: 'c-key' }, 
+        h('span', { class: 'fold-icon' }, icon('chevRight')),
+        typeBadge(parent.type?.name || parent.type),
+        mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key)
+      ),
+      // c-sum: group title
+      h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary), h('span', { class: 'muted small nowrap' }, parts.join(', '))),
+      h('div', { class: 'c-status' }, mine ? statusButton(mine) : null),
+      // c-prio: empty
+      h('div', { class: 'c-prio' }),
+      // c-docs: empty
+      h('div', { class: 'c-docs' }),
+      // c-upd: empty
+      h('div', { class: 'c-upd' }),
+      // c-act: claude button
+      h('div', { class: 'c-act' }, claudeGroupButton),
+    );
+  };
+
+  const out = h(
+    'div',
+    { class: 'list' },
+    h('div', { class: 'list-head' }, ['Key', 'Summary', 'Status', 'Priority', 'Docs', 'Updated', ''].map((t, idx) => h('div', { class: idx === 3 ? 'h-prio' : null }, t))),
+  );
+  const appendBucket = (items, epicKey, nested) => {
+    const { groups, loose } = groupBucket(items, epicKey);
+    for (const g of groups) {
+      out.append(groupRow(g.parent, g.items, nested));
+      if (!isClosed(g.parent, g.items)) out.append(...g.items.map((i) => row(i, true, nested)));
+    }
+    out.append(...loose.map((i) => row(i, nested, false)));
+  };
+
+  const epics = [...buckets.entries()].filter(([k]) => k).map(([, b]) => b).sort(byGroupUrgency);
+  for (const b of epics) {
+    out.append(epicRow(b.epic, b.items, isClosed));
+    if (!isClosed({ key: 'epic:' + b.epic.key }, b.items.length ? b.items : [b.epic])) appendBucket(b.items, b.epic.key, true);
+  }
+  const noEpic = buckets.get(null);
+  if (noEpic?.items.length) {
+    if (epics.length) out.append(h('div', { class: 'group plain epic-none' }, h('span', { class: 'muted' }, 'No epic')));
+    appendBucket(noEpic.items, null, false);
+  }
+  return out;
+}
+
+// Epic header: folds everything under it; shows progress and the epic branch the tasks merge into.
+function epicRow(epic, items, isClosed) {
+  const mine = epic.url ? epic : null;
+  const foldKey = 'epic:' + epic.key;
+  const closed = isClosed({ key: foldKey }, items.length ? items : [epic]);
+  const toggle = () => {
+    state.closedGroups.has(foldKey) ? state.closedGroups.delete(foldKey) : state.closedGroups.add(foldKey);
+    LS.set('groupFold', [...state.closedGroups]);
+    render();
+  };
+  const counted = items.filter((i) => !isCancelled(i));
+  const done = counted.filter((i) => i.status.category === 'done').length;
+  return h(
+    'div',
+    {
+      class: `group epic-row${closed ? ' closed' : ''}`,
+      role: 'button',
+      tabindex: '0',
+      'aria-expanded': String(!closed),
+      title: closed ? 'Expand' : 'Collapse',
+      onClick: (e) => !e.target.closest('a,button') && toggle(),
+      onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
+    },
+    h(
+      'div',
+      { class: 'c-key' },
+      h('span', { class: 'fold-icon' }, icon('chevRight')),
+      typeBadge('Epic'),
+      h('a', { class: 'key', href: '#' + epic.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(epic.key)) }, epic.key),
+    ),
+    h(
+      'div',
+      { class: 'c-sum' },
+      h('span', { class: 'group-title', title: epic.summary }, epic.summary || 'Epic'),
+      h('span', { class: 'mini-prog', title: `${done} of ${counted.length} done` }, h('i', { style: `width:${counted.length ? Math.round((done / counted.length) * 100) : 0}%` })),
+      h('span', { class: 'muted small nowrap' }, `${done}/${counted.length}`),
+    ),
+    h('div', { class: 'c-status' }, mine ? statusButton(mine) : epic.status ? statusPill(epic.status) : null),
+    h('div', { class: 'c-prio' }),
+    h('div', { class: 'c-docs' }),
+    h('div', { class: 'c-upd' }),
+    h('div', { class: 'c-act' }),
+  );
+}

@@ -1,0 +1,132 @@
+/* Shared bits: status pills, badges, type icons, links. */
+
+/* ---------- shared bits ---------- */
+
+.key {
+  font-weight: 600;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  position: relative;
+}
+.type::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  color: var(--tc, var(--t-other));
+}
+.type.t-epic {
+  --tc: var(--t-epic);
+}
+.type.t-epic::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12.4 2.4L13.6 3.6 10.8 6.4 12.4 8H8V3.6L9.6 5.2z'/%3E%3Cpath d='M3.6 13.6L2.4 12.4 5.2 9.6 3.6 8H8v4.4L6.4 10.8z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12.4 2.4L13.6 3.6 10.8 6.4 12.4 8H8V3.6L9.6 5.2z'/%3E%3Cpath d='M3.6 13.6L2.4 12.4 5.2 9.6 3.6 8H8v4.4L6.4 10.8z'/%3E%3C/svg%3E");
+}
+.type.t-story {
+  --tc: var(--t-story);
+}
+.type.t-story::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 3h10v2H3V3zm0 4h10v2H3V7zm0 4h6v2H3v-2z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 3h10v2H3V3zm0 4h10v2H3V7zm0 4h6v2H3v-2z'/%3E%3C/svg%3E");
+}
+.type.t-task {
+  --tc: var(--t-task);
+}
+.type.t-task::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.5 4L6 11.5 2.5 8l1-1L6 9.5 12.5 3l1 1z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.5 4L6 11.5 2.5 8l1-1L6 9.5 12.5 3l1 1z'/%3E%3C/svg%3E");
+}
+.type.t-sub {
+  --tc: var(--t-sub);
+}
+.type.t-sub::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 3v3H5v2h3v3h2V8h3V6h-3V3H8z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 3v3H5v2h3v3h2V8h3V6h-3V3H8z'/%3E%3C/svg%3E");
+}
+.type.t-bug {
+  --tc: var(--t-bug);
+}
+.type.t-bug::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13 7h2v2h-2v1c0 1.7-1.3 3-3 3H6c-1.7 0-3-1.3-3-3V9H1V7h2V6c0-.7.2-1.4.6-2L2 2.4 3.4 1l2.2 2.2C6.3 3.1 7.1 3 8 3s1.7.1 2.4.6L12.6 1 14 2.4l-1.6 1.6c.4.6.6 1.3.6 2v1zM6 5c-.6 0-1 .4-1 1v4c0 .6.4 1 1 1h4c.6 0 1-.4 1-1V6c0-.6-.4-1-1-1H6z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13 7h2v2h-2v1c0 1.7-1.3 3-3 3H6c-1.7 0-3-1.3-3-3V9H1V7h2V6c0-.7.2-1.4.6-2L2 2.4 3.4 1l2.2 2.2C6.3 3.1 7.1 3 8 3s1.7.1 2.4.6L12.6 1 14 2.4l-1.6 1.6c.4.6.6 1.3.6 2v1zM6 5c-.6 0-1 .4-1 1v4c0 .6.4 1 1 1h4c.6 0 1-.4 1-1V6c0-.6-.4-1-1-1H6z'/%3E%3C/svg%3E");
+}
+
+.prio {
+  font-size: 12px;
+  font-weight: 700;
+}
+.prio.p-high {
+  color: #e8590c;
+}
+.prio.p-highest {
+  color: var(--danger);
+}
+.prio.p-low,
+.prio.p-lowest {
+  color: var(--t-task);
+}
+.prio.p-medium {
+  color: #d4a106;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--pill-bg);
+  color: var(--pill-fg);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.status:hover {
+  filter: brightness(0.96);
+}
+.status.static {
+  cursor: default;
+}
+.status svg {
+  width: 12px;
+  height: 12px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.badge.doc {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.badge svg {
+  width: 13px;
+  height: 13px;
+}

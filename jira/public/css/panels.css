@@ -1,0 +1,301 @@
+/* Status menu, toasts, progress strip, notification and recent panels. */
+
+/* ---------- menu & toast ---------- */
+
+.menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--surface-2);
+}
+.menu-note {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.menu-note.err {
+  color: var(--danger);
+}
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 8px;
+  z-index: 70;
+  max-width: min(420px, calc(100vw - 32px));
+}
+.toast {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ok);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+}
+.toast.error {
+  border-left-color: var(--danger);
+}
+.toast a {
+  white-space: nowrap;
+}
+
+/* ---------- progress ---------- */
+
+/* A thin bar spanning the subbar's last line: one segment per status, then the totals. */
+.progress-strip {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.progress-strip:empty {
+  display: none;
+}
+.track {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.track .seg {
+  flex: 1 1 0;
+  height: 100%;
+  min-width: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--dot);
+  cursor: pointer;
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+.track .seg:hover {
+  filter: brightness(1.2);
+}
+.progress-strip.filtering .seg:not(.on) {
+  opacity: 0.3;
+}
+.seg-done {
+  --dot: var(--done-dot);
+}
+.seg-prog {
+  --dot: var(--prog-dot);
+}
+.seg-review {
+  --dot: var(--review-dot);
+}
+.seg-new {
+  --dot: var(--new-dot);
+}
+.seg-void {
+  --dot: var(--border-strong);
+}
+.progress-sum {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.progress-sum b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.progress-sum .pct {
+  margin-left: 2px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--done-bg);
+  color: var(--done-fg);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.progress-sum .sep {
+  margin: 0 8px;
+}
+
+/* ---------- notifications ---------- */
+
+.bell {
+  position: relative;
+}
+.bell-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.bell-badge[hidden] {
+  display: none;
+}
+.notif-panel {
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  z-index: 50;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.notif-panel[hidden] {
+  display: none;
+}
+.recent-panel {
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  z-index: 50;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.recent-panel[hidden] {
+  display: none;
+}
+.notif-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.notif-head > .muted {
+  order: 5;
+  flex-basis: 100%;
+}
+.notif-list {
+  overflow-y: auto;
+}
+.notif-item {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.notif-item:hover {
+  background: var(--surface-2);
+}
+.notif-item.unread {
+  background: var(--accent-soft);
+}
+.notif-item.mention .notif-line b {
+  color: var(--accent);
+}
+.avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.avatar.k-comment {
+  background: var(--review-bg);
+  color: var(--review-fg);
+}
+.avatar.k-status {
+  background: var(--prog-bg);
+  color: var(--prog-fg);
+}
+.avatar.k-assign {
+  background: var(--done-bg);
+  color: var(--done-fg);
+}
+.notif-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 13px;
+}
+.notif-quote {
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.notif-issue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.notif-sum {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.notif-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.notif-empty.err {
+  color: var(--danger);
+}

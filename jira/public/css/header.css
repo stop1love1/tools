@@ -1,0 +1,173 @@
+/* Top bar, filters and status pills. */
+
+/* ---------- header ---------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px var(--gutter);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.brand h1 {
+  font-size: 15px;
+  white-space: nowrap;
+}
+.logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--accent);
+  position: relative;
+  flex: 0 0 auto;
+}
+.logo::after {
+  content: '';
+  position: absolute;
+  inset: 8px 7px;
+  border-top: 2.5px solid var(--accent-fg);
+  border-bottom: 2.5px solid var(--accent-fg);
+}
+#search {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+.bar-actions,
+.bar-icons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bar-actions {
+  margin-left: auto;
+}
+#preset {
+  max-width: 190px;
+}
+#user-filter {
+  max-width: 200px;
+}
+.jql-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 var(--gutter) 10px;
+}
+.jql-row[hidden] {
+  display: none;
+}
+.jql-row input {
+  flex: 1;
+}
+
+.subbar {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px var(--gutter) 0;
+  flex-wrap: wrap;
+}
+.subbar select {
+  flex-shrink: 0;
+}
+.pills {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+  flex: 1;
+  padding-right: 24px;
+  /* fade the right edge so a cut-off pill reads as "scroll for more" */
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.pill:hover {
+  border-color: var(--border-strong);
+}
+.pill b {
+  font-variant-numeric: tabular-nums;
+}
+.pill[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pill.hot b {
+  color: var(--danger);
+}
+#type-filter {
+  height: 28px;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+.bar-meta {
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--dot, var(--new-dot));
+}
+.tone-new {
+  --dot: var(--new-dot);
+  --pill-bg: var(--new-bg);
+  --pill-fg: var(--new-fg);
+}
+.tone-prog {
+  --dot: var(--prog-dot);
+  --pill-bg: var(--prog-bg);
+  --pill-fg: var(--prog-fg);
+}
+.tone-review {
+  --dot: var(--review-dot);
+  --pill-bg: var(--review-bg);
+  --pill-fg: var(--review-fg);
+}
+.tone-done {
+  --dot: var(--done-dot);
+  --pill-bg: var(--done-bg);
+  --pill-fg: var(--done-fg);
+}
+.tone-hot {
+  --dot: var(--danger);
+}
+.tone-docs {
+  --dot: var(--accent);
+}
+
+main {
+  padding: 12px var(--gutter) 48px;
+}
