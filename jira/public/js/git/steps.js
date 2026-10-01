@@ -160,7 +160,7 @@ function flowSteps(issue, f, r, M) {
               ? 'Merge with “Create merge commit” (1 merge commit per task). Never merge locally into the epic.'
               : 'Push the branch first.',
         ),
-        uat.remote && mrButtons(uat.name, epic.name, !skipped && uat.aheadEpic > 0),
+        uat.remote && [...mrButtons(uat.name, epic.name, !skipped && uat.aheadEpic > 0), pickEpicBtn(repo, f.epic, uat.name, commits)].filter(Boolean),
       );
     }
   }

@@ -196,6 +196,8 @@ function repoStatus(issue, f, r, M) {
     if (m && !m.resolved) out.tone = 'warn';
     out.actions.push(m ? openBtn(m) : newMr(uat.name, epic.name, 'Create MR → epic'));
     if (!M?.byBranch && !m) out.actions.push(iconLink(mrListUrl(r.web, uat.name), 'mr', 'MRs of this branch on GitLab'));
+    // No merge rights on the epic MR: cherry-pick the task's own commits straight onto the epic instead.
+    out.actions.push(pickEpicBtn(repo, f.epic, uat.name, commits, false));
   } else {
     // In the epic: two independent tracks left, uat (via the epic MR) and develop (cherry-pick + MR).
     // A task MR can still be open when its commits reached the epic another way — it still needs attention.

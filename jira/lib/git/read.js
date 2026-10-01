@@ -198,6 +198,7 @@ async function repoFlow(s, repo, key, epicKey, pin) {
     date: c.date,
     inDevelop: has(inDevelop, c),
     inUat: has(inUat, c),
+    inEpic: has(inEpic, c),
     picked: has(inBranch, c) || has(inDevelop, c),
   }));
   // Which epics already carry this ticket's commits — Jira's parent Epic isn't always the branch that was used.

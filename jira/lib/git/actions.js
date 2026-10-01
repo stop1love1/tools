@@ -403,6 +403,49 @@ const ACTIONS = {
     return { dir };
   },
 
+  // No merge rights on the epic MR: cherry-pick the task's regular commits straight onto the epic and push
+  // (fast-forward only — the epic is shared, so a conflict here means rebase the task first, not force-push the epic).
+  async 'pick-epic'(ctx, { repo, epic, branch, shas }) {
+    const { s } = ctx;
+    branch = taskBranch(s, branch, s.uat, { existing: true });
+    const epicName = `epic/${issueKey(epic)}`;
+    if (!Array.isArray(shas) || !shas.length || shas.length > 100 || !shas.every((x) => SHA_RE.test(x))) throw httpError(400, 'Invalid commit list.');
+    await fetchOrigin(ctx, repo);
+    if (!(await remoteHas(ctx, repo, epicName))) throw httpError(409, `${epicName} is not on origin.`);
+    // Only this task's own regular (non-merge) commits — never another ticket's or another epic's.
+    const own = ticketIds(s, branch);
+    const regular = [];
+    const foreign = [];
+    for (const sha of shas) {
+      const [parentLine, subject] = (await git(s.repos[repo], ['log', '-1', '--format=%P%x00%s', sha])).stdout.trim().split('\0');
+      const id = subject?.match(s.subjectRe)?.[2];
+      if (parentLine.split(' ').length > 1) ctx.log(`Skipping merge commit ${sha.slice(0, 9)}.`);
+      else if (id && own.length && !own.includes(id)) foreign.push(`${sha.slice(0, 9)} ${subject}`);
+      else regular.push(sha);
+    }
+    if (foreign.length) throw httpError(400, `These commits belong to other tickets than ${branch}:\n${foreign.join('\n')}`);
+    if (!regular.length) throw httpError(400, 'No regular commits to cherry-pick.');
+    const dir = await dirFor(ctx, repo, epicName);
+    const c = await counts(dir, epicName, `origin/${epicName}`);
+    if (c?.onlyA) throw httpError(409, `Local ${epicName} has ${c.onlyA} commit(s) not on origin — the epic is shared, check them first.`);
+    if (c?.onlyB) await ctx.run(dir, ['merge', '--ff-only', `origin/${epicName}`]);
+    await backup(ctx, dir, epicName);
+    try {
+      await ctx.run(dir, ['cherry-pick', ...regular], { noHooks: true, timeout: 600_000 });
+    } catch (e) {
+      return conflictOr(e, dir, { repo, branch: epicName }).catch(async (err) => {
+        await git(dir, ['cherry-pick', '--quit']);
+        throw err;
+      });
+    }
+    // Fast-forward only: the epic is shared, so if origin moved on, fetch + retry rather than force-push over others' work.
+    await ctx.run(dir, ['push', 'origin', `${epicName}:${epicName}`], {
+      timeout: 300_000,
+      failMsg: `Push rejected — ${epicName} moved on origin since the cherry-pick. Fetch and try again.`,
+    });
+    return { dir };
+  },
+
   async continue(ctx, { repo, dir }) {
     const wt = await knownDir(ctx.s, repo, dir);
     dir = wt.path;
@@ -509,6 +552,7 @@ const TITLES = {
   'sync-task': 'Rebase task onto epic',
   'sync-develop': 'Rebase onto develop',
   'rebase-epic': 'Rebase epic',
+  'pick-epic': 'Cherry-pick to epic',
   'pick-develop': 'Cherry-pick to develop',
   continue: 'Continue',
   skip: 'Skip commit',

@@ -228,7 +228,7 @@ const TOOLS = [
       '- fetch; checkout {branch}; push {branch, force?}; stash-pop {ref}',
       '- ensure-epic {epic}; start-task {key, repos[], branch, epic?, stash?} (no repo; branch <type>/<KEY>-<id>-<desc>-uat)',
       '- create-task {epic, branch}; sync-task {epic, branch} (rebase task onto epic + push); sync-develop {branch (…-develop)} (rebase onto develop + push); rebase-epic {epic}',
-      '- pick-develop {branch (…-develop), shas[]}; commit {message "<KEY>-123: …", files[], push?}',
+      '- pick-develop {branch (…-develop), shas[]}; pick-epic {epic, branch (task …-uat), shas[]} (no merge rights on the epic MR: cherry-pick the task\'s commits straight onto the epic and push, fast-forward only); commit {message "<KEY>-123: …", files[], push?}',
       '- continue / skip / abort {dir?} (continue / skip also do the push the stopped step owed); undo {branch}; delete-branches {branches[]}; prune-backups {days}',
       'Waits for the job up to waitSeconds (default 120) and returns its status and log.',
     ].join('\n'),

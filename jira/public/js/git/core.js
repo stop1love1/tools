@@ -196,6 +196,7 @@ const ACTION_TITLES = {
   get 'pick-develop'() {
     return `Cherry-pick to ${DEV()}`;
   },
+  'pick-epic': 'Cherry-pick to epic',
   skip: 'Skip commit',
   abort: 'Abort',
   undo: 'Undo',
@@ -241,6 +242,22 @@ const rebaseEpicBtn = (repo, epicKey, { iconOnly = true } = {}) =>
       ),
     { danger: true, iconOnly, iconName: 'rebase', title: `Rebase epic/${epicKey} onto ${UAT()} — force-push` },
   );
+
+// No merge rights on the epic MR: cherry-pick the task's own commits straight onto the epic and push (fast-forward
+// only — the epic is shared, so a reject here means fetch/rebase the task first, never force-push the epic).
+const pickEpicBtn = (repo, epicKey, branch, commits, primary = false) => {
+  const shas = (commits || []).filter((c) => !c.inEpic).map((c) => c.sha);
+  if (!shas.length) return null;
+  return actBtn(
+    `Cherry-pick ${shas.length} → epic`,
+    () =>
+      gitAction(
+        { action: 'pick-epic', repo, epic: epicKey, branch, shas },
+        `No merge rights on the epic MR?\n\nCherry-pick ${shas.length} commit(s) of ${branch} onto epic/${epicKey} and push (fast-forward only)?`,
+      ),
+    { primary, title: `Cherry-pick ${branch}'s own commits onto epic/${epicKey} instead of merging the MR` },
+  );
+};
 
 // The -develop branch conflicts with develop: rebase it onto develop and push (own branch, backup kept → no confirm).
 const syncDevBtn = (repo, branch) =>
