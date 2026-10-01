@@ -13,6 +13,9 @@ const MR_KIND_LABELS = {
 const MODES = { implement: 'Implement & open MR', plan: 'Plan only' };
 
 function startWithClaude(issue) {
+  // An epic has no task branch of its own — it IS the epic branch, so the only MR that applies is epic → uat;
+  // task → epic and the develop cherry-pick (both about a task branch) don't make sense for it.
+  const isEpic = /epic/i.test(issue.type?.name || '');
   const saved = LS.get('agentOpts', {});
   const box = (checked, extra = {}) => h('input', { type: 'checkbox', checked, ...extra });
   const pick = guessRepos(issue);
@@ -23,8 +26,9 @@ function startWithClaude(issue) {
     { class: 'gtabs agent-mode' },
     Object.entries(MODES).map(([m, label]) => h('button', { type: 'button', 'data-mode': m, onClick: () => setMode(m) }, label)),
   );
-  const kinds = Object.keys(MR_KIND_LABELS);
-  const kindBoxes = kinds.map((k) => box((saved.mrKinds || ['task-epic']).includes(k), { value: k }));
+  const kinds = isEpic ? ['epic-uat'] : Object.keys(MR_KIND_LABELS);
+  const defaultKinds = isEpic ? ['epic-uat'] : saved.mrKinds || ['task-epic'];
+  const kindBoxes = kinds.map((k) => box(defaultKinds.includes(k), { value: k }));
   const draft = box(!!saved.draft);
   const moveStatus = box(saved.moveStatus ?? true);
   const notes = h('textarea', { class: 'gin', rows: '3', placeholder: 'Anything Claude should know: scope, approach, files, what to skip…' });

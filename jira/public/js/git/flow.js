@@ -272,7 +272,6 @@ function repoCard2(issue, f, r, M, missingRepos) {
       h('b', null, label),
       branch && h('button', { class: 'gcode gbranch', title: `${branch}\nClick to copy`, onClick: () => copyText(branch, 'Branch name copied') }, branch),
       branch && branch === r.current && gitChip('checked out', 'accent'),
-      r.uat?.legacy && gitChip(`no -${UAT()} suffix`, 'warn', `Older naming: used as this ticket's task branch. New branches are named …-${UAT()}.`),
     ),
     (r.conflicts || []).map((c) =>
       h('div', { class: 'gconflict' }, h('div', null, h('b', null, `${c.op} stopped on a conflict`), ' in ', code(c.dir)), h('div', { class: 'gstep-act' }, conflictActions(repo, c.dir, c.op))),
@@ -334,7 +333,6 @@ function branchList(issue, r) {
         primary.includes(b.name) && gitChip(b.name === pinned ? 'in use · pinned' : 'in use', 'accent'),
         b.name === r.current && gitChip('checked out', 'accent'),
         b.track === 'develop' && gitChip(DEV()),
-        b.legacy && gitChip(`no -${UAT()}`, '', 'Older naming without the suffix'),
         b.mergedToEpic ? gitChip('merged → epic', 'ok', b.mergedToEpic.subject) : b.mergedToUat ? gitChip(`merged → ${UAT()}`, 'ok', b.mergedToUat.subject) : b.open === 0 && gitChip('nothing left', 'ok', 'All its commits are in the target already'),
         open(b),
         b.superseded && gitChip('older', '', `A newer branch covers the same tickets: ${b.superseded}`),

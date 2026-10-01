@@ -92,20 +92,19 @@ async function sendToClaude(i, d, prompt = claudePrompt(i, d)) {
   }
 }
 
-// The Claude button of a task row: the Start dialog (its Start opens Claude Code in Cursor with the prompt);
-// an epic, which has no task branch of its own, opens straight in Cursor.
+// The Claude button of a task row: the Start dialog (its Start opens Claude Code in Cursor with the prompt,
+// built server-side by task_brief/MCP). Works the same for a task, story or epic — an epic just has no task
+// branch of its own, so its dialog defaults to the epic → uat MR kind instead of task → epic (see start.js).
 function claudeButton(i) {
-  const epic = /epic/i.test(i.type?.name || '');
   return h(
     'button',
     {
       class: 'icon-btn sm claude-btn',
-      title: epic ? 'Open in Claude Code (Cursor) with this epic' : 'Start with Claude: choose repos / MRs, then open Claude Code in Cursor',
+      title: 'Start with Claude: choose repos / MRs, then open Claude Code in Cursor',
       'aria-label': `Claude for ${i.key}`,
       onClick: (e) => {
         e.stopPropagation();
-        if (epic) sendToClaude(i);
-        else startWithClaude(i);
+        startWithClaude(i);
       },
     },
     icon('ai'),

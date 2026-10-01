@@ -46,7 +46,9 @@ function shortPrompt(opts) {
 }
 
 // The steps for the options (numbered, short). Write tools off → the same rules, done with git / glab by hand.
-function steps(o) {
+// isEpic: the ticket IS the epic branch — no task branch of its own, so no "create a task branch" step and
+// no develop cherry-pick (that targets a task branch's -develop twin); only the epic → uat MR applies.
+function steps(o, isEpic = false) {
   const s = gitSettings();
   const writes = config.get().mcp.allowWrites;
   const extra = config.get().agent.extraInstructions;
@@ -62,16 +64,18 @@ function steps(o) {
   const list = [
     ...common,
     o.moveStatus && `Move ${o.key} to an "In Development"-like status${t(' (list_transitions, transition_issue)', '')}.`,
-    t(
-      `Branch: reuse the task branch below, or run_git_action start-task { key: "${o.key}", repos, branch: "${branch}", stash: true } (makes the epic from ${s.uat} if missing).`,
-      `Branch: reuse the task branch below, or create "${branch}" from origin/<epic branch> (the epic from origin/${s.uat} if missing); stash my work first.`,
-    ),
+    isEpic
+      ? `Work directly on the epic branch (epic/${o.key}), made from origin/${s.uat} if missing${t(' (run_git_action start-task can create it)', '')}; stash my work first.`
+      : t(
+          `Branch: reuse the task branch below, or run_git_action start-task { key: "${o.key}", repos, branch: "${branch}", stash: true } (makes the epic from ${s.uat} if missing).`,
+          `Branch: reuse the task branch below, or create "${branch}" from origin/<epic branch> (the epic from origin/${s.uat} if missing); stash my work first.`,
+        ),
     'Implement; run the lint / typecheck / tests that cover what you touched.',
     t(
       `Commit and push with run_git_action (commit, push): message "${o.key}: <what changed, in English>", no Co-authored-by. Hooks run lint / typecheck — fix and retry on failure.`,
       `Commit "${o.key}: <what changed, in English>" (no Co-authored-by) and push; never force-push without asking.`,
     ),
-    ...(o.mrKinds.includes('develop')
+    ...(!isEpic && o.mrKinds.includes('develop')
       ? [t(`Cherry-pick the ticket's commits to the -${s.develop} twin of the task branch: run_git_action pick-develop { repo, branch, shas }.`, `Cherry-pick the ticket's commits (no merges) onto the -${s.develop} twin of the task branch, made from origin/${s.develop}.`)]
       : []),
     o.mrKinds.length
@@ -148,7 +152,8 @@ async function brief(opts) {
     if (r.otherBranches?.length) L.push(`  also names ${o.key} (non-standard): ${r.otherBranches.join(', ')}`);
   }
 
-  L.push('', `## Steps (${o.mode === 'plan' ? 'plan only' : `implement; MRs: ${o.mrKinds.join(', ') || 'none'}`})`, ...steps(o).map((x, n) => `${n + 1}. ${x}`));
+  const isEpic = /epic/i.test(i.type?.name || '');
+  L.push('', `## Steps (${o.mode === 'plan' ? 'plan only' : `implement; MRs: ${o.mrKinds.join(', ') || 'none'}`})`, ...steps(o, isEpic).map((x, n) => `${n + 1}. ${x}`));
   return L.join('\n');
 }
 

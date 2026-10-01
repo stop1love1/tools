@@ -81,6 +81,17 @@
   border: 1px dashed var(--border-strong);
   border-radius: 12px;
 }
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.loading-state .spin {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
 .error-box {
   display: flex;
   align-items: center;

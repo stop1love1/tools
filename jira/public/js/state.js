@@ -66,6 +66,7 @@ async function load({ silent = false } = {}) {
   state.loading = true;
   $('#refresh').classList.add('spin');
   $('#refresh').disabled = true;
+  if (!silent) render();
   try {
     const params = new URLSearchParams();
     if (state.jql) params.set('jql', state.jql);

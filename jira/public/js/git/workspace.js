@@ -105,9 +105,10 @@ function repoCard(r) {
 }
 
 function cleanupSection() {
-  const reasons = (repo, b) =>
+  // mrs computed once per branch below and passed in, instead of re-running mrsOf() per field.
+  const reasons = (mrs, b) =>
     [
-      ['merged', 'closed'].includes(mrsOf(gitState.mrData[repo], b.name)[0]?.state) && `MR ${mrsOf(gitState.mrData[repo], b.name)[0].state}`,
+      ['merged', 'closed'].includes(mrs[0]?.state) && `MR ${mrs[0].state}`,
       b.kind === 'backup' && 'backup/*',
       b.gone && 'gone on origin',
       b.mergedToUat && `in ${UAT()}`,
@@ -116,7 +117,9 @@ function cleanupSection() {
   const cols = gitRepos().map((repo) => {
     const data = gitState.branches[repo];
     if (!data) return h('div', { class: 'gcard' }, h('h3', null, repo), h('div', { class: 'muted' }, 'Loading…'));
-    const rows = data.branches.filter((b) => !isMainBranch(b.name) && (gitState.cleanupAll || reasons(repo, b).length));
+    const info = new Map(data.branches.map((b) => [b.name, { mrs: mrsOf(gitState.mrData[repo], b.name), reasons: null }]));
+    for (const b of data.branches) info.get(b.name).reasons = reasons(info.get(b.name).mrs, b);
+    const rows = data.branches.filter((b) => !isMainBranch(b.name) && (gitState.cleanupAll || info.get(b.name).reasons.length));
     const boxes = new Map();
     const count = h('span', null, 'Delete selected (0)');
     const allBox = h('input', { type: 'checkbox', 'aria-label': 'Select all', onChange: (e) => (boxes.forEach((b) => (b.checked = e.target.checked)), update()) });
@@ -144,11 +147,12 @@ function cleanupSection() {
           ? rows.map((b) => {
               const box = h('input', { type: 'checkbox', disabled: !!b.worktree, title: b.worktree ? `Checked out at ${b.worktree}` : null, onChange: update });
               if (!b.worktree) boxes.set(b.name, box);
+              const { mrs, reasons: rs } = info.get(b.name);
               return h(
                 'li',
                 null,
                 h('label', null, box, h('span', { class: 'mono gbname', title: b.name }, b.name)),
-                h('span', { class: 'gchips' }, mrsOf(gitState.mrData[repo], b.name).slice(0, 1).map(mrChip), reasons(repo, b).filter((x) => !x.startsWith('MR ')).map((x) => gitChip(x, x === `in ${UAT()}` ? 'ok' : 'warn')), b.worktree && gitChip('checked out', 'accent')),
+                h('span', { class: 'gchips' }, mrs.slice(0, 1).map(mrChip), rs.filter((x) => !x.startsWith('MR ')).map((x) => gitChip(x, x === `in ${UAT()}` ? 'ok' : 'warn')), b.worktree && gitChip('checked out', 'accent')),
                 h('span', { class: 'muted small' }, rel(new Date(b.date * 1000).toISOString())),
               );
             })

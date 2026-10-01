@@ -34,6 +34,10 @@ function render() {
     );
     return;
   }
+  if (state.loading && (!state.fetchedAt || state.usedJql !== state.jql)) {
+    main.replaceChildren(h('div', { class: 'empty-state loading-state' }, h('span', { class: 'spin' }, icon('refresh')), 'Loading tasks…'));
+    return;
+  }
   if (!state.fetchedAt) return;
   if (!state.issues.length) {
     main.replaceChildren(h('div', { class: 'empty-state' }, 'No tasks match this JQL.'));
@@ -323,47 +327,51 @@ function renderList(list) {
     if (storyCount > 0) parts.push(`${storyCount} stor${storyCount > 1 ? 'ies' : 'y'}`);
     if (otherCount > 0) parts.push(`${otherCount} other`);
     
-    const claudeGroupButton = h(
-      'button',
-      {
-        class: 'icon-btn sm claude-btn',
-        title: `Open ${parent.key} + ${items.length} subtasks in Claude Code`,
-        'aria-label': `Open group ${parent.key} in Claude Code`,
-        onClick: async (e) => {
-          e.stopPropagation();
-          // Build combined prompt with parent + all subtasks
-          let combined = `# ${parent.key}: ${parent.summary}\n\n`;
-          if (mine) {
-            combined += issueMarkdown(mine, await getDetail(parent.key).catch(() => null));
-          } else {
-            combined += `- Jira: ${parent.url || siteOf(items[0]) + '/browse/' + parent.key}\n`;
-            combined += `- Type: ${parent.type?.name || parent.type}\n`;
-          }
-          combined += `\n---\n\n## Subtasks (${items.length}):\n\n`;
-          for (const item of items) {
-            combined += `### ${item.key}: ${item.summary}\n`;
-            combined += `- Status: ${item.status.name}\n`;
-            combined += `- Jira: ${item.url}\n`;
-            const u = urgency(item);
-            if (u.reasons.length) combined += `- Needs attention: ${u.reasons.map(r => r.label).join(', ')}\n`;
-            combined += '\n';
-          }
-          combined = combined.slice(0, 11_000);
-          try {
-            await navigator.clipboard.writeText(combined);
-          } catch {
-            // Clipboard unavailable
-          }
-          try {
-            await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt: combined }) });
-            toast(`Opened ${parent.key} + ${items.length} subtasks in Claude Code`);
-          } catch (err) {
-            toast(`Failed to open Claude Code: ${err.message}. Content copied.`, 'error');
-          }
-        },
-      },
-      icon('ai'),
-    );
+    // Same flow as a regular item's Claude button: the Start dialog (task_brief/MCP builds the context
+    // server-side) for a Task/Story parent, or straight to Cursor for an Epic parent. The Start dialog only
+    // needs key/summary/type, which the parent stub always has even when it's not one of my own issues —
+    // only an Epic parent that's a stub (no url/docs) can't safely use the "open straight in Cursor" path,
+    // so that one case keeps the plain combined-text fallback.
+    const isEpicParent = /epic/i.test(parent.type?.name || parent.type || '');
+    const claudeGroupButton =
+      mine || !isEpicParent
+        ? claudeButton(mine || parent)
+        : h(
+            'button',
+            {
+              class: 'icon-btn sm claude-btn',
+              title: `Open ${parent.key} + ${items.length} subtasks in Claude Code`,
+              'aria-label': `Open group ${parent.key} in Claude Code`,
+              onClick: async (e) => {
+                e.stopPropagation();
+                let combined = `# ${parent.key}: ${parent.summary}\n`;
+                combined += `- Jira: ${parent.url || siteOf(items[0]) + '/browse/' + parent.key}\n`;
+                combined += `- Type: ${parent.type?.name || parent.type}\n`;
+                combined += `\n---\n\n## Subtasks (${items.length}):\n\n`;
+                for (const item of items) {
+                  combined += `### ${item.key}: ${item.summary}\n`;
+                  combined += `- Status: ${item.status.name}\n`;
+                  combined += `- Jira: ${item.url}\n`;
+                  const u = urgency(item);
+                  if (u.reasons.length) combined += `- Needs attention: ${u.reasons.map((r) => r.label).join(', ')}\n`;
+                  combined += '\n';
+                }
+                combined = combined.slice(0, 11_000);
+                try {
+                  await navigator.clipboard.writeText(combined);
+                } catch {
+                  // Clipboard unavailable
+                }
+                try {
+                  await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt: combined }) });
+                  toast(`Opened ${parent.key} + ${items.length} subtasks in Claude Code`);
+                } catch (err) {
+                  toast(`Failed to open Claude Code: ${err.message}. Content copied.`, 'error');
+                }
+              },
+            },
+            icon('ai'),
+          );
     
     return h(
       'div',
