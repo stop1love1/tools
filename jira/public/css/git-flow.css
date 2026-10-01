@@ -114,70 +114,6 @@ textarea.gin {
   background: var(--accent-soft);
 }
 
-.gsteps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-}
-.gstep {
-  position: relative;
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  gap: 2px 8px;
-  padding: 0 0 8px;
-}
-.gstep::before {
-  content: '';
-  position: absolute;
-  left: 7px;
-  top: 16px;
-  bottom: 0;
-  width: 2px;
-  background: var(--border);
-}
-.gstep:last-child::before {
-  display: none;
-}
-.gstep-dot {
-  width: 16px;
-  height: 16px;
-  margin-top: 1px;
-  border-radius: 50%;
-  border: 2px solid var(--border-strong);
-  background: var(--surface);
-  display: grid;
-  place-items: center;
-  color: var(--accent-fg);
-}
-.gstep-dot svg {
-  width: 10px;
-  height: 10px;
-  stroke-width: 3;
-}
-.gstep.s-done .gstep-dot {
-  background: var(--done-dot);
-  border-color: var(--done-dot);
-}
-.gstep.s-todo .gstep-dot {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-.gstep.s-warn .gstep-dot {
-  border-color: var(--warn);
-  background: var(--warn-soft);
-}
-.gstep.s-na {
-  opacity: 0.6;
-}
-.gstep-body {
-  min-width: 0;
-}
-.gstep-name {
-  font-weight: 600;
-  font-size: 12.5px;
-  line-height: 18px;
-}
 .gstep-note {
   display: flex;
   flex-wrap: wrap;
@@ -220,18 +156,6 @@ textarea.gin {
   grid-row: auto;
   justify-content: flex-start;
 }
-/* narrow drawer: actions go under the step text */
-@container (max-width: 520px) {
-  .gstep {
-    grid-template-columns: 16px minmax(0, 1fr);
-  }
-  .gstep-act {
-    grid-column: 2;
-    grid-row: auto;
-    justify-content: flex-start;
-    margin-top: 3px;
-  }
-}
 .git-flow {
   container-type: inline-size;
 }
@@ -256,15 +180,6 @@ textarea.gin {
   font-size: 11.5px;
   white-space: nowrap;
 }
-.gcommits {
-  list-style: none;
-  margin: 3px 0;
-  padding: 0;
-  display: grid;
-  gap: 1px;
-  font-size: 11.5px;
-}
-.gcommits label,
 .gfiles label,
 .gbranches label {
   display: flex;
@@ -289,7 +204,4 @@ textarea.gin {
   font-size: 12px;
   display: grid;
   gap: 4px;
-}
-.gfoot {
-  margin-top: 2px;
 }

@@ -1,29 +1,482 @@
-/* Git summary card (drawer) and epic branch view. */
+/* Git block in the drawer (Next · stage table · detail panel · footer), the epic view, and epic rows in the list. */
 
-/* git summary card (drawer) */
-.gsum {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 8px;
-  padding: 8px 10px;
+.drawer-body > .git-flow {
+  margin: 12px 0 16px;
   display: grid;
+  gap: 10px;
+}
+.git-flow > h3 {
+  margin-bottom: 0;
+}
+.git-flow h3 .gbranch {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+/* state dot: done ✓ · todo (your move) · warn ! · wait (dashed) · na */
+.gdot {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface-2);
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+.gdot svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 3.5;
+}
+.gdot[data-state='done'] {
+  background: var(--done-dot);
+  border-color: var(--done-dot);
+  color: #fff;
+}
+.gdot[data-state='warn'] {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--surface);
+}
+.gdot[data-state='todo'] {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.gdot[data-state='wait'] {
+  background: var(--surface);
+  border-color: var(--muted);
+  border-style: dashed;
+}
+
+.gacts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  margin-bottom: 8px;
+}
+.gacts:empty {
+  display: none;
+}
+.gacts .link-btn {
+  padding: 4px;
+}
+
+/* Next: the user's moves, then what waits on others */
+.gnext {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.gnext.mine {
+  border-color: var(--accent);
+}
+.gnext-head {
+  padding: 6px 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.gnext.mine .gnext-head {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.gnext.done .gnext-head {
+  background: var(--done-bg);
+  color: var(--done-fg);
+}
+.gnext-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+}
+.gnext-item + .gnext-item {
+  border-top: 1px solid var(--border);
+}
+.gnext-item[data-state='warn'] {
+  background: color-mix(in srgb, var(--warn-soft) 55%, var(--surface));
+}
+.gnext-item[data-state='wait'] .gnext-title {
+  font-weight: 500;
+}
+.gnext-item > .gdot {
+  margin-top: 1px;
+}
+.gnext-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.gnext-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.grepo {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 7px;
+  line-height: 18px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.gnext-why {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.gnext-body > .gacts {
+  margin-top: 4px;
+}
+.gplan {
+  margin: 2px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  display: grid;
+  gap: 2px;
+}
+
+/* stage × repo table */
+.gmatrix {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
   background: var(--surface);
 }
-.gsum.t-ok {
-  border-left-color: var(--done-dot);
+.gm-row {
+  display: grid;
+  grid-template-columns: 92px repeat(var(--cols), minmax(0, 1fr));
 }
-.gsum.t-warn {
-  border-left-color: var(--warn);
+.gm-row + .gm-row,
+.gm-fork + .gm-row {
+  border-top: 1px solid var(--border);
 }
-.gsum-top {
+.gm-head {
+  background: var(--surface-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.gm-head > div {
+  padding: 6px 10px;
+}
+.gm-head .gm-repo {
+  border-left: 1px solid var(--border);
+}
+.gm-label {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.gm-label span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.gm-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+}
+button.gm-cell {
+  cursor: pointer;
+}
+button.gm-cell:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+button.gm-cell:disabled {
+  cursor: default;
+}
+.gm-cell[data-state='warn'] {
+  background: color-mix(in srgb, var(--warn-soft) 55%, var(--surface));
+}
+.gm-cell[data-state='na'] .gm-text b {
+  color: var(--muted);
+  font-weight: 500;
+}
+.gm-cell.on,
+button.gm-cell.on:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.gm-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.gm-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.gm-text b {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.gm-text span {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.gm-branch {
+  flex-direction: column;
+  gap: 4px;
+}
+.gm-branch.span {
+  grid-column: 2 / -1;
+}
+.gm-branch .gbranch {
+  max-width: 100%;
+}
+.gm-fork {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 11px;
+  color: var(--muted);
+}
+.gm-fork svg {
+  width: 13px;
+  height: 13px;
+}
+.glegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: -4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.glegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.glegend .gdot {
+  flex-basis: 12px;
+  width: 12px;
+  height: 12px;
+  font-size: 8px;
+}
+.glegend .gdot svg {
+  width: 8px;
+  height: 8px;
+}
+
+/* the open cell's panel */
+.gpanel {
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface));
+  padding: 10px 12px 12px;
+  display: grid;
+  gap: 10px;
   min-width: 0;
+}
+.gpanel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.gpanel-title {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.gpanel-where {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gpanel-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.gpanel-steps li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.gpanel-steps li[data-state='na'] {
+  color: var(--muted);
+}
+.gpanel-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.gpanel-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.gpanel-commits {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  min-width: 0;
+}
+.gpanel-commits ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
   font-size: 12px;
 }
+.gcommit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+label.gcommit {
+  cursor: pointer;
+}
+.gpanel-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.gpanel-target .gin {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.gpanel-note {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.gpanel-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.gpanel-more .link-btn,
+.gfooter .link-btn {
+  padding: 2px 0;
+  font: inherit;
+}
+.danger-text,
+.link-btn.danger-text {
+  color: var(--danger);
+}
+.gpanel-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+.gpanel-branches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.gpanel-branches li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--surface);
+}
+.gpanel-branches li.on {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.gpanel-branches .gbranch {
+  justify-self: start;
+  max-width: 100%;
+}
+.gpanel-branches .gchips {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.gpanel-branches .gstep-act {
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.gfooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.gmr-off .gstep-note {
+  font-size: 12px;
+}
+
 .gbranch {
   border: 0;
   cursor: copy;
@@ -36,257 +489,56 @@
 .gbranch:hover {
   background: var(--accent-soft);
 }
-.gsum-headline {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-.gsum-detail {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: -3px;
-}
-.gtrack {
-  list-style: none;
-  margin: 2px 0 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  font-size: 11px;
-  color: var(--muted);
-}
-.gtrack li {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.gtrack li::before {
-  content: '';
-  position: absolute;
-  top: 7px;
-  right: 50%;
-  width: 100%;
-  height: 2px;
-  background: var(--border);
-  z-index: 0;
-}
-.gtrack li:first-child::before {
-  display: none;
-}
-.gtrack li.done::before,
-.gtrack li.warn::before {
-  background: var(--done-dot);
-}
-.gtrack-dot {
-  position: relative;
-  z-index: 1;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid var(--border-strong);
-  background: var(--surface);
-  display: grid;
-  place-items: center;
-  color: #fff;
-}
-.gtrack-dot svg {
-  width: 10px;
-  height: 10px;
-  stroke-width: 3;
-}
-.gtrack li.done {
-  color: var(--text);
-}
-.gtrack li.done .gtrack-dot {
-  background: var(--done-dot);
-  border-color: var(--done-dot);
-}
-.gtrack li.warn .gtrack-dot {
-  background: var(--warn);
-  border-color: var(--warn);
-}
-.gsum-lines {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-  font-size: 12.5px;
-}
-.gsum-lines li {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: var(--surface-2);
-}
-.gsum-lines li.ok span {
-  color: var(--done-fg);
-}
-.gsum-lines .gstep-act {
-  grid-column: auto;
-  grid-row: auto;
-}
-.gsum > .gstep-act {
-  grid-column: auto;
-  grid-row: auto;
-  justify-content: flex-start;
-}
-/* All the ticket's branches in a repo */
-.gsum-branches ul {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
-}
-.gsum-branches li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 4px 8px;
-  align-items: center;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: var(--surface-2);
-}
-.gsum-branches li.on {
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-.gsum-branches .gbranch {
-  justify-self: start;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.gsum-branches .gchips {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.gsum-branches .gstep-act {
-  grid-column: auto;
-  grid-row: auto;
-}
-.gsum-checks summary,
-.gsum-branches summary,
-.gsum-all summary {
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--muted);
-}
-.gsum-checks summary {
-  color: var(--warn);
-}
-.gsum-checks ul {
-  margin: 4px 0 0;
-  padding-left: 18px;
-  display: grid;
-  gap: 3px;
-  font-size: 12px;
-}
-.gsum-all[open] > summary {
-  margin-bottom: 6px;
-}
-.gsum-more {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
-}
-.gsum-plan {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 12px;
-  color: var(--muted);
-  display: grid;
-  gap: 2px;
-}
-@container (max-width: 520px) {
-  .gsum-lines li {
-    grid-template-columns: 56px minmax(0, 1fr);
-  }
-  .gsum-lines .gstep-act {
-    grid-column: 1 / -1;
-  }
-}
-
 .gchip.danger {
   background: var(--danger-soft);
   color: var(--danger);
   border-color: transparent;
   font-weight: 600;
 }
-.gline-text {
+.gchips {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-  min-width: 0;
+  gap: 4px;
 }
 
-/* epic level in the task list */
-.group.epic-row {
-  background: color-mix(in srgb, var(--t-epic) 9%, var(--surface));
-  box-shadow: inset 3px 0 0 var(--t-epic);
-  border-bottom: 1px solid var(--border);
-}
-.group.epic-row .group-title {
-  font-weight: 700;
-}
-.group.epic-row .c-sum {
-  gap: 8px;
-}
-.group.nested {
-  padding-left: 26px;
-}
-.row.child.deep {
-  padding-left: 46px;
-}
-.epic-none {
-  border-top: 1px solid var(--border);
-}
-@media (max-width: 860px) {
-  .group.nested {
-    padding-left: 20px;
+/* narrow drawer: the stage name goes above its cells */
+@container (max-width: 460px) {
+  .gm-row {
+    grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
   }
-  .row.child.deep {
-    padding-left: 34px;
+  .gm-label {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+    padding-bottom: 0;
+  }
+  .gm-head .gm-label {
+    display: none;
+  }
+  .gm-cell,
+  .gm-head .gm-repo {
+    border-left: 0;
+  }
+  .gm-cell + .gm-cell,
+  .gm-head .gm-repo + .gm-repo {
+    border-left: 1px solid var(--border);
+  }
+  .gm-branch.span {
+    grid-column: 1 / -1;
+  }
+  .et-row {
+    grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 76px);
   }
 }
 
-/* epic branch view */
-.eline {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  font-size: 12.5px;
-}
-.eline > span:nth-child(2) {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-  min-width: 0;
-}
-.eline .gstep-act {
-  grid-column: auto;
-  grid-row: auto;
-}
+/* epic view */
 .eprog {
-  flex: 1 1 60px;
-  max-width: 120px;
+  display: block;
+  width: 100%;
+  max-width: 160px;
   height: 5px;
+  margin-top: 4px;
   border-radius: 3px;
   background: var(--border);
   overflow: hidden;
@@ -296,65 +548,134 @@
   height: 100%;
   background: var(--done-dot);
 }
-.etools .gtabs {
-  margin: 2px 0 0;
+.etable {
+  display: grid;
+  gap: 6px;
 }
-.etools .gtabs button:disabled {
-  opacity: 0.5;
-  cursor: default;
+.etable-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.etickets,
-.ecommits {
-  list-style: none;
+.etable-head .gtabs {
   margin: 0;
-  padding: 0;
 }
 .etickets {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  max-height: 480px;
+  border-radius: 10px;
   overflow: auto;
+  max-height: 520px;
+  background: var(--surface);
+}
+.et-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 104px);
+  align-items: stretch;
+}
+.et-row > * + * {
+  border-left: 1px solid var(--border);
+}
+.et-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.et-head > div {
+  padding: 6px 10px;
 }
 .eticket + .eticket {
   border-top: 1px solid var(--border);
 }
-.eticket-head {
+.eticket.open {
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface));
+}
+.et-ticket {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  padding: 4px 8px;
+  padding: 4px 8px 4px 4px;
   font-size: 12.5px;
+}
+.et-fold {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
   cursor: pointer;
 }
-.eticket-head:hover {
+.et-fold:hover {
   background: var(--surface-2);
 }
-.eticket-head .fold-icon svg {
+.et-fold svg {
   width: 12px;
   height: 12px;
-  transform: none;
 }
-.eticket.open .eticket-head .fold-icon svg {
+.eticket.open .et-fold svg {
   transform: rotate(90deg);
 }
-.eticket-head .gsubj {
+.et-sum {
   flex: 1 1 auto;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
 }
-.eticket.complete .eticket-head {
-  opacity: 0.75;
+.et-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.et-cell .gdot {
+  flex-basis: 14px;
+  width: 14px;
+  height: 14px;
+}
+.eticket.complete .et-ticket {
+  opacity: 0.8;
 }
 .eticket-body {
-  padding: 2px 8px 8px 26px;
+  padding: 2px 10px 10px 34px;
+  display: grid;
+  gap: 10px;
+}
+.et-repo {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 .etarget {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   min-width: 0;
+}
+.etarget .link-btn {
+  padding: 0;
+}
+.ecommits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 .ecommit {
   display: grid;
@@ -397,6 +718,33 @@
 .ok-text {
   color: var(--done-fg);
 }
-.drawer-body > .git-flow {
-  margin: 12px 0 16px;
+
+/* epic level in the task list */
+.group.epic-row {
+  background: color-mix(in srgb, var(--t-epic) 9%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--t-epic);
+  border-bottom: 1px solid var(--border);
+}
+.group.epic-row .group-title {
+  font-weight: 700;
+}
+.group.epic-row .c-sum {
+  gap: 8px;
+}
+.group.nested {
+  padding-left: 26px;
+}
+.row.child.deep {
+  padding-left: 46px;
+}
+.epic-none {
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 860px) {
+  .group.nested {
+    padding-left: 20px;
+  }
+  .row.child.deep {
+    padding-left: 34px;
+  }
 }

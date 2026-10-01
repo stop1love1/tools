@@ -64,7 +64,13 @@ Nút Claude ở cột cuối mỗi dòng (và nút **Claude** trong chi tiết t
 
 Quản lý nhánh / commit / cherry-pick theo đúng flow trong `lms/.cursor/rules/git-workflow.mdc`, ngay trong dashboard:
 
-- **Khối "Git flow" trong chi tiết task**: từng bước epic → nhánh task `-uat` → commit / rebase lên epic / push → MR task → epic → MR epic → uat (chỉ 1) → cherry-pick sang `-develop` → MR → develop, riêng cho Backend và Frontend. Mỗi bước hiện trạng thái và nút cho việc tiếp theo. Epic lấy theo Epic cha trên Jira (bấm chip `epic/…` để đổi); nếu commit của ticket nằm ở epic khác, dashboard gợi ý.
+- **Khối "Git" trong chi tiết task**:
+  - **Next** ở trên cùng: việc cần làm của cả Backend và Frontend, mỗi việc một nút chính. Thứ tự: cần sửa (conflict…) → tới lượt bạn → đang chờ người khác (MR chờ review).
+  - **Bảng giai đoạn × repo**: Branch, Code, → Epic, rồi tách 2 nhánh song song → uat (qua MR epic) và → develop (cherry-pick + MR). Mỗi ô có 1 trong 5 trạng thái: xong / tới lượt bạn / cần sửa / chờ người khác / chưa tới.
+  - Bấm vào một ô để mở **panel chi tiết**: các bước con, commit (tick chọn khi cherry-pick), nút chính, và "Other options" cho thao tác ít dùng hoặc nguy hiểm (Undo, cherry-pick sang epic, rebase epic).
+  - **Dòng cuối**: danh sách nhánh, cảnh báo flow, lần fetch gần nhất.
+  - Epic lấy theo Epic cha trên Jira (bấm chip `into epic/…` để đổi). Nếu commit của ticket nằm ở epic khác, Next sẽ gợi ý.
+- **Khối "Git · epic" trong chi tiết epic**: cùng bố cục (Next + bảng → uat / → develop theo repo), kèm bảng ticket với cột BE | FE. Bấm vào một hàng để chọn commit và cherry-pick sang `-develop`.
 - **Nhiều nhánh cho 1 task**: nhận cả nhánh gộp nhiều task (`feature/VLEARN-4546-4547-…-uat`) và nhánh tên cũ không có hậu tố `-uat`. Mỗi repo có danh sách mọi nhánh của task kèm số commit chưa vào epic/uat (bản rebase / cherry-pick không tính). Nhánh chính được chọn theo thứ tự: đã ghim (**Use**) → đang checkout → còn commit chưa merge → tên đúng chuẩn → mới nhất. Nhánh cũ bị nhánh mới hơn bao trùm (cùng các task) được đánh dấu *older* và không được lấy commit sang develop.
 - **Tab Git** (icon nhánh trên header): trạng thái 2 repo + commit/push/fetch, ticket đang có nhánh, dọn nhánh local (`backup/*`, đã mất trên origin, đã vào uat, tên sai chuẩn), log các job gần đây.
 - **Conflict của MR**: dashboard tự mô phỏng merge bằng `git merge-tree` (không đụng working tree) cho task → epic, epic → uat và nhánh `-develop` → develop — chạy được khi tắt VPN, trước khi tạo MR và khi GitLab còn "checking". Có conflict thì hiện `⚠ conflicts with …` kèm danh sách file và nút xử lý: **Rebase & push** (task), **Rebase epic onto uat** (epic, có hỏi), **Rebase onto develop** (nhánh develop). Kết hợp với `has_conflicts` của GitLab khi có.

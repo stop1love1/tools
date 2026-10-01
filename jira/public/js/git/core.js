@@ -25,7 +25,9 @@ const gitState = {
   mrData: {}, // repo → resolved value of the above
   mrStale: new Set(),
   epics: new Map(), // epic key → Promise<epic view>
-  epicOpen: new Set(), // `${repo}:${ticket}` rows expanded in the epic view
+  sel: new Map(), // issue key → the open panel of its git block (`${repo}:${stage}`), null once closed
+  epicOpen: new Set(), // tickets whose row is expanded in the epic view
+  devTargets: new Map(), // `${repo}:${ticket}` → the -develop branch chosen in the epic view
   epicTitles: new Map(), // epic key → { ticket: summary }
   jiraMrs: new Map(), // ticket → MR links recorded on Jira (shown when GitLab can't be reached)
   cleanupAll: false,
@@ -224,46 +226,83 @@ async function gitAction(body, confirmText) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Actions as data: each is defined once and drawn where it is shown — the main button of a "Next" item or a
+// panel, a plain button, or a link under "Other options".
+
+const act = (label, run, opts = {}) => ({ label, run, ...opts }); // opts: icon, danger, title
+const linkAct = (label, href, opts = {}) => ({ label, href, icon: 'mr', ...opts });
+
+function actEl(a, kind = 'secondary') {
+  if (!a) return null;
+  if (a.el) return a.el;
+  if (kind === 'more') {
+    const cls = `link-btn${a.danger ? ' danger-text' : ''}`;
+    return a.href ? h('a', { class: cls, href: a.href, target: '_blank', rel: 'noopener', title: a.title }, a.label) : h('button', { class: cls, title: a.title, onClick: a.run }, a.label);
+  }
+  const cls = `btn sm${kind === 'primary' && !a.danger ? ' primary' : ''}${a.danger ? ' danger' : ''}`;
+  const kids = [a.icon && icon(a.icon), a.label];
+  return a.href ? h('a', { class: cls, href: a.href, target: '_blank', rel: 'noopener', title: a.title }, kids) : h('button', { class: cls, title: a.title, onClick: a.run }, kids);
+}
+
+const pushAct = (repo, b) =>
+  b.sync?.onlyB > 0 ? forcePushAct(repo, b.name) : act('Push', () => gitAction({ action: 'push', repo, branch: b.name }), { icon: 'upload' });
+
 // Local and origin diverged (after a rebase / undo): replace origin's version, with lease.
-const forcePushBtn = (repo, branch) =>
-  actBtn('Force-push', () => gitAction({ action: 'push', repo, branch, force: true }, `${branch} on origin differs from local (after a rebase / undo).\n\nForce-push with lease, replacing origin's version?`), {
+const forcePushAct = (repo, branch) =>
+  act('Force-push', () => gitAction({ action: 'push', repo, branch, force: true }, `${branch} on origin differs from local (after a rebase / undo).\n\nForce-push with lease, replacing origin's version?`), {
     danger: true,
-    iconName: 'upload',
+    icon: 'upload',
+  });
+const forcePushBtn = (repo, branch) => actEl(forcePushAct(repo, branch));
+
+// Back to the newest backup ref of a branch (taken before every rebase / cherry-pick / reset).
+const undoAct = (repo, b) =>
+  b?.backups?.length > 0 &&
+  act(`Undo on ${b.name}`, () => gitAction({ action: 'undo', repo, branch: b.name }, `Reset ${b.name} to its backup from ${fmtDate(b.backups[0].at)}?`), {
+    danger: true,
+    title: `Back to ${b.backups[0].sha} (backed up ${rel(b.backups[0].at)})`,
+  });
+
+// The task branch is the user's own and a backup is kept (Undo), so no confirm.
+const rebaseTaskAct = (repo, epicKey, b) =>
+  act('Rebase & push', () => gitAction({ action: 'sync-task', repo, epic: epicKey, branch: b.name }), {
+    icon: 'rebase',
+    title: `Rebase ${b.name} onto origin/epic/${epicKey} and ${b.remote ? 'force-push it (with lease)' : 'push it'} — a backup is kept (Undo)`,
   });
 
 // The epic is behind / conflicts with uat: rebase it (keeping each task's merge commit) and force-push. Shared branch → confirm.
-const rebaseEpicBtn = (repo, epicKey, { iconOnly = true } = {}) =>
-  actBtn(
-    `Rebase epic onto ${UAT()}`,
+const rebaseEpicAct = (repo, epicKey) =>
+  act(
+    `Rebase the epic onto ${UAT()}…`,
     () =>
       gitAction(
         { action: 'rebase-epic', repo, epic: epicKey },
         `Rebase epic/${epicKey} onto origin/${UAT()} (keeping each task's merge commit) and FORCE-PUSH it?\n\nThe epic is shared: tell the team first. Open task branches will need a rebase afterwards.`,
       ),
-    { danger: true, iconOnly, iconName: 'rebase', title: `Rebase epic/${epicKey} onto ${UAT()} — force-push` },
+    { danger: true, icon: 'rebase', title: `Rebase epic/${epicKey} onto ${UAT()} — force-push` },
   );
 
 // No merge rights on the epic MR: cherry-pick the task's own commits straight onto the epic and push (fast-forward
 // only — the epic is shared, so a reject here means fetch/rebase the task first, never force-push the epic).
-const pickEpicBtn = (repo, epicKey, branch, commits, primary = false) => {
+const pickEpicAct = (repo, epicKey, branch, commits) => {
   const shas = (commits || []).filter((c) => !c.inEpic).map((c) => c.sha);
   if (!shas.length) return null;
-  return actBtn(
-    `Cherry-pick ${shas.length} → epic`,
+  return act(
+    `Cherry-pick ${shas.length} → epic (no merge rights)`,
     () =>
       gitAction(
         { action: 'pick-epic', repo, epic: epicKey, branch, shas },
         `No merge rights on the epic MR?\n\nCherry-pick ${shas.length} commit(s) of ${branch} onto epic/${epicKey} and push (fast-forward only)?`,
       ),
-    { primary, title: `Cherry-pick ${branch}'s own commits onto epic/${epicKey} instead of merging the MR` },
+    { title: `Cherry-pick ${branch}'s own commits onto epic/${epicKey} instead of merging the MR` },
   );
 };
 
 // The -develop branch conflicts with develop: rebase it onto develop and push (own branch, backup kept → no confirm).
-const syncDevBtn = (repo, branch) =>
-  actBtn(`Rebase onto ${DEV()}`, () => gitAction({ action: 'sync-develop', repo, branch }), {
-    primary: true,
-    iconName: 'rebase',
+const syncDevAct = (repo, branch) =>
+  act(`Rebase onto ${DEV()}`, () => gitAction({ action: 'sync-develop', repo, branch }), {
+    icon: 'rebase',
     title: `Rebase ${branch} onto origin/${DEV()} and force-push it (with lease) — a backup is kept (Undo)`,
   });
 
@@ -334,17 +373,11 @@ function mrDescription(key, epicBranch, devBranch) {
     .join('\n');
 }
 
-const linkBtn = (href, label, primary) =>
-  h('a', { class: `btn sm${primary ? ' primary' : ''}`, href, target: '_blank', rel: 'noopener' }, icon('mr'), label);
-
 // iconOnly: secondary / repeated actions show just their icon (label becomes the tooltip + aria-label).
 const actBtn = (label, onClick, { primary, danger, iconName, title, disabled, iconOnly } = {}) =>
   iconOnly
     ? h('button', { class: `icon-btn sm outline gicon${danger ? ' danger' : ''}`, title: title || label, 'aria-label': label, disabled, onClick }, icon(iconName))
     : h('button', { class: `btn sm${primary ? ' primary' : ''}${danger ? ' danger' : ''}`, title, disabled, onClick }, iconName && icon(iconName), label);
-
-const iconLink = (href, iconName, label) =>
-  h('a', { class: 'icon-btn sm outline gicon', href, target: '_blank', rel: 'noopener', title: label, 'aria-label': label }, icon(iconName));
 
 // Buttons shown wherever a rebase / cherry-pick is stopped on a conflict.
 function conflictActions(repo, dir, op) {

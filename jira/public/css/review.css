@@ -91,7 +91,7 @@
 }
 
 /* keyboard focus on custom controls */
-:is(.gchip.link, .gbranch, .eticket-head, .focus-head, .link-btn, .group[role='button']):focus-visible {
+:is(.gchip.link, .gbranch, .et-fold, .et-sum, .focus-head, .link-btn, .group[role='button']):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
