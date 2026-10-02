@@ -38,32 +38,41 @@ async function mcpPost(cred, sessionId, message) {
 }
 
 async function openSession(cred) {
+  console.log(`[mcp] opening session (cred source: ${cred.source})`);
   const { res, reply } = await mcpPost(cred, null, {
     id: ++rpcId,
     method: 'initialize',
     params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'jira-dashboard', version: '1.0.0' } },
   });
-  if (!res.ok || !reply || reply.error) throw httpError(502, `Could not start an MCP session (HTTP ${res.status})`);
+  if (!res.ok || !reply || reply.error) {
+    console.error(`[mcp] initialize failed: HTTP ${res.status}${reply?.error ? ` — ${reply.error.message}` : ''}`);
+    throw httpError(502, `Could not start an MCP session (HTTP ${res.status})`);
+  }
   const id = res.headers.get('mcp-session-id');
   await mcpPost(cred, id, { method: 'notifications/initialized' });
   session = { token: cred.token, id };
+  console.log(`[mcp] session opened (id: ${id})`);
   return id;
 }
 
 async function callTool(name, args) {
   let cred = await getCredential();
   for (let attempt = 0; ; attempt++) {
+    const started = Date.now();
     let res, reply;
     try {
       const sessionId = session && session.token === cred.token ? session.id : await openSession(cred);
+      console.log(`[mcp] -> tools/call ${name}${attempt ? ` (attempt ${attempt + 1})` : ''}`);
       ({ res, reply } = await mcpPost(cred, sessionId, {
         id: ++rpcId,
         method: 'tools/call',
         params: { name, arguments: { cloudId: cloudId(), ...args } },
       }));
     } catch (e) {
+      console.error(`[mcp] <- ${name} threw after ${Date.now() - started}ms: ${e.message}`);
       // Our own token was revoked or expired early: refresh once and retry.
       if (e.unauthorized && cred.source === 'own' && attempt === 0) {
+        console.log('[mcp] token unauthorized, refreshing and retrying once');
         cred = await getCredential({ forceRefresh: true });
         continue;
       }
@@ -71,14 +80,25 @@ async function callTool(name, args) {
     }
     // 404 = the server dropped our session; start a new one once.
     if (res.status === 404 && attempt === 0) {
+      console.log('[mcp] session dropped by server (404), opening a new one');
       session = null;
       continue;
     }
-    if (!res.ok || !reply) throw httpError(502, `MCP ${name} failed with HTTP ${res.status}`);
-    if (reply.error) throw httpError(502, reply.error.message || `MCP ${name} failed`);
+    if (!res.ok || !reply) {
+      console.error(`[mcp] <- ${name} failed with HTTP ${res.status} (${Date.now() - started}ms)`);
+      throw httpError(502, `MCP ${name} failed with HTTP ${res.status}`);
+    }
+    if (reply.error) {
+      console.error(`[mcp] <- ${name} returned RPC error: ${reply.error.message || JSON.stringify(reply.error)}`);
+      throw httpError(502, reply.error.message || `MCP ${name} failed`);
+    }
     const text = (reply.result?.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
     const data = safeJson(text);
-    if (reply.result?.isError || data?.error === true) throw httpError(400, toolErrorMessage(data?.message ?? text));
+    if (reply.result?.isError || data?.error === true) {
+      console.error(`[mcp] <- ${name} tool error: ${data?.message ?? text}`);
+      throw httpError(400, toolErrorMessage(data?.message ?? text));
+    }
+    console.log(`[mcp] <- ${name} ok (${Date.now() - started}ms)`);
     return data ?? text;
   }
 }

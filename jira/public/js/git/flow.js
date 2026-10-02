@@ -486,7 +486,7 @@ function subtaskBlock(kids, redraw) {
       h(
         'div',
         { class: 'gs-ticket' },
-        h('div', { class: 'gs-title' }, h('a', { class: 'key', href: '#' + k.key, onClick: (ev) => (ev.preventDefault(), openDetail(k.key)) }, k.key), h('span', { class: 'gsubj', title: k.summary }, k.summary)),
+        h('div', { class: 'gs-title' }, h('a', { class: 'key', href: '#' + k.key, onClick: (ev) => (ev.preventDefault(), openIssueChip(k.key)) }, k.key), h('span', { class: 'gsubj', title: k.summary }, k.summary)),
         f?.error
           ? h('span', { class: 'warn-text small' }, f.error)
           : branch
@@ -501,7 +501,7 @@ function subtaskBlock(kids, redraw) {
     'div',
     { class: 'gsub' },
     label,
-    items.length > 0 && nextBlock(items, { choose: (key) => openDetail(key) }),
+    items.length > 0 && nextBlock(items, { choose: (key) => openIssueChip(key) }),
     h(
       'div',
       { class: 'gs-table' },

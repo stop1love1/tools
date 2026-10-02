@@ -167,7 +167,8 @@ function afterSave(res, changed) {
   renderPresets();
   scheduleRefresh();
   const keys = Object.keys(changed);
-  if (keys.some((k) => k.startsWith('git.'))) {
+  // Each page loads only its own data scripts: git ones on tasks/workspace, load() on tasks/docs.
+  if (keys.some((k) => k.startsWith('git.')) && typeof gitState !== 'undefined') {
     gitState.overview = null;
     gitState.branches = {};
     gitState.mrData = {};
@@ -175,7 +176,7 @@ function afterSave(res, changed) {
   }
   if (keys.some((k) => k.startsWith('jira.'))) {
     cache.details.clear();
-    load({ silent: true });
+    if (typeof load === 'function') load({ silent: true });
   }
 }
 

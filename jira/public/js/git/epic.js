@@ -373,7 +373,7 @@ function ticketRow(t, repos, redraw) {
         h(
           'span',
           { class: 'et-keys', title: t.keys.length > 1 ? `Done together: ${t.keys.map((k) => `${k} ${titleOf(k)}`.trim()).join('\n')}` : null },
-          t.keys.map((k, i) => [i > 0 && ' + ', h('a', { class: 'key', href: '#' + k, onClick: (ev) => (ev.preventDefault(), openDetail(k)) }, i > 0 ? k.replace(`${KEY()}-`, '') : k)]),
+          t.keys.map((k, i) => [i > 0 && ' + ', h('a', { class: 'key', href: '#' + k, onClick: (ev) => (ev.preventDefault(), openIssueChip(k)) }, i > 0 ? k.replace(`${KEY()}-`, '') : k)]),
         ),
         h('button', { class: 'et-sum gsubj', title: summary, onClick: toggle }, summary),
         direct && h('span', { class: 'gnomr', title: 'Committed straight to the epic, without a task MR', 'aria-label': 'no task MR' }, icon('unlink')),

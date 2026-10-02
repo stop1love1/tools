@@ -306,11 +306,15 @@ async function rpc(msg) {
         const hidden = TOOLS.some((t) => t.name === params.name);
         return fail(-32602, hidden ? `${params.name} is a write tool; enable it in the dashboard: Settings → MCP → Allow write tools.` : `Unknown tool: ${params.name}`);
       }
+      const started = Date.now();
+      console.log(`[mcp-server] -> tools/call ${params.name}`, params.arguments ? JSON.stringify(params.arguments) : '{}');
       try {
         const data = await tool.run(params.arguments || {});
+        console.log(`[mcp-server] <- ${params.name} ok (${Date.now() - started}ms)`);
         return ok({ content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data, null, 1) }] });
       } catch (e) {
         // Tool failures go back to the model as results it can read and react to.
+        console.error(`[mcp-server] <- ${params.name} failed after ${Date.now() - started}ms: ${e.message}`);
         return ok({ content: [{ type: 'text', text: `Error: ${e.name === 'TimeoutError' ? 'Atlassian MCP timed out' : e.message}` }], isError: true });
       }
     }
@@ -322,16 +326,27 @@ async function rpc(msg) {
 // POST /mcp. Only local tools can reach it: the server listens on 127.0.0.1 and checks Host; a page in the browser
 // is refused by the Origin check (and JSON bodies can't be sent cross-site without a CORS preflight we never answer).
 async function handleMcp(req, res) {
-  if (!config.get().mcp.enabled) return send(res, 404, { error: 'MCP is turned off (Settings → MCP)' });
+  if (!config.get().mcp.enabled) {
+    console.log('[mcp-server] rejected request: MCP disabled in settings');
+    return send(res, 404, { error: 'MCP is turned off (Settings → MCP)' });
+  }
   const origin = req.headers.origin;
-  if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return send(res, 403, { error: 'Origin not allowed' });
+  if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    console.warn(`[mcp-server] rejected request: disallowed origin "${origin}"`);
+    return send(res, 403, { error: 'Origin not allowed' });
+  }
   if (req.method !== 'POST') {
     res.writeHead(405, { Allow: 'POST' });
     return res.end();
   }
   if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Content-Type must be application/json' });
   const body = await readJson(req);
-  if (!body) return send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+  if (!body) {
+    console.warn('[mcp-server] rejected request: JSON parse error');
+    return send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+  }
+  const methods = (Array.isArray(body) ? body : [body]).map((m) => m.method).join(', ');
+  console.log(`[mcp-server] POST /mcp: ${methods}`);
   const replies = (await Promise.all((Array.isArray(body) ? body : [body]).map(rpc))).filter(Boolean);
   if (!replies.length) {
     res.writeHead(202);

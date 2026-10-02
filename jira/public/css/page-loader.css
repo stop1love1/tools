@@ -1,0 +1,26 @@
+/* Full-screen cover from first paint until the page's first data render, and again when
+   following a page tab, so switching pages doesn't flash a half-built page (app-shared.js). */
+
+.page-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+/* Fade out only; showing is instant so a tab click responds right away. */
+.page-loader.done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease, visibility 0.15s;
+}
+.page-loader-spin {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}

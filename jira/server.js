@@ -36,7 +36,7 @@ const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 
 function serveStatic(url, req, res) {
-  const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+  const rel = url.pathname === '/' ? 'tasks.html' : url.pathname.slice(1);
   const file = path.join(PUBLIC, rel);
   const type = TYPES[path.extname(file)];
   if (req.method !== 'GET' || !type || !file.startsWith(PUBLIC + path.sep) || !/^[a-z0-9/_-]+\.[a-z]+$/.test(rel) || !fs.existsSync(file)) {

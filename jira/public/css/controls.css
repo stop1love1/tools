@@ -220,22 +220,24 @@ select,
   background: var(--surface);
   flex: 0 0 auto;
 }
-.seg button {
+.seg :is(button, a) {
   border: 0;
   background: none;
+  color: inherit;
+  text-decoration: none; /* the page tabs are links */
   padding: 0 12px;
   height: 30px;
   cursor: pointer;
   white-space: nowrap;
 }
-.seg button + button {
+.seg :is(button, a) + :is(button, a) {
   border-left: 1px solid var(--border);
 }
-.seg button[aria-selected='true'] {
+.seg :is(button, a)[aria-selected='true'] {
   background: var(--accent);
   color: var(--accent-fg);
 }
-.seg.icons button {
+.seg.icons :is(button, a) {
   display: grid;
   place-items: center;
   width: 34px;

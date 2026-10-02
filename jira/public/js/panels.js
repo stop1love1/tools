@@ -65,7 +65,7 @@ function renderRecentPanel() {
         class: 'notif-item',
         onClick: () => {
           toggleRecent(false);
-          openDetail(i.key);
+          openIssueChip(i.key);
         },
       },
       i.type && h('span', { class: 'avatar' }, typeBadge(i.type.name)),
@@ -120,7 +120,7 @@ function renderNotifPanel() {
         class: `notif-item${Date.parse(e.at) > n.seenBefore ? ' unread' : ''}${e.mention ? ' mention' : ''}`,
         onClick: () => {
           toggleNotif(false);
-          openDetail(e.issue.key);
+          openIssueChip(e.issue.key);
         },
       },
       h('span', { class: `avatar k-${e.kind}` }, initials(e.author)),

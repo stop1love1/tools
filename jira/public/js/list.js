@@ -1,69 +1,7 @@
 'use strict';
 
-// Main render: filters, urgent block, status pills, and the task list grouped by epic / parent.
-
-function render() {
-  closeMenu();
-  renderMeta();
-  for (const b of document.querySelectorAll('#views button')) b.setAttribute('aria-selected', String(b.dataset.view === state.view));
-  document.body.dataset.view = state.view;
-  $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
-  if (state.view === 'git' || state.view === 'settings') {
-    syncUrl();
-    const el = state.view === 'git' ? renderGitView() : renderSettingsView();
-    if ($('#main').firstChild !== el) $('#main').replaceChildren(el);
-    return;
-  }
-  const list = filtered();
-  renderTypes();
-  renderSprints();
-  renderProgress();
-  renderFocus();
-  renderStats();
-  syncUrl();
-
-  const main = $('#main');
-  if (state.error) {
-    main.replaceChildren(
-      h(
-        'div',
-        { class: 'error-box' },
-        h('div', null, h('strong', null, 'Failed to load data. '), state.error),
-        state.errorLogin && h('a', { class: 'btn primary', href: '/oauth/login' }, 'Sign in to Atlassian'),
-      ),
-    );
-    return;
-  }
-  if (state.loading && (!state.fetchedAt || state.usedJql !== state.jql)) {
-    main.replaceChildren(h('div', { class: 'empty-state loading-state' }, h('span', { class: 'spin' }, icon('refresh')), 'Loading tasks…'));
-    return;
-  }
-  if (!state.fetchedAt) return;
-  if (!state.issues.length) {
-    main.replaceChildren(h('div', { class: 'empty-state' }, 'No tasks match this JQL.'));
-    return;
-  }
-  main.replaceChildren(state.view === 'docs' ? renderDocs(list) : renderList(list));
-  if (state.openKey) refreshDrawerStatus();
-}
-
-function renderMeta() {
-  const parts = [];
-  if (state.me) {
-    parts.push(state.me.name);
-    if (state.me.auth.source === 'own') parts.push('own refresh token');
-    else if (state.me.auth.expiresAt) {
-      parts.push(`Claude Code token expires ${new Date(state.me.auth.expiresAt).toLocaleString('en-US', { timeStyle: 'short', dateStyle: 'short' })}`);
-    }
-  }
-  if (state.fetchedAt) parts.push(`updated ${state.fetchedAt.toLocaleTimeString('en-US', { timeStyle: 'short' })}`);
-  
-  // Set tooltip on login button
-  const login = $('#login');
-  if (login && parts.length) {
-    login.title = parts.join(' · ');
-  }
-}
+// Task list pieces: filters, urgent block, status pills, and the list grouped by epic / parent.
+// The page render() lives in app-tasks.js.
 
 function renderTypes() {
   const counts = new Map();

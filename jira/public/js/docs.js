@@ -46,8 +46,10 @@ function renderDocs(list) {
   const sortedPages = matchedPages.slice().sort(pageSorters[state.docsSort] || pageSorters.date);
   const sortedAttachments = matchedAttachments.slice().sort(attachmentSorters[state.docsSort] || attachmentSorters.date);
 
+  // On tasks.html this opens the detail drawer in place; elsewhere (docs.html) it navigates
+  // to the task list with that issue's drawer open (see app-docs.js).
   const issueChip = (i) =>
-    h('button', { class: 'issue-chip', title: i.summary, onClick: () => openDetail(i.key) }, h('span', { class: `dot tone-${tone(i.status)}` }), i.key);
+    h('button', { class: 'issue-chip', title: i.summary, onClick: () => openIssueChip(i.key) }, h('span', { class: `dot tone-${tone(i.status)}` }), i.key);
 
   const kindOption = (val, label) =>
     h(

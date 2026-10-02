@@ -7,18 +7,32 @@
 
 // Saved filters (Settings → Jira); the first one is the default JQL (empty = let the server use it).
 const presets = () => [{ label: 'Default', jql: '' }, ...CFG.jira.presets];
+
+// Fills #preset with an <option> per saved filter plus a trailing "Custom" slot, then
+// selects whichever one matches the active JQL. Called on page init and after Settings saves.
+// Note: tasks.html additionally defines syncPreset() (app-tasks.js) to re-sync this select
+// whenever state.jql changes later; this function only handles the initial render + selection.
+function renderPresets() {
+  const select = $('#preset');
+  if (!select) return;
+  const opts = presets().map((p, i) => h('option', { value: String(i) }, p.label || `Filter ${i + 1}`));
+  select.replaceChildren(...opts, h('option', { value: 'custom', disabled: true }, 'Custom JQL'));
+  const idx = presets().findIndex((p) => p.jql === state.jql);
+  select.value = idx < 0 ? 'custom' : String(idx);
+}
+
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
 // Read URL params on init
 const initParams = new URLSearchParams(location.search);
-const initView = initParams.get('view') || LS.get('view', 'list');
 
 const state = {
   issues: [],
   jql: LS.get('jql', ''),
   usedJql: '',
   defaultJql: '',
-  view: ['docs', 'git', 'settings'].includes(initView) ? initView : 'list',
+  // 'settings' is a detour overlay available from any page; otherwise it mirrors window.PAGE.
+  view: initParams.get('view') === 'settings' ? 'settings' : window.PAGE,
   me: null,
   user: initParams.get('user') || LS.get('user', ''),
   users: null,
@@ -31,6 +45,7 @@ const state = {
   error: null,
   errorLogin: false,
   fetchedAt: null,
+  loadedFor: null,
   openKey: null,
   openIssue: null,
   menu: null,
@@ -47,6 +62,31 @@ const state = {
 const cache = { transitions: new Map(), details: new Map() };
 const recentlyTransitioned = new Map();
 
+// What a load asks for. state.loadedFor records it for the issues on screen, so a page shows
+// "Loading…" only when those belong to another query, not on every refresh.
+const issuesQuery = () => JSON.stringify([state.jql, state.user]);
+
+// The last issue list of this browser tab, so switching pages shows it at once and
+// refreshes behind it instead of starting from an empty page.
+const ISSUES_CACHE = 'jd:issues';
+function saveIssues() {
+  try {
+    const { issues, defaultJql, usedJql, fetchedAt, loadedFor } = state;
+    sessionStorage.setItem(ISSUES_CACHE, JSON.stringify({ issues, defaultJql, usedJql, fetchedAt, loadedFor }));
+  } catch {
+    // Storage full or unavailable: the next page just loads from scratch.
+  }
+}
+(function restoreIssues() {
+  try {
+    const c = JSON.parse(sessionStorage.getItem(ISSUES_CACHE));
+    if (c?.loadedFor !== issuesQuery()) return;
+    Object.assign(state, { issues: c.issues, defaultJql: c.defaultJql, usedJql: c.usedJql, fetchedAt: new Date(c.fetchedAt), loadedFor: c.loadedFor });
+  } catch {
+    // Unreadable cache: load as usual.
+  }
+})();
+
 // Sync state to URL query params
 function syncUrl() {
   const params = new URLSearchParams();
@@ -56,7 +96,7 @@ function syncUrl() {
   if (state.urgentOnly) params.set('urgent', '1');
   if (state.user) params.set('user', state.user);
   if (state.sprint) params.set('sprint', String(state.sprint));
-  if (state.view !== 'list') params.set('view', state.view);
+  if (state.view === 'settings') params.set('view', 'settings');
   if (state.docsQ) params.set('docsQ', state.docsQ);
   if (state.docsKind !== 'all') params.set('docsKind', state.docsKind);
   if (state.docsSort !== 'date') params.set('docsSort', state.docsSort);
@@ -69,12 +109,12 @@ function syncUrl() {
 // ---------------------------------------------------------------------------
 // Data
 
-async function load({ silent = false } = {}) {
+// Fetches issues into state.issues. Pure data + state; DOM-specific bits (spinner, jql field,
+// render()) are layered on by each page's load() wrapper (see app-tasks.js / app-docs.js).
+async function loadIssues({ silent = false } = {}) {
   if (state.loading) return;
   state.loading = true;
-  $('#refresh').classList.add('spin');
-  $('#refresh').disabled = true;
-  if (!silent) render();
+  const query = issuesQuery();
   try {
     const params = new URLSearchParams();
     if (state.jql) params.set('jql', state.jql);
@@ -85,18 +125,16 @@ async function load({ silent = false } = {}) {
     state.usedJql = data.jql;
     state.error = null;
     state.fetchedAt = new Date();
+    state.loadedFor = query;
+    saveIssues();
     cache.transitions.clear();
     recentlyTransitioned.clear();
-    if (!state.jql) $('#jql').value = data.defaultJql;
     if (state.openKey) state.openIssue = state.issues.find((i) => i.key === state.openKey) || state.openIssue;
   } catch (e) {
     if (silent && state.issues.length) toast(`Failed to reload: ${e.message}`, 'error');
     else (state.error = e.message), (state.errorLogin = e.login);
   } finally {
     state.loading = false;
-    $('#refresh').classList.remove('spin');
-    $('#refresh').disabled = false;
-    render();
   }
 }
 
@@ -146,6 +184,7 @@ async function transition(issue, t) {
     toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url || (state.issues[0] && `${siteOf(state.issues[0])}/browse/${issue.key}`), label: 'Open in Jira' });
   } finally {
     setStatus(issue, issue.status, false);
+    saveIssues(); // so the next page doesn't flash the old status
     cache.transitions.delete(issue.key);
     cache.details.delete(issue.key);
     render();

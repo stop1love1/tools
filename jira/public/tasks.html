@@ -3,9 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>My Jira</title>
+    <title>My Jira — Tasks</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 10h14M9 16h10M9 22h6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <script>
+      // Apply a saved light/dark choice before the first paint (auto is handled by the CSS media query).
+      try {
+        const t = JSON.parse(localStorage.getItem('jd:theme'));
+        if (t === 'light' || t === 'dark') document.documentElement.classList.add(t);
+      } catch {}
+    </script>
     <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/page-loader.css" />
     <link rel="stylesheet" href="/css/controls.css" />
     <link rel="stylesheet" href="/css/header.css" />
     <link rel="stylesheet" href="/css/urgency.css" />
@@ -25,6 +33,7 @@
     <link rel="stylesheet" href="/css/agent.css" />
   </head>
   <body>
+    <div class="page-loader" id="page-loader" role="status" aria-label="Loading"><span class="page-loader-spin"></span></div>
     <header class="topbar">
       <div class="bar">
         <input id="search" type="search" placeholder="Search key, title, parent… ( / )" aria-label="Search" />
@@ -34,9 +43,9 @@
           <select id="preset" aria-label="Saved filter"></select>
           <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Edit JQL" aria-label="Edit JQL"></button>
           <div class="seg icons labeled" id="views" role="tablist">
-            <button data-view="list" role="tab" title="Task list" aria-label="Task list"></button>
-            <button data-view="docs" role="tab" title="Confluence pages & attachments" aria-label="Documents"></button>
-            <button data-view="git" role="tab" title="Workspace: your checkouts, changes, stashes and branch cleanup" aria-label="Workspace"></button>
+            <a data-view="list" href="/tasks.html" role="tab" title="Task list" aria-label="Task list"></a>
+            <a data-view="docs" href="/docs.html" role="tab" title="Confluence pages & attachments" aria-label="Documents"></a>
+            <a data-view="git" href="/workspace.html" role="tab" title="Workspace: your checkouts, changes, stashes and branch cleanup" aria-label="Workspace"></a>
           </div>
         </div>
         <div class="bar-icons">
@@ -93,6 +102,7 @@
     <div class="scrim" id="scrim" hidden></div>
     <div class="toasts" id="toasts" aria-live="polite"></div>
 
+    <script>window.PAGE = 'list';</script>
     <script src="/js/core.js"></script>
     <script src="/js/state.js"></script>
     <script src="/js/format.js"></script>
@@ -113,6 +123,7 @@
     <script src="/js/git/workspace.js"></script>
     <script src="/js/agent.js"></script>
     <script src="/js/settings.js"></script>
-    <script src="/js/app.js"></script>
+    <script src="/js/app-shared.js"></script>
+    <script src="/js/app-tasks.js"></script>
   </body>
 </html>

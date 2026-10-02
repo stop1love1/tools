@@ -52,7 +52,7 @@
 }
 
 /* view switch with labels */
-.seg.icons.labeled button {
+.seg.icons.labeled :is(button, a) {
   width: auto;
   display: inline-flex;
   align-items: center;
@@ -61,10 +61,10 @@
   font-size: 12.5px;
 }
 @media (max-width: 1100px) {
-  .seg.icons.labeled button span {
+  .seg.icons.labeled :is(button, a) span {
     display: none;
   }
-  .seg.icons.labeled button {
+  .seg.icons.labeled :is(button, a) {
     width: 34px;
     padding: 0;
     justify-content: center;
