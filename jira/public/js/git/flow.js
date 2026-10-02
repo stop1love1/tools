@@ -12,17 +12,20 @@ function gitFlowBlock(issue, detail) {
     h('h3', null, icon('branch'), 'Git'),
     h('div', { class: 'muted small' }, 'Reading git status…'),
   );
-  getFlow(issue.key).then(
-    (f) => fillFlow(box, issue, f),
+  // A story's work is usually on its subtasks' branches: they are listed under the story's own state.
+  const children = detail ? Promise.resolve(detail.children || []) : getDetail(issue.key).then((d) => d.children || [], () => []);
+  Promise.all([getFlow(issue.key), children]).then(
+    ([f, kids]) => fillFlow(box, issue, f, kids),
     (e) => box.replaceChildren(box.firstChild, h('div', { class: 'error-box' }, e.message)),
   );
   return box;
 }
 
-function fillFlow(box, issue, f) {
+function fillFlow(box, issue, f, kids = []) {
   const repos = gitRepos().filter((r) => f.repos[r]);
   const used = repos.filter((r) => f.repos[r].uat || f.repos[r].develop || f.repos[r].commits?.length);
-  const redraw = () => box.isConnected && fillFlow(box, issue, f);
+  const redraw = () => box.isConnected && fillFlow(box, issue, f, kids);
+  const subtasks = kids.length > 0 && subtaskBlock(kids, redraw);
 
   const editEpic = async () => {
     const v = await promptPop(`Epic branch for ${issue.key}`, {
@@ -70,7 +73,14 @@ function fillFlow(box, issue, f) {
   const broken = used.filter((r) => f.repos[r].error).map((r) => h('div', { class: 'error-box' }, h('b', null, repoLabel(r)), ' — ', f.repos[r].error));
   const ok = used.filter((r) => !f.repos[r].error);
   if (!ok.length) {
-    box.replaceChildren(...[head, hint && nextBlock([hint]), ...broken, ...(broken.length ? [] : startPanel(issue, f))].filter(Boolean));
+    // Nothing on the ticket itself: a story shows its subtasks (where the work is) and keeps starting its own branch at hand.
+    const own = subtasks
+      ? [
+          subtasks,
+          h('div', { class: 'gfooter' }, `${issue.key} itself has no branch — the work is on its subtasks.`, h('button', { class: 'link-btn', onClick: () => startTaskPop(issue) }, `Start a branch for ${issue.key}…`)),
+        ]
+      : startPanel(issue, f);
+    box.replaceChildren(...[head, hint && nextBlock([hint]), ...broken, ...(broken.length ? [] : own)].filter(Boolean));
     return;
   }
 
@@ -97,6 +107,7 @@ function fillFlow(box, issue, f) {
       panel && stagePanel(panel, () => choose(sel)),
       flowFooter(issue, models, repos.filter((x) => !used.includes(x)), choose),
       mrUnavailable(ok, issue.key),
+      subtasks,
     ].filter(Boolean),
   );
   // MR states arrive later (GitLab API); redraw once they're in.
@@ -423,5 +434,79 @@ function mrUnavailable(repos, key) {
     ),
     jira.length > 0 &&
       h('ul', { class: 'link-list compact' }, jira.map((l) => h('li', null, icon('mr'), h('a', { href: l.url, target: '_blank', rel: 'noopener', title: l.url }, l.title.replace(/^Merge request - /, '')), h('span', { class: 'tag muted small' }, 'from Jira')))),
+  );
+}
+
+// A story's subtasks, where its work usually is: their next actions, then one row per subtask with a column per repo
+// (the four stages as dots, plus what is up next). A row's key opens the subtask.
+function subtaskBlock(kids, redraw) {
+  const label = h('div', { class: 'gpanel-label' }, `Subtasks · ${kids.length}`);
+  const unread = kids.filter((k) => !gitState.flowOf.has(k.key));
+  if (unread.length) {
+    // getFlow records each result in flowOf first, so the redraw finds them all read (no loop).
+    Promise.allSettled(unread.map((k) => getFlow(k.key))).then(redraw);
+    return h('div', { class: 'gsub' }, label, h('div', { class: 'muted small' }, 'Reading the subtasks’ git status…'));
+  }
+
+  const rows = kids.map((k) => {
+    const f = gitState.flowOf.get(k.key);
+    const kid = { key: k.key, summary: k.summary, type: { name: k.type }, status: k.status };
+    const repos = f?.repos ? gitRepos().filter((r) => f.repos[r] && !f.repos[r].error && (f.repos[r].uat || f.repos[r].develop || f.repos[r].commits?.length)) : [];
+    return { k, kid, f, models: repos.map((r) => stageModel(kid, f, f.repos[r], gitState.mrData[r])) };
+  });
+  const cols = gitRepos().filter((r) => rows.some((x) => x.models.some((m) => m.repo === r)));
+  for (const r of cols) if (!gitState.mrs.has(r)) getMrs(r).then(redraw);
+
+  const items = rows
+    .flatMap(({ k, models }) => nextItems(models).map((i) => ({ ...i, repo: `${k.key} · ${i.repo}`, cell: k.key })))
+    .sort((a, b) => a.rank - b.rank);
+
+  // What a repo column says about a subtask: a fix first, then the user's move, then what waits on others.
+  const focus = (m) => {
+    const all = stages();
+    const s = ['warn', 'todo', 'wait'].map((st) => all.find((x) => m.cells[x.id].state === st)).find(Boolean) || all.find((x) => m.cells[x.id].state !== 'done');
+    return s ? { state: m.cells[s.id].state, text: `${s.label}: ${m.cells[s.id].text}` } : { state: 'done', text: 'Done' };
+  };
+  const cell = (m) => {
+    if (!m) return h('div', { class: 'gs-cell muted' }, '—');
+    const x = focus(m);
+    return h(
+      'div',
+      { class: 'gs-cell' },
+      h('span', { class: 'gs-dots' }, stages().map((s) => h('span', { title: `${s.label}: ${m.cells[s.id].text}` }, stateDot(m.cells[s.id].state)))),
+      h('span', { class: `gs-focus s-${x.state}` }, x.text),
+    );
+  };
+  const row = ({ k, kid, f, models }) => {
+    const done = k.status?.category === 'done';
+    const branch = models.map((m) => m.branch).find(Boolean);
+    return h(
+      'div',
+      { class: `gs-row${done ? ' gs-done' : ''}`, style: `--cols:${cols.length}` },
+      h(
+        'div',
+        { class: 'gs-ticket' },
+        h('div', { class: 'gs-title' }, h('a', { class: 'key', href: '#' + k.key, onClick: (ev) => (ev.preventDefault(), openDetail(k.key)) }, k.key), h('span', { class: 'gsubj', title: k.summary }, k.summary)),
+        f?.error
+          ? h('span', { class: 'warn-text small' }, f.error)
+          : branch
+            ? h('button', { class: 'gcode gbranch', title: `${branch}\nClick to copy`, onClick: () => copyText(branch, 'Branch name copied') }, branch)
+            : h('span', { class: 'muted small' }, 'No branch yet ', !done && h('button', { class: 'link-btn', onClick: () => startTaskPop(kid) }, 'Start…')),
+      ),
+      cols.map((r) => cell(models.find((m) => m.repo === r))),
+    );
+  };
+
+  return h(
+    'div',
+    { class: 'gsub' },
+    label,
+    items.length > 0 && nextBlock(items, { choose: (key) => openDetail(key) }),
+    h(
+      'div',
+      { class: 'gs-table' },
+      cols.length > 0 && h('div', { class: 'gs-row gs-head', style: `--cols:${cols.length}` }, h('div', null, 'Subtask'), cols.map((r) => h('div', null, repoLabel(r)))),
+      rows.map(row),
+    ),
   );
 }

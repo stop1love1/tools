@@ -123,7 +123,6 @@ function stageModel(issue, f, r, M) {
     if (c) d.steps.push({ state: 'warn', text: 'Conflicts with the epic', chips: [conflictChip(c, 'epic')] });
     if (!inEpic && uat.behindEpic > 0) d.steps.push({ state: 'todo', text: `${uat.behindEpic} new commit(s) on the epic since the branch` });
     if (!inEpic) d.steps.push({ state: 'na', text: 'The reviewer merges with “Create merge commit” (one merge commit per task) — never merge locally into the epic' });
-    if (!inEpic) d.more.push(pickEpicAct(repo, f.epic, uat.name, commits));
     if (!M?.byBranch) d.more.push(listAct(uat.name));
 
     if (c) {
@@ -214,23 +213,32 @@ function stageModel(issue, f, r, M) {
     d.steps.push(...mrSteps(dev?.name, DEV(), DEV()));
     d.more.push(undoAct(repo, dev));
 
+    // Just cherry-picked onto the epic from the epic panel: those commits come pre-ticked.
+    const preset = gitState.devPreset.get(`${key}:${repo}`);
     let pick = null;
     if (missing.length) {
-      const boxes = missing.map((c) => h('input', { type: 'checkbox', checked: true, value: c.sha, 'aria-label': c.subject }));
+      const ticked = (c) => !preset || preset.includes(c.sha);
+      const n = preset ? missing.filter(ticked).length || missing.length : missing.length;
+      const boxes = missing.map((c) => h('input', { type: 'checkbox', checked: n === missing.length || ticked(c), value: c.sha, 'aria-label': c.subject }));
       const target = h('input', { class: 'gin mono', value: devName, spellcheck: 'false', 'aria-label': `${DEV()} branch` });
       d.commits = { label: `Not on ${DEV()} yet (oldest first, merge commits excluded)`, items: missing.map((c, i) => ({ short: c.short, subject: c.subject, box: boxes[i] })), target, targetHint: dev ? '' : `created from ${DEV()}` };
-      pick = act(`Cherry-pick ${missing.length} → ${DEV()}`, () => {
+      pick = act(`Cherry-pick ${n === missing.length ? missing.length : 'selected'} → ${DEV()}`, () => {
         const shas = boxes.filter((b) => b.checked).map((b) => b.value);
         if (!shas.length) return toast('No commit selected', 'error');
         const branch = target.value.trim();
         const list = missing.filter((c) => shas.includes(c.sha));
+        gitState.devPreset.delete(`${key}:${repo}`);
         gitAction({ action: 'pick-develop', repo, branch, shas }, `Cherry-pick onto ${branch}${dev ? '' : ` (created from ${DEV()})`} and push it:\n\n${list.map((c) => `${c.short} ${c.subject}`).join('\n')}`);
       });
     }
 
+    if (!missing.length) {
+      d.steps[0].text += ` — nothing left to cherry-pick${inDev ? '' : ` (they wait in ${dev?.name || `the -${DEV()} branch`})`}`;
+      d.commits = { label: inDev ? `In ${DEV()}` : `On the -${DEV()} branch`, items: commits.map((c) => ({ short: c.short, subject: c.subject })) };
+    }
     if (inDev) return { state: 'done', text: `In ${DEV()}`, sub: '', detail: d };
     if (!inEpic) {
-      if (pick) d.more.unshift({ ...pick, label: `Cherry-pick ${missing.length} → ${DEV()} now (before the epic)` });
+      if (pick) d.more.unshift({ ...pick, label: `${pick.label} now (before the epic)` });
       return { state: 'na', text: 'After the epic', sub: `${commits.length - missing.length}/${commits.length} picked`, detail: d };
     }
     if (pick) {
@@ -239,7 +247,7 @@ function stageModel(issue, f, r, M) {
         state: 'todo',
         text: `${commits.length - missing.length} / ${commits.length} picked`,
         sub: 'cherry-pick',
-        title: `${missing.length} commit(s) to cherry-pick → ${DEV()}`,
+        title: preset && pick.label.includes('selected') ? `Cherry-pick the commits just put on the epic → ${DEV()}` : `${missing.length} commit(s) to cherry-pick → ${DEV()}`,
         why: `Onto ${devName}${dev ? '' : ` (created from ${DEV()})`}, then pushed.`,
         detail: d,
       };
@@ -269,7 +277,44 @@ function stageModel(issue, f, r, M) {
     return { state: 'wait', text: 'Picked', sub: `waiting for ${DEV()}`, detail: d };
   }
 
-  const cells = { code: codeCell(), epic: epicCell(), uat: uatCell(), dev: devCell() };
+  // No merge rights on the epic MR: cherry-pick the chosen commits of the task straight onto the epic (fast-forward
+  // push — the epic is shared). Once done, the develop panel opens with those same commits ticked.
+  function withEpicPick(cell) {
+    const todo = uat ? commits.filter((c) => !c.inEpic) : [];
+    const d = cell.detail;
+    if (!todo.length) {
+      // Say why there is nothing to tick, rather than leave the pick missing without a word.
+      if (uat && commits.length) {
+        d.commits = { label: `All ${commits.length} on the epic — nothing to cherry-pick`, items: commits.map((c) => ({ short: c.short, subject: c.subject })) };
+      }
+      return cell;
+    }
+    const boxes = todo.map((c) => h('input', { type: 'checkbox', checked: true, value: c.sha, 'aria-label': c.subject }));
+    d.commits = { label: `Not on the epic yet (oldest first)`, items: todo.map((c, i) => ({ short: c.short, subject: c.subject, box: boxes[i] })) };
+    const pick = act(
+      'Cherry-pick selected → epic',
+      async () => {
+        const shas = boxes.filter((b) => b.checked).map((b) => b.value);
+        if (!shas.length) return toast('No commit selected', 'error');
+        const list = todo.filter((c) => shas.includes(c.sha));
+        const job = await gitAction(
+          { action: 'pick-epic', repo, epic: f.epic, branch: uat.name, shas },
+          `No merge rights on the epic MR?\n\nCherry-pick ${shas.length} commit(s) of ${uat.name} onto epic/${f.epic} and push (fast-forward only):\n\n${list.map((c) => `${c.short} ${c.subject}`).join('\n')}`,
+        );
+        if (job?.status === 'ok') {
+          gitState.sel.set(key, `${repo}:dev`);
+          gitState.devPreset.set(`${key}:${repo}`, shas);
+        }
+      },
+      { icon: 'commit', title: `Cherry-pick the ticked commits of ${uat.name} onto epic/${f.epic} instead of merging the MR` },
+    );
+    // While the task conflicts with the epic the pick would conflict too: keep it out of the way.
+    if (epicConflict) d.more.unshift(pick);
+    else d.secondary = [...(d.secondary || []), pick];
+    return cell;
+  }
+
+  const cells = { code: codeCell(), epic: withEpicPick(epicCell()), uat: uatCell(), dev: devCell() };
   for (const c of Object.values(cells)) {
     c.detail.secondary = (c.detail.secondary || []).filter(Boolean);
     c.detail.more = (c.detail.more || []).filter(Boolean);

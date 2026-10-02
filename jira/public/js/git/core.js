@@ -21,12 +21,14 @@ const gitState = {
   loading: false,
   error: null,
   flows: new Map(), // `${key}|${epic}` → Promise<flow>
+  flowOf: new Map(), // key → the last flow read (or { error }), for blocks that list other tickets (a story's subtasks)
   mrs: new Map(), // repo → Promise<{ byBranch, error }>
   mrData: {}, // repo → resolved value of the above
   mrStale: new Set(),
   epics: new Map(), // epic key → Promise<epic view>
   sel: new Map(), // issue key → the open panel of its git block (`${repo}:${stage}`), null once closed
   epicOpen: new Set(), // tickets whose row is expanded in the epic view
+  devPreset: new Map(), // `${ticket}:${repo}` → commits just cherry-picked onto the epic, pre-ticked for develop
   devTargets: new Map(), // `${repo}:${ticket}` → the -develop branch chosen in the epic view
   epicTitles: new Map(), // epic key → { ticket: summary }
   jiraMrs: new Map(), // ticket → MR links recorded on Jira (shown when GitLab can't be reached)
@@ -59,7 +61,10 @@ function getFlow(key, { fresh = false } = {}) {
     if (epic) q.set('epic', epic);
     for (const p of pins) q.append('pin', p.join(':'));
     const p = api(`/api/git/flow?${q}`);
-    p.catch(() => gitState.flows.delete(id));
+    p.then(
+      (f) => gitState.flowOf.set(key, f),
+      (e) => (gitState.flows.delete(id), gitState.flowOf.set(key, { error: e.message })),
+    );
     gitState.flows.set(id, p);
   }
   return gitState.flows.get(id);
@@ -164,6 +169,7 @@ async function loadGit() {
 // After a job: drop cached flows and redraw whatever shows git state.
 function refreshGit() {
   gitState.flows.clear();
+  gitState.flowOf.clear();
   gitState.epics.clear();
   gitState.mrs.clear();
   for (const r of gitRepos()) gitState.mrStale.add(r);
@@ -282,22 +288,6 @@ const rebaseEpicAct = (repo, epicKey) =>
       ),
     { danger: true, icon: 'rebase', title: `Rebase epic/${epicKey} onto ${UAT()} — force-push` },
   );
-
-// No merge rights on the epic MR: cherry-pick the task's own commits straight onto the epic and push (fast-forward
-// only — the epic is shared, so a reject here means fetch/rebase the task first, never force-push the epic).
-const pickEpicAct = (repo, epicKey, branch, commits) => {
-  const shas = (commits || []).filter((c) => !c.inEpic).map((c) => c.sha);
-  if (!shas.length) return null;
-  return act(
-    `Cherry-pick ${shas.length} → epic (no merge rights)`,
-    () =>
-      gitAction(
-        { action: 'pick-epic', repo, epic: epicKey, branch, shas },
-        `No merge rights on the epic MR?\n\nCherry-pick ${shas.length} commit(s) of ${branch} onto epic/${epicKey} and push (fast-forward only)?`,
-      ),
-    { title: `Cherry-pick ${branch}'s own commits onto epic/${epicKey} instead of merging the MR` },
-  );
-};
 
 // The -develop branch conflicts with develop: rebase it onto develop and push (own branch, backup kept → no confirm).
 const syncDevAct = (repo, branch) =>

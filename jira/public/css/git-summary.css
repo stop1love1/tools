@@ -375,6 +375,9 @@ button.gm-cell.on:hover {
   overflow: auto;
   font-size: 12px;
 }
+.gpanel-commits li {
+  min-width: 0;
+}
 .gcommit {
   display: flex;
   align-items: center;
@@ -746,5 +749,112 @@ label.gcommit {
   }
   .row.child.deep {
     padding-left: 34px;
+  }
+}
+.et-keys {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+/* a story's subtasks */
+.gsub {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+.gs-table {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.gs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 168px);
+}
+.gs-row + .gs-row {
+  border-top: 1px solid var(--border);
+}
+.gs-row > * + * {
+  border-left: 1px solid var(--border);
+}
+.gs-head {
+  background: var(--surface-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.gs-head > div {
+  padding: 6px 10px;
+}
+.gs-ticket {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+}
+.gs-title {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.gs-ticket .gbranch {
+  justify-self: start;
+  max-width: 100%;
+  font-size: 11.5px;
+}
+.gs-ticket .link-btn {
+  padding: 0;
+}
+.gs-done .gs-ticket {
+  opacity: 0.7;
+}
+.gs-cell {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  min-width: 0;
+}
+.gs-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.gs-dots .gdot {
+  flex-basis: 13px;
+  width: 13px;
+  height: 13px;
+  font-size: 8px;
+}
+.gs-dots .gdot svg {
+  width: 8px;
+  height: 8px;
+}
+.gs-focus {
+  overflow-wrap: anywhere;
+}
+.gs-focus.s-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.gs-focus.s-todo {
+  color: var(--accent);
+  font-weight: 600;
+}
+.gs-focus.s-wait,
+.gs-focus.s-na {
+  color: var(--muted);
+}
+.gs-focus.s-done {
+  color: var(--done-fg);
+}
+@container (max-width: 460px) {
+  .gs-row {
+    grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 112px);
   }
 }

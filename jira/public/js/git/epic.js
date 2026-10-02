@@ -56,9 +56,10 @@ function fillEpic(box, issue, d) {
   const byKey = new Map();
   for (const r of exists) {
     for (const t of epicTickets(d.repos[r], issue.key)) {
-      if (!byKey.has(t.key)) byKey.set(t.key, { key: t.key, title: t.title, latest: 0, repos: {} });
+      if (!byKey.has(t.key)) byKey.set(t.key, { key: t.key, keys: [], title: t.title, latest: 0, repos: {} });
       const x = byKey.get(t.key);
       x.repos[r] = t;
+      x.keys = [...new Set([...x.keys, ...t.keys])].sort(byTicket);
       x.title ||= t.title;
       x.latest = Math.max(x.latest, t.latest);
     }
@@ -87,7 +88,7 @@ function fillEpic(box, issue, d) {
         return {
           state: 'todo',
           repo: repoLabel(r),
-          title: `${t.key}: ${x.missing.length} commit(s) not on ${DEV()}`,
+          title: `${t.keys.join(' + ')}: ${x.missing.length} commit(s) not on ${DEV()}`,
           why: x.target ? `Into ${x.target}, then pushed.` : `No -${DEV()} branch known yet — you'll be asked for one.`,
           primary: act(`Cherry-pick ${x.missing.length} → ${DEV()}`, () => pickTicket(r, x, x.missing.map((c) => c.sha), redraw)),
           secondary: [
@@ -229,8 +230,8 @@ function epicTickets(e, epicKey) {
       } else t.direct = true;
     }
   }
-  const belongs = (t) => t.key.startsWith(`${KEY()}-`) && (!e.ticketEpics?.[t.key] || e.ticketEpics[t.key] === epicKey);
-  const tickets = [...map.values()].filter(belongs);
+  const ours = (key) => key.startsWith(`${KEY()}-`) && (!e.ticketEpics?.[key] || e.ticketEpics[key] === epicKey);
+  const tickets = groupWorkedTogether(e, [...map.values()].filter((t) => ours(t.key)), ours);
   for (const t of tickets) {
     t.repo = e.repo;
     t.commits.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
@@ -244,7 +245,52 @@ function epicTickets(e, epicKey) {
   return tickets;
 }
 
-const devTargetValidate = (x) => (devBranchRe().test(x.trim()) ? '' : `Expected feature/${KEY()}-123-description-${DEV()}`);
+const byTicket = (a, b) => Number(a.split('-')[1]) - Number(b.split('-')[1]);
+
+// Tickets done together are one row: commits are filed under the ticket of their "KEY-123:" prefix only, so work on
+// VLEARN-4547 committed as "VLEARN-4546: … (VLEARN-4547)" on feature/VLEARN-4546-4547-… would otherwise leave 4547
+// out. Linked: tickets named in a commit's trailing "(KEY-…)" and the tickets of a combined branch name. One row
+// keeps each commit once (no double count, no second Pick button for the same commits).
+function groupWorkedTogether(e, tickets, ours) {
+  const keyRe = new RegExp(`${KEY()}-\\d+`, 'g');
+  const parent = new Map();
+  const find = (k) => {
+    if (!parent.has(k)) parent.set(k, k);
+    return parent.get(k) === k ? k : (parent.set(k, find(parent.get(k))), parent.get(k));
+  };
+  const link = (keys) => keys.filter(ours).reduce((a, k) => (a && parent.set(find(k), find(a)), a || k), null);
+  const branchKeys = (name) => {
+    const m = name?.match(new RegExp(`${KEY()}-(\\d+(?:-\\d+)*)`));
+    return m ? m[1].split('-').map((n) => `${KEY()}-${n}`) : [];
+  };
+  for (const t of tickets) {
+    find(t.key);
+    for (const c of t.commits) link([t.key, ...(c.subject.match(/\(([^)]*)\)\s*$/)?.[1].match(keyRe) || [])]);
+    const b = e.branches?.[t.key] || {};
+    for (const name of [t.uatBranch, b.uat, b.develop]) link([t.key, ...branchKeys(name)]);
+  }
+  const groups = new Map();
+  for (const t of tickets) {
+    const root = find(t.key);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(t);
+  }
+  return [...groups.entries()].map(([root, list]) => {
+    // The row is named after the ticket carrying most commits (its branch, title and target are used).
+    list.sort((a, b) => b.commits.length - a.commits.length || byTicket(a.key, b.key));
+    const t = list[0];
+    for (const o of list.slice(1)) {
+      t.commits.push(...o.commits);
+      t.direct ||= o.direct;
+      t.merged ||= o.merged;
+      t.uatBranch ||= o.uatBranch;
+    }
+    t.keys = [...parent.keys()].filter((k) => find(k) === root).sort(byTicket);
+    return t;
+  });
+}
+
+const devTargetValidate =(x) => (devBranchRe().test(x.trim()) ? '' : `Expected feature/${KEY()}-123-description-${DEV()}`);
 
 async function pickTicket(repo, t, shas, redraw) {
   if (!shas.length) return toast('No commit selected', 'error');
@@ -277,7 +323,8 @@ function ticketRow(t, repos, redraw) {
     open ? gitState.epicOpen.delete(t.key) : gitState.epicOpen.add(t.key);
     redraw();
   };
-  const summary = state.issues.find((i) => i.key === t.key)?.summary || t.title || gitState.titles?.[t.key] || '';
+  const titleOf = (k) => state.issues.find((i) => i.key === k)?.summary || gitState.titles?.[k] || '';
+  const summary = titleOf(t.key) || t.title || '';
   const direct = Object.values(t.repos).some((x) => x.direct);
   const complete = !Object.values(t.repos).some((x) => x.missing.length);
   const mark = (c) =>
@@ -323,7 +370,11 @@ function ticketRow(t, repos, redraw) {
         'div',
         { class: 'et-ticket' },
         h('button', { class: 'et-fold', 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the commits of ${t.key}`, onClick: toggle }, icon('chevRight')),
-        h('a', { class: 'key', href: '#' + t.key, onClick: (ev) => (ev.preventDefault(), openDetail(t.key)) }, t.key),
+        h(
+          'span',
+          { class: 'et-keys', title: t.keys.length > 1 ? `Done together: ${t.keys.map((k) => `${k} ${titleOf(k)}`.trim()).join('\n')}` : null },
+          t.keys.map((k, i) => [i > 0 && ' + ', h('a', { class: 'key', href: '#' + k, onClick: (ev) => (ev.preventDefault(), openDetail(k)) }, i > 0 ? k.replace(`${KEY()}-`, '') : k)]),
+        ),
         h('button', { class: 'et-sum gsubj', title: summary, onClick: toggle }, summary),
         direct && h('span', { class: 'gnomr', title: 'Committed straight to the epic, without a task MR', 'aria-label': 'no task MR' }, icon('unlink')),
       ),

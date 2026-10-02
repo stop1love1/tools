@@ -67,7 +67,8 @@ Quản lý nhánh / commit / cherry-pick theo đúng flow trong `lms/.cursor/rul
 - **Khối "Git" trong chi tiết task**:
   - **Next** ở trên cùng: việc cần làm của cả Backend và Frontend, mỗi việc một nút chính. Thứ tự: cần sửa (conflict…) → tới lượt bạn → đang chờ người khác (MR chờ review).
   - **Bảng giai đoạn × repo**: Branch, Code, → Epic, rồi tách 2 nhánh song song → uat (qua MR epic) và → develop (cherry-pick + MR). Mỗi ô có 1 trong 5 trạng thái: xong / tới lượt bạn / cần sửa / chờ người khác / chưa tới.
-  - Bấm vào một ô để mở **panel chi tiết**: các bước con, commit (tick chọn khi cherry-pick), nút chính, và "Other options" cho thao tác ít dùng hoặc nguy hiểm (Undo, cherry-pick sang epic, rebase epic).
+  - Bấm vào một ô để mở **panel chi tiết**: các bước con, commit (tick chọn khi cherry-pick), nút chính, và "Other options" cho thao tác ít dùng hoặc nguy hiểm (Undo, rebase epic).
+  - **Không có quyền merge MR vào epic**: trong panel **→ Epic**, tick các commit rồi bấm **Cherry-pick selected → epic** (push fast-forward). Pick xong, panel **→ develop** tự mở với đúng các commit đó đã được tick, chỉ cần bấm **Cherry-pick selected → develop**.
   - **Dòng cuối**: danh sách nhánh, cảnh báo flow, lần fetch gần nhất.
   - Epic lấy theo Epic cha trên Jira (bấm chip `into epic/…` để đổi). Nếu commit của ticket nằm ở epic khác, Next sẽ gợi ý.
 - **Khối "Git · epic" trong chi tiết epic**: cùng bố cục (Next + bảng → uat / → develop theo repo), kèm bảng ticket với cột BE | FE. Bấm vào một hàng để chọn commit và cherry-pick sang `-develop`.
