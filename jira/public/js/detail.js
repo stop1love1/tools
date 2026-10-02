@@ -167,7 +167,7 @@ function renderDetail(issue, d) {
               typeBadge(c.type),
               h('span', { class: 'key' }, c.key),
               h('span', { class: 'child-summary', title: c.summary }, c.summary),
-              h('span', { class: 'tag' }, statusPill(c.status)),
+              h('span', { class: 'tag' }, statusButton(c)),
             ),
           ),
         ),

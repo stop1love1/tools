@@ -110,24 +110,34 @@ function getDetail(key) {
   return cache.details.get(key);
 }
 
+// A Story / Epic is also carried as a stub (`parent`, `epic`) on every issue under it: keep all copies in step.
+function setStatus(issue, status, pending) {
+  const copies = [issue, state.openIssue];
+  for (const i of state.issues) copies.push(i, i.parent, i.epic);
+  for (const c of copies) {
+    if (c?.key !== issue.key) continue;
+    c.status = status;
+    c.pending = pending;
+  }
+}
+
 async function transition(issue, t) {
   const prev = issue.status;
-  issue.status = { ...t.to };
-  issue.pending = true;
-  
+  setStatus(issue, { ...t.to }, true);
+
   recentlyTransitioned.set(issue.key, Date.now());
-  
+
   render();
   try {
     const d = await api(`/api/issues/${issue.key}/transitions`, { method: 'POST', body: JSON.stringify({ id: t.id }) });
-    issue.status = d.status;
+    setStatus(issue, d.status, true);
     toast(`${issue.key} → ${d.status.name}`);
   } catch (e) {
-    issue.status = prev;
+    setStatus(issue, prev, true);
     recentlyTransitioned.delete(issue.key);
-    toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url, label: 'Open in Jira' });
+    toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url || (state.issues[0] && `${siteOf(state.issues[0])}/browse/${issue.key}`), label: 'Open in Jira' });
   } finally {
-    issue.pending = false;
+    setStatus(issue, issue.status, false);
     cache.transitions.delete(issue.key);
     cache.details.delete(issue.key);
     render();

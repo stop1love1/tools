@@ -206,7 +206,9 @@ function keyLink(i) {
   );
 }
 
+// Also used for Story / Epic stubs (parent, epic, drawer children): only `key` and `status` are needed.
 function statusButton(issue) {
+  if (!issue.status) return null;
   return h(
     'button',
     {
@@ -221,8 +223,6 @@ function statusButton(issue) {
     icon('chev'),
   );
 }
-
-const statusPill = (status) => status && h('span', { class: `status static tone-${tone(status)}` }, status.name);
 
 function docBadges(issue) {
   return [
@@ -392,7 +392,7 @@ function renderList(list) {
       ),
       // c-sum: group title
       h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary), h('span', { class: 'muted small nowrap' }, parts.join(', '))),
-      h('div', { class: 'c-status' }, mine ? statusButton(mine) : null),
+      h('div', { class: 'c-status' }, statusButton(mine || parent)),
       // c-prio: empty
       h('div', { class: 'c-prio' }),
       // c-docs: empty
@@ -468,7 +468,7 @@ function epicRow(epic, items, isClosed) {
       h('span', { class: 'mini-prog', title: `${done} of ${counted.length} done` }, h('i', { style: `width:${counted.length ? Math.round((done / counted.length) * 100) : 0}%` })),
       h('span', { class: 'muted small nowrap' }, `${done}/${counted.length}`),
     ),
-    h('div', { class: 'c-status' }, mine ? statusButton(mine) : epic.status ? statusPill(epic.status) : null),
+    h('div', { class: 'c-status' }, statusButton(mine || epic)),
     h('div', { class: 'c-prio' }),
     h('div', { class: 'c-docs' }),
     h('div', { class: 'c-upd' }),
