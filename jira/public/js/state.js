@@ -39,6 +39,10 @@ const state = {
   notif: { events: [], days: 7, loaded: false, error: null, seen: LS.get('notifSeen', 0), seenBefore: 0, open: false },
   recentlyViewed: LS.get('recentlyViewed', []),
   theme: LS.get('theme', 'auto'),
+  docsQ: initParams.get('docsQ') || '',
+  docsKind: ['pages', 'attachments'].includes(initParams.get('docsKind')) ? initParams.get('docsKind') : 'all',
+  docsSort: ['name', 'date', 'size', 'task'].includes(initParams.get('docsSort')) ? initParams.get('docsSort') : 'date',
+  docsOrder: initParams.get('docsOrder') === 'asc' ? 'asc' : 'desc',
 };
 const cache = { transitions: new Map(), details: new Map() };
 const recentlyTransitioned = new Map();
@@ -53,6 +57,10 @@ function syncUrl() {
   if (state.user) params.set('user', state.user);
   if (state.sprint) params.set('sprint', String(state.sprint));
   if (state.view !== 'list') params.set('view', state.view);
+  if (state.docsQ) params.set('docsQ', state.docsQ);
+  if (state.docsKind !== 'all') params.set('docsKind', state.docsKind);
+  if (state.docsSort !== 'date') params.set('docsSort', state.docsSort);
+  if (state.docsOrder !== 'desc') params.set('docsOrder', state.docsOrder);
   const query = params.toString();
   const url = location.pathname + (query ? '?' + query : '') + location.hash;
   history.replaceState(null, '', url);

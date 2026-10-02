@@ -61,6 +61,8 @@ const ICONS = {
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   rebase: '<circle cx="6" cy="18" r="2.5"/><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-3 4-6 4H8.5"/><path d="m14 3 3 3-3 3"/>',
   unlink: '<path d="M10 14a4 4 0 0 0 5.7 0l1.3-1.3M14 10a4 4 0 0 0-5.7 0L7 11.3"/><path d="M4 4l16 16"/>',
+  sortAsc: '<path d="M4 7h10M4 12h7M4 17h4"/><path d="M16 17V7m0 0 3 3m-3-3-3 3"/>',
+  sortDesc: '<path d="M4 7h4M4 12h7M4 17h10"/><path d="M16 7v10m0 0 3-3m-3 3-3-3"/>',
 };
 
 function icon(name) {

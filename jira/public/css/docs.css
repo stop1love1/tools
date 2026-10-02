@@ -2,6 +2,18 @@
 
 /* ---------- docs ---------- */
 
+.docs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.docs-search {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
 .section-title {
   display: flex;
   align-items: baseline;
