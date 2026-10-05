@@ -63,7 +63,7 @@ function issueDto(issue, docs) {
       mimeType: a.mimeType,
       created: a.created,
       author: a.author?.displayName || '',
-      url: `${site}/secure/attachment/${a.id}/${encodeURIComponent(a.filename)}`,
+      url: `/api/attachments/${a.id}/${encodeURIComponent(a.filename)}`,
     })),
   };
 }

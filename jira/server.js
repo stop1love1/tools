@@ -19,6 +19,7 @@ const config = require('./lib/config');
 const auth = require('./lib/auth');
 const mcp = require('./lib/mcp');
 const issues = require('./lib/issues');
+const attachments = require('./lib/attachments');
 const notifications = require('./lib/notifications');
 const { listUsers } = require('./lib/users');
 const { openClaudeCode } = require('./lib/editor');
@@ -99,6 +100,9 @@ async function api(req, res, url) {
     }
     return send(res, 200, { jql, defaultJql, site: config.get().jira.siteUrl, issues: await issues.listIssues(jql) });
   }
+
+  const att = url.pathname.match(/^\/api\/attachments\/(\d+)\/([^/]+)$/);
+  if (att && req.method === 'GET') return await attachments.streamAttachment(att[1], decodeURIComponent(att[2]), res);
 
   const m = url.pathname.match(/^\/api\/issues\/([^/]+)(\/transitions)?$/);
   if (m && ISSUE_KEY_RE.test(m[1])) {

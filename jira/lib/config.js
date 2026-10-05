@@ -43,6 +43,8 @@ function defaults() {
       maxIssues: 300,
       notifyDays: 7,
       autoRefreshMinutes: 5,
+      apiEmail: env.JIRA_API_EMAIL || '',
+      apiToken: env.JIRA_API_TOKEN || '',
     },
     editor: {
       bin: env.EDITOR_BIN || 'cursor',
