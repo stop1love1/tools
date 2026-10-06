@@ -1,12 +1,5 @@
 'use strict';
 
-// MCP server at /mcp (streamable HTTP, JSON responses, no sessions) so AI tools on this machine — Claude Code,
-// Cursor… — can use the dashboard: Jira issues with their Confluence docs, notifications, and the git flow.
-// Write tools (Jira transitions, git steps, MR creation) are only listed when Settings → MCP → "Allow write tools" is on.
-//
-//   claude mcp add --transport http jira-dashboard http://localhost:4747/mcp
-//   Cursor (~/.cursor/mcp.json): { "mcpServers": { "jira-dashboard": { "url": "http://localhost:4747/mcp" } } }
-
 const config = require('./config');
 const issues = require('./issues');
 const notifications = require('./notifications');
@@ -22,16 +15,12 @@ const { httpError, send, readJson, htmlToText } = require('./util');
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
-// ---------------------------------------------------------------------------
-// Helpers
-
 const issueKey = (k) => {
   const key = String(k || '').trim().toUpperCase();
   if (!KEY_RE.test(key)) throw httpError(400, `Invalid issue key "${k}" (expected e.g. ${gitSettings().key}-123)`);
   return key;
 };
 
-// The list view of an issue: enough to pick one, without descriptions.
 const issueRow = (i) => ({
   key: i.key,
   summary: i.summary,
@@ -50,7 +39,6 @@ const issueRow = (i) => ({
   url: i.url,
 });
 
-// Polls a git job until it ends or `waitSeconds` pass.
 async function waitJob(id, waitSeconds = 120) {
   const until = Date.now() + Math.min(Math.max(waitSeconds, 0), 600) * 1000;
   let job = getJob(id);
@@ -61,9 +49,6 @@ async function waitJob(id, waitSeconds = 120) {
   if (!job) throw httpError(404, 'Job not found');
   return { id: job.id, title: job.title, status: job.status, error: job.error, result: job.result, log: job.log.join('\n').slice(-12_000) };
 }
-
-// ---------------------------------------------------------------------------
-// Tools
 
 const str = (description) => ({ type: 'string', description });
 
@@ -83,6 +68,12 @@ const TOOLS = [
         mrKinds: { type: 'array', items: { type: 'string', enum: Object.keys(MR_KINDS) }, description: 'MRs to open (default: task-epic)' },
         draft: { type: 'boolean' },
         moveStatus: { type: 'boolean', description: 'Move the Jira status along (default true)' },
+        writes: {
+          type: 'boolean',
+          description:
+            'true (default): use the write tools yourself end-to-end (transition_issue, run_git_action, create_merge_request) — no need to ask me between steps. ' +
+            'false: tell me the steps instead and do nothing by hand without asking first. Has no effect if write tools are off in Settings → MCP.',
+        },
       },
       required: ['key'],
     },
@@ -178,7 +169,6 @@ const TOOLS = [
     run: ({ id, waitSeconds = 30 }) => waitJob(String(id), Number(waitSeconds)),
   },
 
-  // --- writes (Settings → MCP → Allow write tools)
   {
     name: 'transition_issue',
     write: true,
@@ -258,14 +248,12 @@ const PROMPT_START = {
     { name: 'mode', description: 'implement (default) or plan' },
     { name: 'repos', description: 'Repo ids, comma separated (default: the first repo)' },
     { name: 'mrs', description: 'MRs to open, comma separated: task-epic, epic-uat, develop (default task-epic)' },
+    { name: 'writes', description: 'true (default) to use the write tools yourself end-to-end, false to tell me the steps instead' },
     { name: 'notes', description: 'Anything else Claude should know' },
   ],
 };
 
 const visibleTools = () => TOOLS.filter((t) => !t.write || canWrite());
-
-// ---------------------------------------------------------------------------
-// JSON-RPC
 
 async function rpc(msg) {
   const { id, method, params = {} } = msg;
@@ -285,14 +273,13 @@ async function rpc(msg) {
       });
     case 'ping':
       return ok({});
-    // In Claude Code: /mcp__jira-dashboard__start VLEARN-123 [implement|plan] [repos]
     case 'prompts/list':
       return ok({ prompts: [PROMPT_START] });
     case 'prompts/get': {
       if (params.name !== PROMPT_START.name) return fail(-32602, `Unknown prompt: ${params.name}`);
       const a = params.arguments || {};
       try {
-        const text = prompt.shortPrompt({ key: a.key, mode: a.mode, repos: a.repos, mrKinds: a.mrs, notes: a.notes });
+        const text = prompt.shortPrompt({ key: a.key, mode: a.mode, repos: a.repos, mrKinds: a.mrs, writes: a.writes, notes: a.notes });
         return ok({ description: PROMPT_START.description, messages: [{ role: 'user', content: { type: 'text', text } }] });
       } catch (e) {
         return fail(-32602, e.message);
@@ -313,7 +300,6 @@ async function rpc(msg) {
         console.log(`[mcp-server] <- ${params.name} ok (${Date.now() - started}ms)`);
         return ok({ content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data, null, 1) }] });
       } catch (e) {
-        // Tool failures go back to the model as results it can read and react to.
         console.error(`[mcp-server] <- ${params.name} failed after ${Date.now() - started}ms: ${e.message}`);
         return ok({ content: [{ type: 'text', text: `Error: ${e.name === 'TimeoutError' ? 'Atlassian MCP timed out' : e.message}` }], isError: true });
       }
@@ -323,8 +309,6 @@ async function rpc(msg) {
   }
 }
 
-// POST /mcp. Only local tools can reach it: the server listens on 127.0.0.1 and checks Host; a page in the browser
-// is refused by the Origin check (and JSON bodies can't be sent cross-site without a CORS preflight we never answer).
 async function handleMcp(req, res) {
   if (!config.get().mcp.enabled) {
     console.log('[mcp-server] rejected request: MCP disabled in settings');

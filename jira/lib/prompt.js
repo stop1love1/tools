@@ -1,10 +1,5 @@
 'use strict';
 
-// "Start with Claude", MCP style. The chat gets a short prompt (shortPrompt): "call task_brief with these options".
-// The task_brief MCP tool (brief) then returns everything in one go: the ticket (description, comments, sub-tasks,
-// Confluence pages, MRs), its git state in the chosen repos, and the steps for the chosen options — so the context
-// comes from the server, fresh, instead of being pasted into the chat.
-
 const config = require('./config');
 const issues = require('./issues');
 const gitRead = require('./git/read');
@@ -24,6 +19,8 @@ function validate(opts = {}) {
   const repos = list(opts.repos).filter((r) => Object.hasOwn(s.repos, r));
   const mode = opts.mode === 'plan' ? 'plan' : 'implement';
   const mrKinds = mode === 'plan' ? [] : list(opts.mrKinds ?? ['task-epic']).filter((k) => Object.hasOwn(MR_KINDS, k));
+  const writesWanted = opts.writes !== false && opts.writes !== 'false';
+  const writes = mode !== 'plan' && writesWanted && config.get().mcp.allowWrites;
   return {
     key,
     mode,
@@ -31,10 +28,10 @@ function validate(opts = {}) {
     mrKinds,
     draft: opts.draft === true || opts.draft === 'true',
     moveStatus: mode !== 'plan' && opts.moveStatus !== false && opts.moveStatus !== 'false',
+    writes,
   };
 }
 
-// What goes into the chat: the options as task_brief arguments, plus the user's notes.
 function shortPrompt(opts) {
   const o = validate(opts);
   const notes = String(opts.notes || '').slice(0, 4000).trim();
@@ -45,12 +42,9 @@ function shortPrompt(opts) {
   ].join('\n');
 }
 
-// The steps for the options (numbered, short). Write tools off → the same rules, done with git / glab by hand.
-// isEpic: the ticket IS the epic branch — no task branch of its own, so no "create a task branch" step and
-// no develop cherry-pick (that targets a task branch's -develop twin); only the epic → uat MR applies.
 function steps(o, isEpic = false) {
   const s = gitSettings();
-  const writes = config.get().mcp.allowWrites;
+  const writes = o.writes;
   const extra = config.get().agent.extraInstructions;
   const t = (withTool, byHand) => (writes ? withTool : byHand);
   const common = [
@@ -93,7 +87,6 @@ function steps(o, isEpic = false) {
 
 const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}\n… (truncated — get_issue has the full text)` : text);
 
-// task_brief: ticket + git state + steps, as compact Markdown.
 async function brief(opts) {
   const o = validate(opts);
   const s = gitSettings();
@@ -108,7 +101,6 @@ async function brief(opts) {
     '## Description',
     clip(htmlToText(d.descriptionHtml) || '(none)', DESC_MAX),
   ];
-  // A sub-task often says little itself: the parent's description carries the context.
   const own = htmlToText(d.descriptionHtml);
   if (i.parent && own.length < 300) {
     const p = await issues.issueDetail(i.parent.key).catch(() => null);
@@ -153,7 +145,11 @@ async function brief(opts) {
   }
 
   const isEpic = /epic/i.test(i.type?.name || '');
-  L.push('', `## Steps (${o.mode === 'plan' ? 'plan only' : `implement; MRs: ${o.mrKinds.join(', ') || 'none'}`})`, ...steps(o, isEpic).map((x, n) => `${n + 1}. ${x}`));
+  const header =
+    o.mode === 'plan'
+      ? 'plan only'
+      : `implement; MRs: ${o.mrKinds.join(', ') || 'none'}; writes: ${o.writes ? 'on (use the tools yourself)' : 'off (tell me the steps, do nothing by hand without asking)'}`;
+  L.push('', `## Steps (${header})`, ...steps(o, isEpic).map((x, n) => `${n + 1}. ${x}`));
   return L.join('\n');
 }
 

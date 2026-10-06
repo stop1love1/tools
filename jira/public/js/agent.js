@@ -1,10 +1,5 @@
 'use strict';
 
-// "Start with Claude": a dialog whose choices (repos, plan or implement, which MRs, draft, Jira status, notes) become
-// a short prompt for a Claude Code chat opened in Cursor (copied to the clipboard at the same time, as before):
-// "call task_brief with these options". The MCP tool returns the ticket, git state and steps (lib/prompt.js).
-// Without MCP the ticket itself is attached instead. Uses modal() from git/dialogs.js.
-
 const MR_KIND_LABELS = {
   'task-epic': () => `Task → epic (-${UAT()} branch → epic/…)`,
   'epic-uat': () => `Epic → ${UAT()}`,
@@ -13,8 +8,6 @@ const MR_KIND_LABELS = {
 const MODES = { implement: 'Implement & open MR', plan: 'Plan only' };
 
 function startWithClaude(issue) {
-  // An epic has no task branch of its own — it IS the epic branch, so the only MR that applies is epic → uat;
-  // task → epic and the develop cherry-pick (both about a task branch) don't make sense for it.
   const isEpic = /epic/i.test(issue.type?.name || '');
   const saved = LS.get('agentOpts', {});
   const box = (checked, extra = {}) => h('input', { type: 'checkbox', checked, ...extra });
@@ -31,12 +24,25 @@ function startWithClaude(issue) {
   const kindBoxes = kinds.map((k) => box(defaultKinds.includes(k), { value: k }));
   const draft = box(!!saved.draft);
   const moveStatus = box(saved.moveStatus ?? true);
+  const writes = box(saved.writes ?? true, { disabled: !CFG.agent?.writes });
+  const moveStatusLabel = h('span', null, 'Move Jira status');
   const notes = h('textarea', { class: 'gin', rows: '3', placeholder: 'Anything Claude should know: scope, approach, files, what to skip…' });
   const implementOnly = h(
     'div',
     { class: 'agent-implement' },
     h('div', { class: 'agent-field' }, h('b', null, 'Open MRs for'), h('div', { class: 'agent-checks' }, kinds.map((k, i) => h('label', null, kindBoxes[i], MR_KIND_LABELS[k]())))),
-    h('div', { class: 'agent-field' }, h('b', null, 'Options'), h('div', { class: 'agent-checks' }, h('label', null, draft, 'Draft MR'), h('label', null, moveStatus, 'Move Jira status (In Development → In Review)'))),
+    h(
+      'div',
+      { class: 'agent-field' },
+      h('b', null, 'Options'),
+      h(
+        'div',
+        { class: 'agent-checks' },
+        h('label', null, draft, 'Draft MR'),
+        h('label', null, moveStatus, moveStatusLabel),
+        h('label', { title: CFG.agent?.writes ? '' : 'Write tools are off in Settings → MCP' }, writes, 'Let Claude use the write tools itself (branch, commit, push, MR)'),
+      ),
+    ),
   );
   const setMode = (m) => {
     mode = m;
@@ -44,6 +50,42 @@ function startWithClaude(issue) {
     implementOnly.hidden = m === 'plan';
   };
   setMode(mode);
+
+  let transitions = [];
+  const findTransition = (patterns) => {
+    for (const re of patterns) {
+      const t = transitions.find((t) => re.test(t.to?.name || ''));
+      if (t) return t;
+    }
+    return null;
+  };
+  const refreshMoveStatusLabel = () => {
+    if (!transitions.length) {
+      moveStatusLabel.textContent = CFG.agent?.mcp ? 'Move Jira status (left to Claude: list_transitions)' : 'Move Jira status';
+      return;
+    }
+    const inProgress = findTransition([/in progress/i, /in development/i, /doing/i]);
+    const inReview = findTransition([/in review/i, /code review/i, /review/i]);
+    const wantsReview = mode !== 'plan' && kindBoxes.some((b) => b.checked);
+    const target = wantsReview ? inReview : inProgress;
+    if (target) {
+      moveStatusLabel.textContent = `Move Jira status (${issue.status?.name || 'current'} → ${target.to.name})`;
+    } else {
+      moveStatusLabel.textContent = 'Move Jira status (no matching transition found — Claude will ask / pick manually)';
+      moveStatus.checked = false;
+      moveStatus.disabled = true;
+    }
+  };
+  api(`/api/issues/${issue.key}/transitions`)
+    .then(({ transitions: t }) => {
+      transitions = t || [];
+      refreshMoveStatusLabel();
+    })
+    .catch(() => {
+      moveStatusLabel.textContent = 'Move Jira status (could not load workflow transitions)';
+    });
+  for (const b of kindBoxes) b.addEventListener('change', refreshMoveStatusLabel);
+  for (const b of tabs.children) b.addEventListener('click', () => refreshMoveStatusLabel());
 
   const start = async () => {
     const options = {
@@ -53,14 +95,14 @@ function startWithClaude(issue) {
       mrKinds: kindBoxes.filter((b) => b.checked).map((b) => b.value),
       draft: draft.checked,
       moveStatus: moveStatus.checked,
+      writes: writes.checked,
       notes: notes.value.trim(),
     };
     if (!options.repos.length) return toast('Pick at least one repo', 'error');
-    LS.set('agentOpts', { mode, mrKinds: options.mrKinds, draft: options.draft, moveStatus: options.moveStatus });
+    LS.set('agentOpts', { mode, mrKinds: options.mrKinds, draft: options.draft, moveStatus: options.moveStatus, writes: options.writes });
     startBtn.disabled = true;
     try {
       const { prompt } = await api('/api/claude/prompt', { method: 'POST', body: JSON.stringify(options) });
-      // With MCP on, Claude loads the ticket itself (task_brief); otherwise it gets the ticket in the prompt.
       const detail = CFG.agent?.mcp ? null : await getDetail(issue.key).catch(() => null);
       dlg.close();
       sendToClaude(issue, detail, detail ? `${prompt}\n\n---\nThe jira-dashboard MCP is off; the ticket:\n\n${issueMarkdown(issue, detail)}`.slice(0, 11_500) : prompt);
@@ -71,7 +113,6 @@ function startWithClaude(issue) {
   };
 
   const settingsLink = (label) => h('button', { class: 'link-btn', onClick: () => (dlg.close(), setView('settings')) }, label);
-  // The MCP state decides what Claude can do by itself.
   const mcpNote = !CFG.agent?.mcp
     ? h('div', { class: 'gconflict ghint' }, 'MCP is off: the ticket is pasted into the prompt instead of loaded by Claude. ', settingsLink('Turn it on'))
     : !CFG.agent?.writes &&
