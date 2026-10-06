@@ -3,7 +3,7 @@
 .agent-start {
   display: grid;
   gap: 14px;
-  width: min(620px, 92vw);
+  width: min(920px, 92vw);
 }
 
 .agent-issue {

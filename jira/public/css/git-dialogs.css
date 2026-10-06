@@ -11,7 +11,7 @@
   padding: 16px;
 }
 .gmodal-box {
-  width: min(760px, 100%);
+  width: min(960px, 100%);
   max-height: calc(100vh - 32px);
   display: flex;
   flex-direction: column;

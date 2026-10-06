@@ -8,5 +8,8 @@
   },
   "scripts": {
     "start": "node server.js"
+  },
+  "devDependencies": {
+    "livereload": "0.10.3"
   }
 }

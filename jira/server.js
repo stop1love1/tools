@@ -36,7 +36,31 @@ const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 
+// --- Dev-only live reload (chokidar-based watcher + injected client script), see livereload npm package. ---
+const DEV = process.env.NODE_ENV !== 'production';
+
+function startLiveReloadServer() {
+  let LiveReloadServer;
+  try {
+    LiveReloadServer = require('livereload');
+  } catch {
+    console.warn('Live reload disabled: run `npm install` to get the `livereload` dev dependency.');
+    return;
+  }
+  const lr = LiveReloadServer.createServer({ exts: ['html', 'js', 'css'], delay: 100 });
+  lr.watch(PUBLIC);
+  console.log('Live reload: watching public/ for changes (livereload server on its own port)');
+}
+
+// The livereload npm package only runs the watcher + websocket server; it doesn't serve its own
+// client script when we do our own static serving, so wire that one file up ourselves.
+const LIVERELOAD_CLIENT = path.join(__dirname, 'node_modules', 'livereload-js', 'dist', 'livereload.js');
+
 function serveStatic(url, req, res) {
+  if (DEV && req.method === 'GET' && url.pathname === '/js/livereload.js' && fs.existsSync(LIVERELOAD_CLIENT)) {
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
+    return fs.createReadStream(LIVERELOAD_CLIENT).pipe(res);
+  }
   const rel = url.pathname === '/' ? 'tasks.html' : url.pathname.slice(1);
   const file = path.join(PUBLIC, rel);
   const type = TYPES[path.extname(file)];
@@ -151,6 +175,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const how = auth.hasOwnSession() ? 'own session, auto-refresh' : 'Claude Code token';
   console.log(`Jira dashboard: http://localhost:${PORT}  (${config.get().jira.siteUrl}, via MCP — ${how})`);
+  if (DEV) startLiveReloadServer();
 });
 
 auth.keepWarm();
