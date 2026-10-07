@@ -3,13 +3,16 @@
 // Task list pieces: filters, urgent block, status pills, and the list grouped by epic / parent.
 // The page render() lives in app-tasks.js.
 
+// Counts here must ignore state.type itself (it's the option list for that filter) but still
+// respect the sprint filter, so "All types (N)" matches the sprint currently selected.
 function renderTypes() {
+  const bySprint = state.issues.filter((i) => !state.sprint || (i.sprint && i.sprint.id === Number(state.sprint)));
   const counts = new Map();
-  for (const i of state.issues) counts.set(i.type.name, (counts.get(i.type.name) || 0) + 1);
+  for (const i of bySprint) counts.set(i.type.name, (counts.get(i.type.name) || 0) + 1);
   if (state.type !== 'all' && !counts.has(state.type)) state.type = 'all';
   const select = $('#type-filter');
   select.replaceChildren(
-    h('option', { value: 'all' }, `All types (${state.issues.length})`),
+    h('option', { value: 'all' }, `All types (${bySprint.length})`),
     ...[...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => h('option', { value: name }, `${name} (${n})`)),
   );
   select.value = state.type;
@@ -49,8 +52,9 @@ function renderSprints() {
 
 function renderFocus() {
   const el = $('#focus');
-  if (state.error || !state.fetchedAt || !state.issues.length) return el.replaceChildren();
-  const urgent = state.issues.filter(isUrgent).sort(byUrgency);
+  const base = scopedBySprint();
+  if (state.error || !state.fetchedAt || !base.length) return el.replaceChildren();
+  const urgent = base.filter(isUrgent).sort(byUrgency);
   if (!urgent.length) return el.replaceChildren();
   const row = (i) => {
     const u = urgency(i);
@@ -98,7 +102,7 @@ function renderFocus() {
 }
 
 function renderStats() {
-  const all = state.issues;
+  const all = scopedBySprint();
   if (!all.length) return $('#stats').replaceChildren();
   const pill = (label, value, toneName, pressed, onClick) =>
     h(

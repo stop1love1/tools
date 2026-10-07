@@ -15,13 +15,14 @@ function scoped() {
   );
 }
 
+// scoped() plus the sprint filter — the base for anything that should total "the selected sprint" rather
+// than every issue (status pills, urgent block, progress strip); filtered() adds status/urgency on top.
+function scopedBySprint() {
+  return scoped().filter((i) => !state.sprint || (i.sprint && i.sprint.id === Number(state.sprint)));
+}
+
 function filtered() {
-  return scoped().filter(
-    (i) => 
-      (!state.status || i.status.name === state.status) && 
-      (!state.urgentOnly || isUrgent(i)) &&
-      (!state.sprint || (i.sprint && i.sprint.id === Number(state.sprint)))
-  );
+  return scopedBySprint().filter((i) => (!state.status || i.status.name === state.status) && (!state.urgentOnly || isUrgent(i)));
 }
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ const isCancelled = (i) => i.status.category === 'done' && /cancel|hủy|huỷ|r
 // One thin bar under the status pills: a segment per status (click = filter by it), then done / story point totals.
 function renderProgress() {
   const el = $('#progress-strip');
-  const base = scoped();
+  const base = scopedBySprint();
   if (state.error || !state.fetchedAt || !base.length) return el.replaceChildren();
   const sumSP = (list) => list.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
   const cancelled = base.filter(isCancelled);

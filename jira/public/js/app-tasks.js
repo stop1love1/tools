@@ -180,7 +180,6 @@ async function initPage() {
   });
   $('#sprint-filter').addEventListener('change', (e) => {
     state.sprint = e.target.value ? Number(e.target.value) : null;
-    LS.set('sprint', state.sprint);
     syncUrl();
     render();
   });

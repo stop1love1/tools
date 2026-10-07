@@ -39,7 +39,8 @@ const state = {
   q: initParams.get('q') || '',
   type: initParams.get('type') || 'all',
   status: initParams.get('status') || null,
-  sprint: initParams.has('sprint') ? (initParams.get('sprint') ? Number(initParams.get('sprint')) : null) : LS.get('sprint', null),
+  // URL-only (like type/status): a sprint ends, so there's no reason to carry last session's choice forward.
+  sprint: initParams.get('sprint') ? Number(initParams.get('sprint')) : null,
   urgentOnly: initParams.get('urgent') === '1',
   loading: false,
   error: null,

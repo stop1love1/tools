@@ -121,7 +121,8 @@
 .pill.hot b {
   color: var(--danger);
 }
-#type-filter {
+#type-filter,
+#sprint-filter {
   height: 28px;
   font-size: 13px;
   flex: 0 0 auto;
