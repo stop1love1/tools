@@ -274,4 +274,21 @@ async function resolveEpic(key) {
 
 const ticketSummary = (key) => summaryCache.get(key);
 
-module.exports = { listIssues, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary };
+// Sprint of a set of tickets by key, regardless of the default JQL (closed/old tickets a branch
+// still names are often outside it). Used by the workspace branch cleanup's sprint filter.
+async function sprintsOf(keys) {
+  const out = new Map();
+  const todo = [...new Set(keys)].filter(Boolean);
+  for (let n = 0; n < todo.length; n += 50) {
+    const chunk = todo.slice(n, n + 50);
+    try {
+      const issues = await searchAll(`key in (${chunk.join(',')})`, [config.get().jira.sprintField]);
+      for (const i of issues) out.set(i.key, sprintOf(i.fields));
+    } catch {
+      // A key no longer visible (deleted/no access): just leave it without a sprint.
+    }
+  }
+  return out;
+}
+
+module.exports = { listIssues, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary, sprintsOf };

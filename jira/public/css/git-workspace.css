@@ -79,6 +79,58 @@
   align-items: center;
   gap: 8px;
 }
+.gsprint {
+  min-width: 220px;
+  max-width: 360px;
+  font: inherit;
+  text-transform: none;
+}
+/* Branch cleanup: summary line, freshness note and one row per branch with a status accent. */
+.gsummary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.gfresh {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.gbrow {
+  padding: 3px 0 3px 8px;
+  border-left: 3px solid transparent;
+}
+.gbrow.ready {
+  border-left-color: var(--done-fg);
+}
+.gbrow.held {
+  border-left-color: var(--accent);
+}
+.gbrow.open {
+  border-left-color: var(--warn);
+}
+.gbrow.open .gbname {
+  opacity: 0.75;
+}
+.gbrow-name {
+  min-width: 0;
+}
+.gbrow-note {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gbrow-note .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .gtable {
   background: var(--surface);
   border: 1px solid var(--border);

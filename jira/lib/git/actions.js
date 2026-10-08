@@ -14,7 +14,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { BACKUP_NS, git, hookEnv, counts, worktrees, operation, wtState, backupsOf, stamp, stampTime } = require('./exec');
+const { BACKUP_NS, git, hookEnv, counts, refs, worktrees, operation, wtState, backupsOf, stamp, stampTime } = require('./exec');
 const { ticketIds } = require('./read');
 const { resolveEpic } = require('../issues');
 const { httpError, tilde } = require('../util');
@@ -513,10 +513,17 @@ const ACTIONS = {
     if (!Array.isArray(names) || !names.length) throw httpError(400, 'No branch selected.');
     const cwd = ctx.s.repos[repo];
     const wts = await worktrees(cwd);
+    // Only branches already in origin/<uat> may go (plus backup/* and branches whose origin copy is gone).
+    const merged = new Set((await git(cwd, ['branch', '--format=%(refname:short)', '--merged', `origin/${ctx.s.uat}`])).stdout.split('\n').filter(Boolean));
+    const { local } = await refs(cwd);
     for (const raw of names) {
       const branch = anyBranch(raw);
       if (ctx.s.isProtected(branch)) {
         ctx.log(`Skipping ${branch} (main branch).`);
+        continue;
+      }
+      if (!merged.has(branch) && !branch.startsWith('backup/') && !local.get(branch)?.gone) {
+        ctx.log(`Skipping ${branch} (not merged into ${ctx.s.uat}).`);
         continue;
       }
       const wt = wts.find((w) => w.branch === branch);

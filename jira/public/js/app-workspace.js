@@ -24,7 +24,10 @@ function render() {
   if ($('#main').firstChild !== el) $('#main').replaceChildren(el);
 }
 
-window.onShortcutR = () => loadGit();
+window.onShortcutR = () => {
+  loadIssues({ silent: true }).then(render);
+  return loadGit();
+};
 window.onShortcutExtra = () => {};
 
 async function initPage() {
@@ -32,6 +35,8 @@ async function initPage() {
   // (renderGitView loads when there's no overview yet) and leave nothing to wait on.
   const firstLoad = loadGit();
   render(); // doesn't wait for Jira issues
+  // Jira issues only supply ticket → sprint for the branch cleanup filter; shown from the tab cache meanwhile.
+  loadIssues({ silent: true }).then(render);
   return firstLoad;
 }
 window.initPage = initPage;

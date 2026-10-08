@@ -33,6 +33,7 @@ const gitState = {
   epicTitles: new Map(), // epic key → { ticket: summary }
   jiraMrs: new Map(), // ticket → MR links recorded on Jira (shown when GitLab can't be reached)
   cleanupAll: false,
+  branchSprints: {}, // ticket key → sprint (or null), looked up by key so closed tickets outside the default JQL still map
 };
 
 // ---------------------------------------------------------------------------
@@ -157,6 +158,7 @@ async function loadGit() {
     gitState.jobs = jobs.jobs;
     gitState.branches = Object.fromEntries(branches.map((b) => [b.repo, b]));
     gitState.error = null;
+    loadBranchSprints();
   } catch (e) {
     gitState.error = e.message;
   } finally {
@@ -164,6 +166,19 @@ async function loadGit() {
     if (state.view === 'git') render();
   }
   for (const r of gitRepos()) getMrs(r).then(() => state.view === 'git' && render());
+}
+
+// Sprint of every ticket the local branches name; fills in behind the first render.
+async function loadBranchSprints() {
+  const keys = [...new Set(Object.values(gitState.branches).flatMap((d) => d.branches.flatMap((b) => b.tickets)))];
+  if (!keys.length) return;
+  try {
+    const q = new URLSearchParams(keys.map((k) => ['key', k]));
+    gitState.branchSprints = (await api(`/api/git/branch-sprints?${q}`)).sprints;
+    if (state.view === 'git') render();
+  } catch {
+    // Jira unreachable: the sprint filter falls back to the issues already loaded.
+  }
 }
 
 // After a job: drop cached flows and redraw whatever shows git state.

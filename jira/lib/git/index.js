@@ -8,6 +8,7 @@ const { mrs, clearMrs } = require('./mrs');
 const { startJob, getJob, listJobs } = require('./jobs');
 const { ACTIONS, TITLES, KEY_RE, knownDir } = require('./actions');
 const { openFolder } = require('../editor');
+const { sprintsOf } = require('../issues');
 const config = require('../config');
 const { httpError, readJson } = require('../util');
 
@@ -42,6 +43,11 @@ async function handle(req, url) {
     return epicView(k);
   }
   if (req.method === 'GET' && p === '/mrs') return mrs(repoParam(url.searchParams.get('repo')), url.searchParams.has('fresh'));
+  if (req.method === 'GET' && p === '/branch-sprints') {
+    const keys = url.searchParams.getAll('key');
+    if (keys.length > 300 || !keys.every((k) => KEY_RE.test(k))) throw httpError(400, 'Invalid issue keys');
+    return { sprints: Object.fromEntries(await sprintsOf(keys)) };
+  }
   if (req.method === 'GET' && p === '/jobs') return { jobs: listJobs() };
   const jm = p.match(/^\/jobs\/([0-9a-f-]{36})$/);
   if (req.method === 'GET' && jm) {
