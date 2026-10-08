@@ -46,8 +46,8 @@
     margin-left: 0;
     gap: 6px;
   }
-  #preset,
-  #user-filter {
+  #user-filter,
+  #sprint-filter {
     flex: 1 1 140px;
     max-width: none;
   }
@@ -79,7 +79,7 @@
     flex-basis: 100%;
   }
   #type-filter,
-  #sprint-filter {
+  #preset {
     font-size: 12.5px;
   }
   .notif-panel {

@@ -54,11 +54,11 @@
 .bar-actions {
   margin-left: auto;
 }
-#preset {
-  max-width: 190px;
-}
 #user-filter {
   max-width: 200px;
+}
+#sprint-filter {
+  max-width: 170px;
 }
 .jql-row {
   display: flex;
@@ -122,10 +122,13 @@
   color: var(--danger);
 }
 #type-filter,
-#sprint-filter {
+#preset {
   height: 28px;
   font-size: 13px;
   flex: 0 0 auto;
+}
+#preset {
+  max-width: 190px;
 }
 .bar-meta {
   margin-left: auto;

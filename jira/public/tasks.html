@@ -39,8 +39,8 @@
         <input id="search" type="search" placeholder="Search key, title, parent… ( / )" aria-label="Search" />
         <div class="bar-actions">
           <select id="user-filter" aria-label="View tasks of" title="View tasks of"><option value="">Mine</option></select>
+          <select id="sprint-filter" aria-label="Filter by sprint" hidden></select>
           <button class="icon-btn outline" id="recent-btn" title="Recently viewed" aria-label="Recently viewed"></button>
-          <select id="preset" aria-label="Saved filter"></select>
           <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Edit JQL" aria-label="Edit JQL"></button>
           <div class="seg icons labeled" id="views" role="tablist">
             <a data-view="list" href="/tasks.html" role="tab" title="Task list" aria-label="Task list"></a>
@@ -87,8 +87,8 @@
 
     <section class="subbar">
       <div class="pills" id="stats" aria-label="Filter by status"></div>
-      <select id="sprint-filter" aria-label="Filter by sprint" hidden></select>
       <select id="type-filter" aria-label="Filter by type"></select>
+      <select id="preset" aria-label="Saved filter"></select>
       <div class="progress-strip" id="progress-strip" aria-label="Progress"></div>
     </section>
 
