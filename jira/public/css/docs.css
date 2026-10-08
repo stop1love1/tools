@@ -2,16 +2,22 @@
 
 /* ---------- docs ---------- */
 
+/* Kind pills + sort; the search box is in the header (#search). */
 .docs-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
+  flex-wrap: wrap; /* phone: .pills takes its own row (responsive.css) */
 }
-.docs-search {
-  flex: 1 1 260px;
-  max-width: 420px;
+.docs-toolbar .pill svg {
+  width: 14px;
+  height: 14px;
+}
+.docs-sort {
+  height: 28px;
+  font-size: 13px;
+  flex: 0 0 auto;
 }
 
 .section-title {

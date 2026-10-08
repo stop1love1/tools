@@ -24,14 +24,18 @@ function statusDto(s) {
   return s ? { id: s.id, name: s.name, category: s.statusCategory?.key || 'indeterminate' } : null;
 }
 
+// An issue's sprint: the active one if it was carried over several, else the latest.
+function sprintOf(f) {
+  const sprintValue = f.sprint || f[config.get().jira.sprintField];
+  const sprints = Array.isArray(sprintValue) ? sprintValue : sprintValue ? [sprintValue] : [];
+  const s = sprints.find((x) => x && x.state === 'active') || sprints[sprints.length - 1] || null;
+  return s ? { id: s.id, name: s.name, state: s.state } : null;
+}
+
 function issueDto(issue, docs) {
   const f = issue.fields;
-  const { sprintField, storyPointsField } = config.get().jira;
+  const { storyPointsField } = config.get().jira;
   const site = base();
-
-  const sprintValue = f.sprint || f[sprintField];
-  const sprints = Array.isArray(sprintValue) ? sprintValue : sprintValue ? [sprintValue] : [];
-  const activeSprint = sprints.find((s) => s && s.state === 'active') || sprints[sprints.length - 1] || null;
 
   return {
     key: issue.key,
@@ -45,7 +49,7 @@ function issueDto(issue, docs) {
     updated: f.updated,
     due: f.duedate || null,
     labels: f.labels || [],
-    sprint: activeSprint ? { id: activeSprint.id, name: activeSprint.name, state: activeSprint.state } : null,
+    sprint: sprintOf(f),
     storyPoints: f[storyPointsField] || null,
     parent: f.parent
       ? {
@@ -106,12 +110,38 @@ async function listIssues(jql) {
   const allLinks = [...ownLinks.values(), ...parentLinks.values()].flat();
   await resolvePages(allLinks.map((l) => l.pageId));
 
+  const childSprints = await childSprintsOf(issues);
+
   return issues.map((issue) => {
     const pk = issue.fields.parent?.key;
     const dto = issueDto(issue, mergeDocs(issue.key, ownLinks.get(issue.key), pk, (pk && parentLinks.get(pk)) || []));
     dto.epic = epicOf(issue, parentFields);
+    if (childSprints.has(issue.key)) dto.childSprints = childSprints.get(issue.key);
     return dto;
   });
+}
+
+// Epics are never put in a sprint on Jira, so the sprint filter would always drop them. Look up the
+// sprints of their children (anyone's, not just the listed ones): epic key → [sprint], one search per 50 epics.
+async function childSprintsOf(issues) {
+  const epics = issues.filter((i) => /epic/i.test(i.fields.issuetype?.name || '') && !sprintOf(i.fields)).map((i) => i.key);
+  const out = new Map();
+  for (let n = 0; n < epics.length; n += 50) {
+    const keys = epics.slice(n, n + 50);
+    try {
+      const children = await searchAll(`parent in (${keys.join(',')}) AND sprint is not EMPTY`, ['parent', config.get().jira.sprintField]);
+      for (const c of children) {
+        const s = sprintOf(c.fields);
+        const pk = c.fields.parent?.key;
+        if (!s || !pk) continue;
+        if (!out.has(pk)) out.set(pk, []);
+        if (!out.get(pk).some((x) => x.id === s.id)) out.get(pk).push(s);
+      }
+    } catch {
+      // Children not searchable: those epics just keep no sprint.
+    }
+  }
+  return out;
 }
 
 // The Epic above an issue: its parent (Task/Story → Epic) or its grandparent (Sub-task → Story → Epic).

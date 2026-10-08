@@ -44,6 +44,68 @@
   flex: 1 1 260px;
   max-width: 420px;
 }
+/* workspace.html: repo status pills (renderRepoPills) */
+.bar-repos {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bar-repos[hidden] {
+  display: none;
+}
+.repo-pills {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.repo-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.repo-pill:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.repo-pill b {
+  font-size: 13px;
+}
+.repo-pill-branch {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
+}
+.gcard.flash {
+  animation: gcard-flash 1s ease;
+}
+@keyframes gcard-flash {
+  from {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  to {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gcard.flash {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+}
+
 .bar-actions,
 .bar-icons {
   display: flex;
@@ -58,7 +120,8 @@
   max-width: 200px;
 }
 #sprint-filter {
-  max-width: 170px;
+  min-width: 190px;
+  max-width: 240px;
 }
 .jql-row {
   display: flex;

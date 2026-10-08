@@ -51,23 +51,28 @@ function renderDocs(list) {
   const issueChip = (i) =>
     h('button', { class: 'issue-chip', title: i.summary, onClick: () => openIssueChip(i.key) }, h('span', { class: `dot tone-${tone(i.status)}` }), i.key);
 
-  const kindOption = (val, label) =>
+  // Kind filter as pills with match counts, like the status pills on tasks.html.
+  const kindPill = (val, label, count, iconName) =>
     h(
       'button',
       {
-        'aria-selected': String(state.docsKind === val),
+        class: 'pill',
+        'aria-pressed': String(state.docsKind === val),
         onClick: () => {
           state.docsKind = val;
           syncUrl();
           render();
         },
       },
+      iconName && icon(iconName),
       label,
+      h('b', null, count),
     );
 
   const sortSelect = h(
     'select',
     {
+      class: 'docs-sort',
       'aria-label': 'Sort by',
       onChange: (e) => {
         state.docsSort = e.target.value;
@@ -85,30 +90,18 @@ function renderDocs(list) {
   const toolbar = h(
     'div',
     { class: 'docs-toolbar' },
-    h('input', {
-      type: 'search',
-      class: 'docs-search',
-      placeholder: 'Search pages, files, task key…',
-      'aria-label': 'Search docs',
-      value: state.docsQ,
-      onInput: (e) => {
-        state.docsQ = e.target.value;
-        syncUrl();
-        render();
-      },
-    }),
     h(
       'div',
-      { class: 'seg', role: 'group', 'aria-label': 'Filter by kind' },
-      kindOption('all', 'All'),
-      kindOption('pages', 'Confluence'),
-      kindOption('attachments', 'Attachments'),
+      { class: 'pills', role: 'group', 'aria-label': 'Filter by kind' },
+      kindPill('all', 'All', matchedPages.length + matchedAttachments.length),
+      kindPill('pages', 'Confluence', matchedPages.length, 'doc'),
+      kindPill('attachments', 'Attachments', matchedAttachments.length, 'clip'),
     ),
     sortSelect,
     h(
       'button',
       {
-        class: 'icon-btn outline',
+        class: 'icon-btn sm outline',
         title: state.docsOrder === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending',
         'aria-label': 'Toggle sort order',
         onClick: () => {

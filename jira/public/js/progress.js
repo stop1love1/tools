@@ -18,8 +18,12 @@ function scoped() {
 // scoped() plus the sprint filter — the base for anything that should total "the selected sprint" rather
 // than every issue (status pills, urgent block, progress strip); filtered() adds status/urgency on top.
 function scopedBySprint() {
-  return scoped().filter((i) => !state.sprint || (i.sprint && i.sprint.id === Number(state.sprint)));
+  return scoped().filter((i) => inSprint(i, state.sprint));
 }
+
+// An issue's own sprint plus, for an Epic (never in a sprint itself), the sprints its children are in.
+const sprintsOf = (i) => [i.sprint, ...(i.childSprints || [])].filter(Boolean);
+const inSprint = (i, id) => !id || sprintsOf(i).some((s) => s.id === Number(id));
 
 function filtered() {
   return scopedBySprint().filter((i) => (!state.status || i.status.name === state.status) && (!state.urgentOnly || isUrgent(i)));

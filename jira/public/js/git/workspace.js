@@ -5,14 +5,53 @@
 // ---------------------------------------------------------------------------
 // "Git" view
 
+// Header strip on workspace.html: one pill per repo (branch + state) that jumps to its card,
+// plus "Fetch all". Kept in the sticky header so repo state stays in view while scrolling.
+function renderRepoPills() {
+  const box = $('#bar-repos');
+  if (!box) return;
+  const ov = gitState.overview;
+  box.hidden = state.view === 'settings';
+  box.title = ov ? ov.root : '';
+  const label = (id) => CFG.git.repos.find((r) => r.id === id)?.label || id;
+  const jump = (id) => {
+    const card = document.getElementById(`gcard-${id}`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.remove('flash');
+    void card.offsetWidth; // restart the animation on repeated clicks
+    card.classList.add('flash');
+  };
+  const pill = (id) => {
+    const r = ov?.repos[id];
+    const m = r?.main;
+    const kids = !r
+      ? [gitChip('…')]
+      : r.error
+        ? [gitChip('error', 'warn', r.error)]
+        : [
+            h('span', { class: 'repo-pill-branch mono' }, m.branch || 'detached'),
+            m.op ? gitChip(m.op, 'warn') : m.files.length ? gitChip(`${m.files.length} changed`, 'warn') : gitChip('clean', 'ok'),
+            m.ahead > 0 && gitChip(`↑${m.ahead}`, 'warn'),
+            m.behind > 0 && gitChip(`↓${m.behind}`, 'warn'),
+          ];
+    return h('button', { class: 'repo-pill', title: r && !r.error ? `${label(id)}: ${m.branch || 'detached'}` : label(id), onClick: () => jump(id) }, h('b', null, label(id)), kids);
+  };
+  const fetchAll = async () => {
+    for (const repo of gitRepos()) await gitAction({ action: 'fetch', repo });
+  };
+  box.replaceChildren(
+    h('div', { class: 'repo-pills' }, gitRepos().map(pill)),
+    h('button', { class: 'btn sm', title: 'Fetch all repos from origin', onClick: fetchAll }, icon('download'), h('span', { class: 'lbl' }, 'Fetch all')),
+  );
+}
+
 function renderGitView() {
   if (!gitState.overview && !gitState.loading && !gitState.error) loadGit();
   const ov = gitState.overview;
   const head = h(
     'div',
     { class: 'git-head' },
-    h('h2', { class: 'section-title' }, icon('branch'), 'Workspace', ov && h('span', { class: 'muted small' }, ov.root)),
-    h('span', { class: 'spacer' }),
     gitRepos().some((r) => gitState.mrData[r]?.error) &&
       h('span', { class: 'small warn-text', title: gitRepos().map((r) => `${r}: ${gitState.mrData[r]?.error || 'ok'}`).join('\n') }, 'MR status unavailable (VPN?)'),
     h('span', { class: 'muted small' }, 'Open a task (click its key) for its step-by-step flow.'),
@@ -32,13 +71,13 @@ function renderGitView() {
 }
 
 function repoCard(r) {
-  if (r.error) return h('div', { class: 'gcard' }, h('h3', null, r.repo), h('div', { class: 'error-box' }, r.error));
+  if (r.error) return h('div', { class: 'gcard', id: `gcard-${r.repo}` }, h('h3', null, r.repo), h('div', { class: 'error-box' }, r.error));
   const m = r.main;
   const changed = m.files.length;
   const task = CFG.git.branchTypes.some((t) => (m.branch || '').startsWith(t + '/'));
   return h(
     'div',
-    { class: 'gcard' },
+    { class: 'gcard', id: `gcard-${r.repo}` },
     h('div', { class: 'gcard-head' }, h('h3', null, r.repo), m.branch ? code(m.branch) : gitChip('detached', 'warn'), h('span', { class: 'spacer' }), h('a', { class: 'icon-btn sm', href: r.web, target: '_blank', rel: 'noopener', title: 'Open on GitLab' }, icon('ext'))),
     h(
       'div',

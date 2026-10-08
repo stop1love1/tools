@@ -34,6 +34,26 @@
     flex: 1 1 auto;
     min-width: 140px;
   }
+  /* shares the first row with the icons; the pills scroll sideways */
+  .bar-repos {
+    order: 2;
+    flex: 1 1 0;
+    gap: 6px;
+  }
+  .repo-pills {
+    padding-right: 16px;
+    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  }
+  .bar-repos .lbl {
+    display: none;
+  }
+  .repo-pill {
+    height: 28px;
+    padding: 0 8px;
+  }
+  .repo-pill-branch {
+    max-width: 110px;
+  }
   .bar-icons {
     order: 3;
     margin-left: 0;

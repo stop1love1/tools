@@ -5,6 +5,7 @@
 // window.PAGE = 'docs' is set inline in docs.html before this script loads.
 
 var PAGE_SHORTCUTS = [
+  ['/', 'Focus search box'],
   ['r', 'Refresh data'],
 ];
 window.PAGE_SHORTCUTS = PAGE_SHORTCUTS;
@@ -50,9 +51,21 @@ function render() {
 }
 
 window.onShortcutR = (opts) => load(opts);
-window.onShortcutExtra = () => {};
+window.onShortcutExtra = (e, typing) => {
+  if (!typing && e.key === '/') {
+    e.preventDefault();
+    $('#search').focus();
+  }
+};
 
 async function initPage() {
+  // The search box lives in the header (same slot as on tasks.html), outside render().
+  $('#search').value = state.docsQ;
+  $('#search').addEventListener('input', (e) => {
+    state.docsQ = e.target.value;
+    render();
+  });
+
   // Issues cached by the previous page (state.js): show them now and refresh behind them.
   const cached = !!state.fetchedAt;
   if (cached || state.view === 'settings') render();

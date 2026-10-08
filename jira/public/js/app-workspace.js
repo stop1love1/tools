@@ -19,6 +19,7 @@ function render() {
   renderMeta();
   $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
   syncUrl();
+  renderRepoPills();
   const el = state.view === 'settings' ? renderSettingsView() : renderGitView();
   if ($('#main').firstChild !== el) $('#main').replaceChildren(el);
 }

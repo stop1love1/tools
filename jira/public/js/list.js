@@ -6,7 +6,7 @@
 // Counts here must ignore state.type itself (it's the option list for that filter) but still
 // respect the sprint filter, so "All types (N)" matches the sprint currently selected.
 function renderTypes() {
-  const bySprint = state.issues.filter((i) => !state.sprint || (i.sprint && i.sprint.id === Number(state.sprint)));
+  const bySprint = state.issues.filter((i) => inSprint(i, state.sprint));
   const counts = new Map();
   for (const i of bySprint) counts.set(i.type.name, (counts.get(i.type.name) || 0) + 1);
   if (state.type !== 'all' && !counts.has(state.type)) state.type = 'all';
@@ -22,8 +22,12 @@ function renderTypes() {
 
 function renderSprints() {
   const sprints = new Map();
+  const counts = new Map();
   for (const i of state.issues) {
-    if (i.sprint) sprints.set(i.sprint.id, i.sprint);
+    for (const sp of sprintsOf(i)) {
+      sprints.set(sp.id, sp);
+      counts.set(sp.id, (counts.get(sp.id) || 0) + 1);
+    }
   }
   const select = $('#sprint-filter');
   if (sprints.size === 0) {
@@ -35,10 +39,6 @@ function renderSprints() {
     if (a.state !== 'active' && b.state === 'active') return 1;
     return b.name.localeCompare(a.name);
   });
-  const counts = new Map();
-  for (const i of state.issues) {
-    if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
-  }
   select.replaceChildren(
     h('option', { value: '' }, 'All sprints'),
     ...sorted.map((s) => 
