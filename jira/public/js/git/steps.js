@@ -114,16 +114,22 @@ function stageModel(issue, f, r, M) {
     return { ...cell, detail: d };
   }
 
+  // Epic panel: the task reaches the epic by cherry-pick (pick-epic action), not by an MR task → epic.
+  // Shows: whether the task's commits are on the epic (git cherry check), conflicts, and the pick button.
   function epicCell() {
     const d = panel('into the epic', uat ? `${uat.name} → ${epic.name}` : epic.name);
     if (!uat) return { state: 'na', text: '—', sub: 'after a branch', detail: { ...d, note: 'Start a task branch first.' } };
-    const m = taskMr;
+    const m = taskMr; // legacy MR task → epic, if one exists
     const c = epicConflict;
-    d.steps.push(...mrSteps(uat.name, epic.name, 'epic'));
+    const notInEpic = commits.filter((c) => !c.inEpic);
+    const allIn = commits.length > 0 && notInEpic.length === 0;
+    
+    if (allIn) d.steps.push({ state: 'done', text: `All ${commits.length} commit(s) are on the epic` });
+    else if (notInEpic.length) d.steps.push({ state: 'wait', text: `${notInEpic.length} commit(s) not on the epic yet` });
     if (c) d.steps.push({ state: 'warn', text: 'Conflicts with the epic', chips: [conflictChip(c, 'epic')] });
-    if (!inEpic && uat.behindEpic > 0) d.steps.push({ state: 'todo', text: `${uat.behindEpic} new commit(s) on the epic since the branch` });
-    if (!inEpic) d.steps.push({ state: 'na', text: 'The reviewer merges with “Create merge commit” (one merge commit per task) — never merge locally into the epic' });
+    if (!allIn && uat.behindEpic > 0) d.steps.push({ state: 'todo', text: `${uat.behindEpic} new commit(s) on the epic since the branch` });
     if (!M?.byBranch) d.more.push(listAct(uat.name));
+    d.more.push(undoAct(repo, uat));
 
     if (c) {
       d.primary = rebaseTaskAct(repo, f.epic, uat);
@@ -131,41 +137,25 @@ function stageModel(issue, f, r, M) {
       return {
         state: 'warn',
         text: 'Conflict',
-        sub: [m && `MR !${m.iid}`, c.files.length && `${c.files.length} file(s)`].filter(Boolean).join(' · ') || 'with the epic',
-        title: m ? `MR !${m.iid} conflicts with the epic` : inEpic ? 'New commits conflict with the epic' : 'Conflicts with the epic',
+        sub: `${c.files.length} file(s)`,
+        title: `${uat.name} conflicts with the epic`,
         why: `Merging into ${epic.name} would conflict${conflictFiles(c)}. Rebase, resolve in Cursor, Continue — it pushes (a backup is kept).`,
         detail: d,
       };
     }
-    if (inEpic) {
-      const merged = uat.mergedToEpic || null;
-      const noMerge = !merged && !mergedMr(uat.name, epic.name);
-      d.steps.unshift(
-        merged
-          ? { state: 'done', text: 'Merged into the epic', chips: [gitChip(merged.sha, 'ok', merged.subject), rel(merged.at)] }
-          : { state: 'done', text: noMerge ? `All ${commits.length} commit(s) are on ${epic.name}` : 'Merged into the epic' },
-      );
-      if (noMerge) d.note = 'Reached the epic without a task MR, so there is no merge commit to revert it with.';
-      if (m) d.secondary = [openAct(m)];
-      return { state: 'done', text: noMerge ? 'On the epic' : 'Merged', sub: m ? `MR !${m.iid} still open` : noMerge ? 'no task MR' : merged ? rel(merged.at) : '', detail: d };
+    if (allIn) {
+      if (m) d.secondary = [openAct(m), m.open && closeAct(repo, m, 'Close the legacy task → epic MR')].filter(Boolean);
+      return { state: 'done', text: 'On the epic', sub: m?.open ? `MR !${m.iid} still open` : '', detail: d };
     }
     if (!codeDone) return { state: 'na', text: 'After push', sub: '', detail: { ...d, note: 'Push the branch first.' } };
     if (uat.behindEpic > 0) {
       d.primary = rebaseTaskAct(repo, f.epic, uat);
-      d.secondary = [openAct(m)].filter(Boolean);
-      return { state: 'todo', text: 'Epic moved on', sub: `${uat.behindEpic} new on the epic`, title: 'Epic moved on — rebase before the MR', why: `${uat.behindEpic} new commit(s) on ${epic.name}. Rebasing keeps the MR clean (a backup is kept).`, detail: d };
+      if (m) d.secondary = [openAct(m)];
+      return { state: 'todo', text: 'Epic moved on', sub: `${uat.behindEpic} new on the epic`, title: 'Epic moved on — rebase before the pick', why: `${uat.behindEpic} new commit(s) on ${epic.name}. Rebase keeps the pick clean (a backup is kept).`, detail: d };
     }
-    if (m && !m.resolved) {
-      d.primary = openAct(m);
-      return { state: 'warn', text: `MR !${m.iid}`, sub: 'unresolved threads', title: `MR !${m.iid} has unresolved review threads`, why: `${uat.name} → ${epic.name}`, detail: d };
-    }
-    if (m) {
-      d.secondary = [openAct(m)];
-      return { state: 'wait', text: `MR !${m.iid}`, sub: mrSub(m), title: `MR !${m.iid} → epic: ${mrSub(m)}`, secondary: [openAct(m)], detail: d };
-    }
-    if (!M?.byBranch) return unknownMr(d, uat.name, newMr(uat.name, epic.name, 'Create MR → epic'), 'epic');
-    d.primary = newMr(uat.name, epic.name, 'Create MR → epic');
-    return { state: 'todo', text: 'No MR yet', sub: 'create it', title: 'Ready for the MR into the epic', why: 'Merge it with “Create merge commit” (one merge commit per task).', detail: d };
+    // The pick button is added by withEpicPick, which also checks for conflicts.
+    if (m?.open) d.secondary = [openAct(m)];
+    return { state: 'todo', text: 'Ready to pick', sub: `${notInEpic.length} to cherry-pick`, title: 'Ready to cherry-pick onto the epic', why: `${notInEpic.length} commit(s) to pick onto ${epic.name}.`, detail: d };
   }
 
   function uatCell() {
@@ -299,18 +289,18 @@ function stageModel(issue, f, r, M) {
         const list = todo.filter((c) => shas.includes(c.sha));
         const job = await gitAction(
           { action: 'pick-epic', repo, epic: f.epic, branch: uat.name, shas },
-          `No merge rights on the epic MR?\n\nCherry-pick ${shas.length} commit(s) of ${uat.name} onto epic/${f.epic} and push (fast-forward only):\n\n${list.map((c) => `${c.short} ${c.subject}`).join('\n')}`,
+          `Cherry-pick ${shas.length} commit(s) of ${uat.name} onto epic/${f.epic} and push (fast-forward only):\n\n${list.map((c) => `${c.short} ${c.subject}`).join('\n')}\n\nThe log ends with git cherry: no "+" line = fully on the epic.`,
         );
         if (job?.status === 'ok') {
           gitState.sel.set(key, `${repo}:dev`);
           gitState.devPreset.set(`${key}:${repo}`, shas);
         }
       },
-      { icon: 'commit', title: `Cherry-pick the ticked commits of ${uat.name} onto epic/${f.epic} instead of merging the MR` },
+      { icon: 'commit', title: `Cherry-pick the ticked commits of ${uat.name} onto epic/${f.epic}` },
     );
     // While the task conflicts with the epic the pick would conflict too: keep it out of the way.
     if (epicConflict) d.more.unshift(pick);
-    else d.secondary = [...(d.secondary || []), pick];
+    else d.primary = pick;
     return cell;
   }
 

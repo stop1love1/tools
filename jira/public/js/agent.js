@@ -1,7 +1,6 @@
 'use strict';
 
 const MR_KIND_LABELS = {
-  'task-epic': () => `Task → epic (-${UAT()} branch → epic/…)`,
   'epic-uat': () => `Epic → ${UAT()}`,
   develop: () => `Develop (cherry-pick → -${DEV()} → ${DEV()})`,
 };
@@ -19,8 +18,9 @@ function startWithClaude(issue) {
     { class: 'gtabs agent-mode' },
     Object.entries(MODES).map(([m, label]) => h('button', { type: 'button', 'data-mode': m, onClick: () => setMode(m) }, label)),
   );
+  // Task giờ lên epic bằng pick-epic (bước riêng), không qua MR task → epic nữa.
   const kinds = isEpic ? ['epic-uat'] : Object.keys(MR_KIND_LABELS);
-  const defaultKinds = isEpic ? ['epic-uat'] : saved.mrKinds || ['task-epic'];
+  const defaultKinds = isEpic ? ['epic-uat'] : saved.mrKinds?.filter((k) => k !== 'task-epic') || ['epic-uat'];
   const kindBoxes = kinds.map((k) => box(defaultKinds.includes(k), { value: k }));
   const draft = box(!!saved.draft);
   const moveStatus = box(saved.moveStatus ?? true);

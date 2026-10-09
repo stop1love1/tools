@@ -14,7 +14,7 @@ const { httpError } = require('../util');
 
 // kind → which branch goes into which, from the ticket's git flow.
 const KINDS = {
-  'task-epic': 'task branch (-uat) → epic branch',
+  'task-epic': 'task branch (-uat) → epic branch (legacy: prefer pick-epic)',
   'epic-uat': 'epic branch → uat',
   develop: 'develop branch (-develop) → develop',
 };
@@ -30,13 +30,64 @@ function glab(args) {
   });
 }
 
-function description({ key, summary, changes, testCases, epicBranch, devBranch, url }) {
+const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+
+// Which configured checklist item an entry means: its 1-based number, or its text (exact, else a unique substring).
+function checklistIndex(items, ref) {
+  const fail = (why) => httpError(400, `Checklist item ${JSON.stringify(ref)} ${why}. Items:\n${items.map((c, i) => `${i + 1}. ${c}`).join('\n')}`);
+  if (typeof ref === 'number' || /^\d+$/.test(String(ref).trim())) {
+    const n = Number(ref);
+    if (n < 1 || n > items.length) throw fail('is out of range');
+    return n - 1;
+  }
+  const needle = oneLine(ref).toLowerCase();
+  if (!needle) throw fail('is empty');
+  const exact = items.findIndex((c) => c.toLowerCase() === needle);
+  if (exact >= 0) return exact;
+  const hits = items.map((c, i) => (c.toLowerCase().includes(needle) ? i : -1)).filter((i) => i >= 0);
+  if (hits.length !== 1) throw fail(hits.length ? 'matches several items' : 'matches no item');
+  return hits[0];
+}
+
+// The Checklist section: the configured items, each ticked "- [x] item — note" when the caller reports it as really
+// checked (entries: [{ item, checked?: true, note }]); every other item stays "- [ ]".
+function checklistLines(entries) {
+  const items = config.get().git.mrChecklist;
+  const given = new Map();
+  for (const e of Array.isArray(entries) ? entries : []) {
+    const i = checklistIndex(items, e?.item);
+    const note = oneLine(e?.note);
+    const checked = e?.checked !== false;
+    if (checked && !note) throw httpError(400, `Checklist item "${items[i]}" is ticked without a note — say in a few words what was checked.`);
+    given.set(i, { checked, note });
+  }
+  return items.map((c, i) => {
+    const g = given.get(i);
+    return g?.checked ? `- [x] ${c} — ${g.note}` : `- [ ] ${c}${g?.note ? ` — ${g.note}` : ''}`;
+  });
+}
+
+// Test cases stay "- [ ]" unless the caller says it really ran them: { text, checked: true, note: what was called / tried }.
+function testCaseLines(testCases) {
+  return (testCases || []).map((t) => {
+    if (typeof t === 'string') return `- [ ] ${t}`;
+    const text = oneLine(t?.text);
+    if (!text) throw httpError(400, 'A test case needs a "text".');
+    if (!t.checked) return `- [ ] ${text}`;
+    const note = oneLine(t.note);
+    if (!note) throw httpError(400, `Test case "${text}" is ticked without a note — say which API call or manual test proved it.`);
+    return `- [x] ${text} — ${note}`;
+  });
+}
+
+function description({ key, summary, changes, testCases, checklist, epicBranch, devBranch, url }) {
   const list = (items, empty) => (items?.length ? items.map((x) => `- ${x}`) : [empty]);
+  const cases = testCaseLines(testCases);
   return [
     '## Summary', '', summary || '', '',
     '## Changes', '', ...list(changes, '- '), '',
-    '## Test cases', '', ...(testCases?.length ? testCases.map((x) => `- [ ] ${x}`) : ['- [ ] ']), '',
-    '## Checklist', '', ...config.get().git.mrChecklist.map((c) => `- [ ] ${c}`), '',
+    '## Test cases', '', ...(cases.length ? cases : ['- [ ] ']), '',
+    '## Checklist', '', ...checklistLines(checklist), '',
     '## Related issues / links', '',
     epicBranch && `- Epic: \`${epicBranch}\``,
     devBranch && `- Develop branch: \`${devBranch}\``,
@@ -47,7 +98,7 @@ function description({ key, summary, changes, testCases, epicBranch, devBranch, 
 }
 
 // Returns { url, iid, source, target, title, created } for the MR of `kind` for ticket `key` in `repo`.
-async function createMergeRequest({ repo, key, kind = 'task-epic', title, summary, changes, testCases, draft = false, epic }) {
+async function createMergeRequest({ repo, key, kind = 'epic-uat', title, summary, changes, testCases, checklist, draft = false, epic }) {
   const s = settings();
   if (!Object.hasOwn(s.repos, repo)) throw httpError(400, `repo must be one of: ${Object.keys(s.repos).join(', ')}`);
   if (!KINDS[kind]) throw httpError(400, `kind must be one of: ${Object.keys(KINDS).join(', ')}`);
@@ -66,8 +117,12 @@ async function createMergeRequest({ repo, key, kind = 'task-epic', title, summar
   if (!web) throw httpError(400, 'origin is not a GitLab repository');
   const u = new URL(web);
   const project = `projects/${encodeURIComponent(u.pathname.slice(1))}`;
-  // The ticket's first commit subject is already "<KEY>-123: …"; the epic MR is titled after the epic.
-  const baseTitle = String(title || '').trim() || (kind === 'epic-uat' ? `${f.epic}: ${summary || 'epic'}` : r.commits?.[0]?.subject || `${key}: ${summary || ''}`.trim());
+  // Same title on every MR of the ticket: its first commit subject, already "<KEY>-123: …". Without commits
+  // (e.g. an epic with no commits of its own) fall back to "<KEY>: <summary>".
+  const baseTitle =
+    String(title || '').trim() ||
+    r.commits?.[0]?.subject ||
+    (kind === 'epic-uat' ? `${f.epic}: ${summary || 'epic'}` : `${key}: ${summary || ''}`.trim());
   const fullTitle = `${draft ? 'Draft: ' : ''}${baseTitle.replace(/^Draft:\s*/i, '')}`;
 
   const existing = async () => {
@@ -83,6 +138,7 @@ async function createMergeRequest({ repo, key, kind = 'task-epic', title, summar
     summary,
     changes,
     testCases,
+    checklist,
     epicBranch: r.epic.name,
     devBranch: kind === 'task-epic' ? s.toDevelop(source) : kind === 'develop' ? source : null,
     url: `${config.get().jira.siteUrl.replace(/\/+$/, '')}/browse/${key}`,
@@ -105,4 +161,4 @@ async function createMergeRequest({ repo, key, kind = 'task-epic', title, summar
   }
 }
 
-module.exports = { createMergeRequest, MR_KINDS: KINDS };
+module.exports = { createMergeRequest, MR_KINDS: KINDS, description };

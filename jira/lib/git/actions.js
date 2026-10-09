@@ -1,7 +1,7 @@
 'use strict';
 
 // Git flow steps, run as jobs. Follows lms/.cursor/rules/git-workflow.mdc:
-//   epic/<KEY>-<epic> (off uat) → <prefix>/<KEY>-<id>-<desc>-uat (off the epic) → MR task → epic
+//   epic/<KEY>-<epic> (off uat) → <prefix>/<KEY>-<id>-<desc>-uat (off the epic) → task cherry-picked onto the epic (pick-epic)
 //   → one MR epic → uat → <prefix>/<KEY>-<id>-<desc>-develop (off develop, cherry-picked) → MR → develop.
 //
 // Safety:
@@ -295,9 +295,13 @@ const ACTIONS = {
     await restoreStash(ctx, cwd, branch);
   },
 
-  async commit(ctx, { repo, message, files, push: andPush }) {
+  // skip: ids of pre-commit hooks to skip (passed as SKIP=a,b), for a hook that fails for reasons unrelated to this change
+  // (e.g. npm-audit / trivy-fs failing on the whole repo's dependencies).
+  async commit(ctx, { repo, message, files, push: andPush, skip }) {
     const { s } = ctx;
     const cwd = s.repos[repo];
+    const skipHooks = (Array.isArray(skip) ? skip : typeof skip === 'string' ? skip.split(/[\s,]+/) : []).filter(Boolean);
+    if (!skipHooks.every((x) => typeof x === 'string' && /^[\w.-]+$/.test(x))) throw httpError(400, 'skip must be hook ids (letters, digits, - _ .), e.g. ["npm-audit", "trivy-fs"].');
     message = typeof message === 'string' ? message.trim() : '';
     if (!new RegExp(`^${s.key}-\\d+: \\S`).test(message)) throw httpError(400, `The commit message must look like "${s.key}-123: <what changed, in English>".`);
     const st = await wtState(cwd);
@@ -310,8 +314,23 @@ const ACTIONS = {
     const skipStaged = st.files.filter((f) => !pick.includes(f.path) && f.xy[0] !== '.' && f.xy !== '??').map((f) => f.path);
     if (skipStaged.length) await ctx.run(cwd, ['restore', '--staged', '--', ...skipStaged]);
     await ctx.run(cwd, ['add', '-A', '--', ...pick]);
-    ctx.log('Committing (hooks: lint-staged, typecheck, gitleaks… may take a few minutes)');
-    await ctx.run(cwd, ['commit', '-m', message], { timeout: 30 * 60_000, env: hookEnv(), failMsg: 'Commit failed — see the hook output above.' });
+    ctx.log(`Committing (hooks: lint-staged, typecheck, gitleaks… may take a few minutes)${skipHooks.length ? ` — skipping hooks: ${skipHooks.join(', ')}` : ''}`);
+    const skipEnv = [process.env.SKIP, ...skipHooks].filter(Boolean).join(',');
+    await ctx.run(cwd, ['commit', '-m', message], {
+      timeout: 30 * 60_000,
+      env: { ...hookEnv(), ...(skipEnv ? { SKIP: skipEnv } : {}) },
+      // Say which hook failed instead of a bare "see the log": the tail of the hook output goes into the job error.
+      failMsg: (r, text) => {
+        const tail = text.split('\n').filter(Boolean).slice(-15).join('\n');
+        return [
+          r.timedOut ? 'Commit timed out waiting for the pre-commit hooks.' : 'Commit rejected by a pre-commit hook.',
+          tail && `Hook output (last lines):\n${tail}`,
+          'If a hook fails for reasons unrelated to this change, retry with skip: ["<hook-id>"].',
+        ]
+          .filter(Boolean)
+          .join('\n');
+      },
+    });
     if (!andPush || !st.branch) return;
     if (s.isProtected(st.branch)) return ctx.log(`Not pushing ${st.branch} (main branch).`);
     await push(ctx, repo, st.branch).catch((e) => {
@@ -443,7 +462,13 @@ const ACTIONS = {
       timeout: 300_000,
       failMsg: `Push rejected — ${epicName} moved on origin since the cherry-pick. Fetch and try again.`,
     });
-    return { dir };
+    // Check: no "+" line left means every commit of the task is on the epic (the push updated origin/<epic> here).
+    const check = await ctx.run(dir, ['cherry', `origin/${epicName}`, `origin/${branch}`], { allowFail: true });
+    const notInEpic = check.code ? null : check.stdout.split('\n').filter((l) => l.startsWith('+')).length;
+    if (notInEpic === null) ctx.log(`Could not run git cherry (is origin/${branch} pushed?).`);
+    else if (notInEpic) ctx.log(`⚠ ${notInEpic} commit(s) of ${branch} are not on ${epicName} yet (the "+" lines above).`);
+    else ctx.log(`✓ git cherry: every commit of ${branch} is on ${epicName}.`);
+    return { dir, notInEpic };
   },
 
   async continue(ctx, { repo, dir }) {

@@ -26,7 +26,10 @@ function startJob(title, repo, home, fn) {
       const text = (r.stdout + (r.stdout && r.stderr ? '\n' : '') + r.stderr).trim();
       if (text) job.log.push(text.length > 8000 ? '…' + text.slice(-8000) : text);
       if (r.timedOut) job.log.push('(timeout)');
-      if (r.code && !opts.allowFail) throw new Error(opts.failMsg || `git ${args[0]} failed (exit ${r.code})`);
+      if (r.code && !opts.allowFail) {
+        const why = typeof opts.failMsg === 'function' ? opts.failMsg(r, text) : opts.failMsg;
+        throw new Error(why || `git ${args[0]} failed (exit ${r.code})`);
+      }
       return r;
     },
   };

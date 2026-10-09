@@ -18,7 +18,7 @@ function validate(opts = {}) {
   const list = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? v.split(/[\s,]+/) : []).filter(Boolean);
   const repos = list(opts.repos).filter((r) => Object.hasOwn(s.repos, r));
   const mode = opts.mode === 'plan' ? 'plan' : 'implement';
-  const mrKinds = mode === 'plan' ? [] : list(opts.mrKinds ?? ['task-epic']).filter((k) => Object.hasOwn(MR_KINDS, k));
+  const mrKinds = mode === 'plan' ? [] : list(opts.mrKinds ?? ['epic-uat']).filter((k) => Object.hasOwn(MR_KINDS, k));
   const writesWanted = opts.writes !== false && opts.writes !== 'false';
   const writes = mode !== 'plan' && writesWanted && config.get().mcp.allowWrites;
   return {
@@ -69,12 +69,23 @@ function steps(o, isEpic = false) {
       `Commit and push with run_git_action (commit, push): message "${o.key}: <what changed, in English>", no Co-authored-by. Hooks run lint / typecheck — fix and retry on failure.`,
       `Commit "${o.key}: <what changed, in English>" (no Co-authored-by) and push; never force-push without asking.`,
     ),
+    ...(!isEpic
+      ? [
+          t(
+            `Put the task into the epic by cherry-pick, not by an MR task → epic: run_git_action pick-epic { repo, epic, branch: <task -${s.uat} branch>, shas } (the ticket's commits, oldest first). It pushes the epic and ends with git cherry origin/epic/<epic> origin/<task>-${s.uat}: no "+" line left means the task is fully on the epic. Do not open a task → epic MR; if one is already open, close it after the pick.`,
+            `Put the task into the epic by cherry-picking its commits onto epic/<epic> and pushing (fast-forward only), not by an MR task → epic. Check with git cherry origin/epic/<epic> origin/<task>-${s.uat}: no "+" line left means the task is fully on the epic. If a task → epic MR is already open, close it after the pick.`,
+          ),
+        ]
+      : []),
     ...(!isEpic && o.mrKinds.includes('develop')
       ? [t(`Cherry-pick the ticket's commits to the -${s.develop} twin of the task branch: run_git_action pick-develop { repo, branch, shas }.`, `Cherry-pick the ticket's commits (no merges) onto the -${s.develop} twin of the task branch, made from origin/${s.develop}.`)]
       : []),
     o.mrKinds.length
       ? t(
-          `Open the MRs with create_merge_request { repo, key, kind, summary, changes, testCases${o.draft ? ', draft: true' : ''} } — kinds: ${o.mrKinds.join(', ')}.`,
+          `Open the MRs with create_merge_request { repo, key, kind, summary, changes, testCases, checklist${o.draft ? ', draft: true' : ''} } — kinds: ${o.mrKinds.join(', ')}. ` +
+            'Every kind gets the same title ("<KEY>: <commit subject>") and description; one MR per repo and kind (commits picked onto the epic show up in the epic MR by themselves). ' +
+            'Fill the checklist from what you really ran: tick an item only when checked, with a short note after "—" (title ok; lint clean → no debug logs / types; tests added, or why not and which spec passes; the exact build command run on that branch; "N/A (backend / no UI)" for translations / accessibility / build packages on a backend MR; one sentence for error states and security; docs done). ' +
+            'Test cases stay unticked unless you called the API or tested by hand.',
           `Open the MRs${o.draft ? ' as drafts' : ''} (${o.mrKinds.map((k) => MR_KINDS[k]).join('; ')}), title "${o.key}: <summary>", description: Summary / Changes / Test cases / Checklist.`,
         )
       : 'Do not open merge requests.',

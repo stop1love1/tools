@@ -65,7 +65,7 @@ const TOOLS = [
         key: str('Issue key, e.g. VLEARN-123'),
         mode: { type: 'string', enum: ['implement', 'plan'] },
         repos: { type: 'array', items: { type: 'string' }, description: 'Repo ids to work in (default: the first repo)' },
-        mrKinds: { type: 'array', items: { type: 'string', enum: Object.keys(MR_KINDS) }, description: 'MRs to open (default: task-epic)' },
+        mrKinds: { type: 'array', items: { type: 'string', enum: Object.keys(MR_KINDS) }, description: 'MRs to open (default: epic-uat; the task reaches the epic by pick-epic, not by an MR)' },
         draft: { type: 'boolean' },
         moveStatus: { type: 'boolean', description: 'Move the Jira status along (default true)' },
         writes: {
@@ -189,9 +189,11 @@ const TOOLS = [
     name: 'create_merge_request',
     write: true,
     description:
-      'Open a GitLab merge request the team way (standard title "<KEY>-123: …" and description template with checklist) and return its link. ' +
-      'kind: "task-epic" = task branch → epic, "epic-uat" = epic → uat, "develop" = the -develop branch → develop. The source branch must be pushed. ' +
-      'Returns the existing MR when one is already open for the same branches.',
+      'Open a GitLab merge request the team way (title "<KEY>-123: <commit subject>" — the same for epic-uat and develop — and the description template with checklist) and return its link. ' +
+      'kind: "epic-uat" = epic → uat, "develop" = the -develop branch → develop; "task-epic" (task → epic) is legacy: put the task into the epic with run_git_action pick-epic instead. The source branch must be pushed. ' +
+      'Returns the existing MR when one is already open for the same branches. ' +
+      'checklist: tick only what you really checked, each with a short note (shown after "—"); items not listed stay [ ]. Use the same title, summary and changes for the uat and develop MRs; only the Build note differs (the command run on each branch). ' +
+      'testCases: plain strings stay [ ]; pass {text, checked: true, note} only when you really called the API or tested by hand.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -200,8 +202,26 @@ const TOOLS = [
         kind: { type: 'string', enum: Object.keys(MR_KINDS) },
         summary: str('1–3 sentences: what and why (English)'),
         changes: { type: 'array', items: { type: 'string' }, description: 'Bullet list of the changes' },
-        testCases: { type: 'array', items: { type: 'string' }, description: 'How to verify' },
-        title: str('Optional; defaults to the first commit subject "<KEY>-123: …"'),
+        testCases: {
+          type: 'array',
+          description: 'How to verify. A string = not run yet ([ ]); an object ticks it only with proof of a real API call / manual test.',
+          items: {
+            anyOf: [
+              { type: 'string' },
+              { type: 'object', properties: { text: str('The test case'), checked: { type: 'boolean' }, note: str('What was called / tried, and the result') }, required: ['text'] },
+            ],
+          },
+        },
+        checklist: {
+          type: 'array',
+          description: 'Checklist items you really checked: [{ item: <number or text of a configured item>, note: <short note>, checked?: true }]',
+          items: {
+            type: 'object',
+            properties: { item: { description: '1-based number, or (part of) the item text' }, note: str('Short note shown after "—", e.g. "uat npm run build pass"'), checked: { type: 'boolean', description: 'default true; false = leave [ ] but keep the note' } },
+            required: ['item', 'note'],
+          },
+        },
+        title: str('Optional; defaults to the first commit subject "<KEY>-123: …" (same for every kind)'),
         draft: { type: 'boolean' },
         epic: str('Epic key when not the Jira parent Epic'),
       },
@@ -218,7 +238,7 @@ const TOOLS = [
       '- fetch; checkout {branch}; push {branch, force?}; stash-pop {ref}',
       '- ensure-epic {epic}; start-task {key, repos[], branch, epic?, stash?} (no repo; branch <type>/<KEY>-<id>-<desc>-uat)',
       '- create-task {epic, branch}; sync-task {epic, branch} (rebase task onto epic + push); sync-develop {branch (…-develop)} (rebase onto develop + push); rebase-epic {epic}',
-      '- pick-develop {branch (…-develop), shas[]}; pick-epic {epic, branch (task …-uat), shas[]} (no merge rights on the epic MR: cherry-pick the task\'s commits straight onto the epic and push, fast-forward only); commit {message "<KEY>-123: …", files[], push?}',
+      '- pick-develop {branch (…-develop), shas[]}; pick-epic {epic, branch (task …-uat), shas[]} (how a task gets into the epic, instead of an MR task → epic: cherry-pick the task\'s commits straight onto the epic and push, fast-forward only; the log ends with a git cherry check — no "+" line = fully on the epic); commit {message "<KEY>-123: …", files[], push?, skip?[] (pre-commit hook ids to skip, passed as SKIP=; only for a hook failing for reasons unrelated to the change, e.g. npm-audit / trivy-fs)}',
       '- continue / skip / abort {dir?} (continue / skip also do the push the stopped step owed); undo {branch}; delete-branches {branches[]}; prune-backups {days}',
       'Waits for the job up to waitSeconds (default 120) and returns its status and log.',
     ].join('\n'),
@@ -247,7 +267,7 @@ const PROMPT_START = {
     { name: 'key', description: 'Issue key, e.g. VLEARN-123', required: true },
     { name: 'mode', description: 'implement (default) or plan' },
     { name: 'repos', description: 'Repo ids, comma separated (default: the first repo)' },
-    { name: 'mrs', description: 'MRs to open, comma separated: task-epic, epic-uat, develop (default task-epic)' },
+    { name: 'mrs', description: 'MRs to open, comma separated: epic-uat, develop (default epic-uat; task-epic is legacy)' },
     { name: 'writes', description: 'true (default) to use the write tools yourself end-to-end, false to tell me the steps instead' },
     { name: 'notes', description: 'Anything else Claude should know' },
   ],
