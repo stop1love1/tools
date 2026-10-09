@@ -25,25 +25,33 @@ function renderRepoPills() {
   const pill = (id) => {
     const r = ov?.repos[id];
     const m = r?.main;
-    const kids = !r
-      ? [gitChip('…')]
-      : r.error
-        ? [gitChip('error', 'warn', r.error)]
-        : [
-            h('span', { class: 'repo-pill-branch mono' }, m.branch || 'detached'),
-            m.op ? gitChip(m.op, 'warn') : m.files.length ? gitChip(`${m.files.length} changed`, 'warn') : gitChip('clean', 'ok'),
-            m.ahead > 0 && gitChip(`↑${m.ahead}`, 'warn'),
-            m.behind > 0 && gitChip(`↓${m.behind}`, 'warn'),
-          ];
-    return h('button', { class: 'repo-pill', title: r && !r.error ? `${label(id)}: ${m.branch || 'detached'}` : label(id), onClick: () => jump(id) }, h('b', null, label(id)), kids);
+    // One quiet marker per repo: a dot when clean, otherwise a single chip. Details live in the tooltip.
+    let mark;
+    let detail = label(id);
+    if (!r) mark = h('span', { class: 'repo-dot' });
+    else if (r.error) (mark = gitChip('error', 'warn', r.error)), (detail = `${label(id)}: ${r.error}`);
+    else {
+      const sync = [m.ahead > 0 && `↑${m.ahead}`, m.behind > 0 && `↓${m.behind}`].filter(Boolean).join(' ');
+      const parts = [m.op, m.files.length && `${m.files.length} changed`, sync].filter(Boolean);
+      detail = `${label(id)}: ${m.branch || 'detached'}${parts.length ? ' · ' + parts.join(' · ') : ' · clean'}`;
+      mark = parts.length
+        ? gitChip(m.op || (m.files.length ? String(m.files.length) : sync), 'warn', parts.join(' · '))
+        : h('span', { class: 'repo-dot ok', title: 'clean' });
+    }
+    return h(
+      'button',
+      { class: 'repo-pill', title: detail, onClick: () => jump(id) },
+      h('b', null, label(id)),
+      r && !r.error && h('span', { class: 'repo-pill-branch mono' }, m.branch || 'detached'),
+      mark,
+    );
   };
-  const fetchAll = async () => {
-    for (const repo of gitRepos()) await gitAction({ action: 'fetch', repo });
-  };
-  box.replaceChildren(
-    h('div', { class: 'repo-pills' }, gitRepos().map(pill)),
-    h('button', { class: 'btn sm', title: 'Fetch all repos from origin', onClick: fetchAll }, icon('download'), h('span', { class: 'lbl' }, 'Fetch all')),
-  );
+  box.replaceChildren(h('div', { class: 'repo-pills' }, gitRepos().map(pill)));
+}
+
+// Page toolbar action (was in the sticky header, where it crowded the repo pills).
+async function fetchAllRepos() {
+  for (const repo of gitRepos()) await gitAction({ action: 'fetch', repo });
 }
 
 function renderGitView() {
@@ -55,6 +63,7 @@ function renderGitView() {
     gitRepos().some((r) => gitState.mrData[r]?.error) &&
       h('span', { class: 'small warn-text', title: gitRepos().map((r) => `${r}: ${gitState.mrData[r]?.error || 'ok'}`).join('\n') }, 'MR status unavailable (VPN?)'),
     h('span', { class: 'muted small' }, 'Open a task (click its key) for its step-by-step flow.'),
+    actBtn('Fetch all', fetchAllRepos, { iconName: 'download', title: 'Fetch all repos from origin' }),
     actBtn('Reload', loadGit, { iconName: 'refresh' }),
   );
   if (gitState.error) return h('div', null, head, h('div', { class: 'error-box' }, gitState.error));
