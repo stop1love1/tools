@@ -103,6 +103,7 @@ function syncUrl() {
   const query = params.toString();
   const url = location.pathname + (query ? '?' + query : '') + location.hash;
   history.replaceState(null, '', url);
+  window.syncNavLinks?.();
 }
 
 // ---------------------------------------------------------------------------

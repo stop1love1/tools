@@ -12,7 +12,7 @@ window.PAGE_SHORTCUTS = PAGE_SHORTCUTS;
 // since the detail drawer only lives on tasks.html.
 function openIssueChip(key) {
   showPageLoader();
-  location.href = `/tasks.html#${encodeURIComponent(key)}`;
+  location.href = pageHref('/tasks.html', `#${encodeURIComponent(key)}`);
 }
 
 function render() {

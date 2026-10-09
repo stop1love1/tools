@@ -146,6 +146,27 @@ function showAuth(me) {
   renderMeta();
 }
 
+// Header filters that travel with you between pages (the search boxes are per page and stay behind).
+// The JQL already persists in localStorage, so only the URL-only ones are carried here.
+function headerQuery() {
+  const params = new URLSearchParams();
+  if (state.user) params.set('user', state.user);
+  if (state.sprint) params.set('sprint', String(state.sprint));
+  const query = params.toString();
+  return query ? '?' + query : '';
+}
+
+// Page link that keeps the header filters, e.g. pageHref('/tasks.html', '#PROJ-1').
+function pageHref(path, hash = '') {
+  return path + headerQuery() + hash;
+}
+
+// The view tabs are static links; keep their query in step with the active header filters.
+function syncNavLinks() {
+  for (const a of $$('#views a')) a.href = pageHref(new URL(a.getAttribute('href'), location.origin).pathname);
+}
+window.syncNavLinks = syncNavLinks;
+
 // ---------------------------------------------------------------------------
 // Shared header controls: user filter, sprint filter, and their logic.
 // These are identical across all three pages.
@@ -352,6 +373,7 @@ async function init() {
 
   scheduleRefresh();
   setupSharedFilters();
+  syncNavLinks();
 
   api('/api/me')
     .then(showAuth)
