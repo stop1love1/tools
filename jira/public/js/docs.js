@@ -2,8 +2,6 @@
 
 // Docs view: Confluence pages and attachments across the listed tasks.
 
-// --- docs ---
-
 function matchesDocsQ(q, ...fields) {
   if (!q) return true;
   return fields.some((f) => f && String(f).toLowerCase().includes(q));

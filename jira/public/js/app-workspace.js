@@ -17,12 +17,17 @@ function openIssueChip(key) {
 
 function render() {
   renderMeta();
+  renderSprints();
   $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
   syncUrl();
   renderRepoPills();
   const el = state.view === 'settings' ? renderSettingsView() : renderGitView();
   if ($('#main').firstChild !== el) $('#main').replaceChildren(el);
 }
+
+window.onUserFilterChange = () => loadIssues({ silent: false }).then(render);
+window.onJqlChange = () => loadIssues({ silent: false }).then(render);
+window.onSprintFilterChange = () => render();
 
 window.onShortcutR = () => {
   loadIssues({ silent: true }).then(render);
@@ -37,6 +42,7 @@ async function initPage() {
   render(); // doesn't wait for Jira issues
   // Jira issues only supply ticket → sprint for the branch cleanup filter; shown from the tab cache meanwhile.
   loadIssues({ silent: true }).then(render);
+  loadUsers();
   return firstLoad;
 }
 window.initPage = initPage;

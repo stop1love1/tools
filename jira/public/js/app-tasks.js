@@ -27,6 +27,7 @@ function load(opts = {}) {
 function render() {
   closeMenu();
   renderMeta();
+  renderSprints();
   $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
   if (state.view === 'settings') {
     syncUrl();
@@ -36,7 +37,6 @@ function render() {
   }
   const list = filtered();
   renderTypes();
-  renderSprints();
   renderProgress();
   renderFocus();
   renderStats();
@@ -67,42 +67,14 @@ function render() {
   if (state.openKey) refreshDrawerStatus();
 }
 
-function applyJql(jql) {
-  state.jql = jql.trim() === state.defaultJql ? '' : jql.trim();
-  LS.set('jql', state.jql);
+window.onJqlChange = () => {
   syncPreset();
   load();
-}
+};
 
 function syncPreset() {
   const idx = presets().findIndex((p) => p.jql === state.jql);
   $('#preset').value = idx < 0 ? 'custom' : String(idx);
-}
-
-function viewedUserName() {
-  return state.users?.users.find((u) => u.accountId === state.user)?.name || 'selected user';
-}
-
-async function loadUsers() {
-  const select = $('#user-filter');
-  try {
-    state.users = await api('/api/users');
-  } catch (e) {
-    select.title = `Failed to load user list: ${e.message}`;
-    return;
-  }
-  const sorted = [...state.users.users].sort((a, b) => a.name.localeCompare(b.name, 'en'));
-  const opts = sorted.map((u) => h('option', { value: u.accountId }, `${u.name} (${u.count})`));
-  if (state.user && !state.users.users.some((u) => u.accountId === state.user)) {
-    opts.unshift(h('option', { value: state.user }, 'Selected user'));
-  }
-  select.replaceChildren(
-    h('option', { value: '' }, 'Mine'),
-    ...opts,
-  );
-  select.value = state.user;
-  syncUrl();
-  renderMeta();
 }
 
 // Used by docs.js's issue chips: on tasks.html, clicking one opens the detail drawer in place.
@@ -112,6 +84,13 @@ function openIssueChip(key) {
 
 // "r" and the extra shortcuts (search focus, saved filters, j/k nav) are wired through
 // app-shared's keydown handler via these hooks.
+window.onUserFilterChange = () => {
+  state.status = null;
+  state.urgentOnly = false;
+  load();
+};
+window.onSprintFilterChange = () => render();
+
 window.onShortcutR = (opts) => load(opts);
 window.onShortcutExtra = (e, typing) => {
   if (!typing && /^[1-9]$/.test(e.key)) {
@@ -156,38 +135,16 @@ async function initPage() {
     $('#jql').value = p.jql || state.defaultJql;
     applyJql(p.jql);
   });
-  $('#apply').addEventListener('click', () => applyJql($('#jql').value));
-  $('#jql').addEventListener('keydown', (e) => e.key === 'Enter' && applyJql(e.target.value));
   $('#search').addEventListener('input', (e) => {
     state.q = e.target.value;
     syncUrl();
     render();
   });
-  $('#jql-toggle').append(icon('code'));
   $('#scrim').addEventListener('click', closeDrawer);
-  $('#user-filter').addEventListener('change', (e) => {
-    state.user = e.target.value;
-    LS.set('user', state.user);
-    state.status = null;
-    state.urgentOnly = false;
-    syncUrl();
-    load();
-  });
   $('#type-filter').addEventListener('change', (e) => {
     state.type = e.target.value;
     syncUrl();
     render();
-  });
-  $('#sprint-filter').addEventListener('change', (e) => {
-    state.sprint = e.target.value ? Number(e.target.value) : null;
-    syncUrl();
-    render();
-  });
-  $('#jql-toggle').addEventListener('click', (e) => {
-    const row = $('#jql-row');
-    row.hidden = !row.hidden;
-    e.currentTarget.setAttribute('aria-expanded', String(!row.hidden));
-    if (!row.hidden) $('#jql').focus();
   });
 
   // Issues cached by the previous page (state.js): show them now and refresh behind them.

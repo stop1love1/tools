@@ -23,7 +23,6 @@ function renderPresets() {
 
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
-// Read URL params on init
 const initParams = new URLSearchParams(location.search);
 
 const state = {
@@ -88,7 +87,6 @@ function saveIssues() {
   }
 })();
 
-// Sync state to URL query params
 function syncUrl() {
   const params = new URLSearchParams();
   if (state.q) params.set('q', state.q);

@@ -12,7 +12,6 @@ async function openDetail(key) {
   state.openIssue = state.issues.find((i) => i.key === key) || null;
   if (location.hash !== '#' + key) history.replaceState(null, '', '#' + key);
   
-  // Track recently viewed
   state.recentlyViewed = [key, ...state.recentlyViewed.filter(k => k !== key)].slice(0, 10);
   LS.set('recentlyViewed', state.recentlyViewed);
   

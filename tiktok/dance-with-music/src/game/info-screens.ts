@@ -174,7 +174,6 @@ export class InfoScreens {
       c.fillText("♪", tx + thumbW / 2, ty + thumbH / 2);
     }
 
-    // "Now playing" label
     c.textAlign = "left";
     c.textBaseline = "alphabetic";
     c.fillStyle = "#fe2c55";
@@ -186,7 +185,6 @@ export class InfoScreens {
     c.font = "700 34px system-ui, sans-serif";
     this.wrapText(c, this.nowTitle || "—", 352, 112, 258, 40, 2);
 
-    // Progress bar
     const barX = 28;
     const barY = 280;
     const barW = W - 56;

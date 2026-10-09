@@ -20,36 +20,6 @@ function renderTypes() {
   syncUrl();
 }
 
-function renderSprints() {
-  const sprints = new Map();
-  const counts = new Map();
-  for (const i of state.issues) {
-    for (const sp of sprintsOf(i)) {
-      sprints.set(sp.id, sp);
-      counts.set(sp.id, (counts.get(sp.id) || 0) + 1);
-    }
-  }
-  const select = $('#sprint-filter');
-  if (sprints.size === 0) {
-    select.hidden = true;
-    return;
-  }
-  const sorted = [...sprints.values()].sort((a, b) => {
-    if (a.state === 'active' && b.state !== 'active') return -1;
-    if (a.state !== 'active' && b.state === 'active') return 1;
-    return b.name.localeCompare(a.name);
-  });
-  select.replaceChildren(
-    h('option', { value: '' }, 'All sprints'),
-    ...sorted.map((s) => 
-      h('option', { value: s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''} (${counts.get(s.id) || 0})`)
-    ),
-  );
-  select.value = state.sprint || '';
-  select.hidden = false;
-  syncUrl();
-}
-
 function renderFocus() {
   const el = $('#focus');
   const base = scopedBySprint();
@@ -247,7 +217,6 @@ function renderList(list) {
       render();
     };
     
-    // Count by type
     const typeCounts = new Map();
     for (const i of items) {
       const typeName = i.type.name.toLowerCase();
@@ -332,16 +301,11 @@ function renderList(list) {
         typeBadge(parent.type?.name || parent.type),
         mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key)
       ),
-      // c-sum: group title
       h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary), h('span', { class: 'muted small nowrap' }, parts.join(', '))),
       h('div', { class: 'c-status' }, statusButton(mine || parent)),
-      // c-prio: empty
       h('div', { class: 'c-prio' }),
-      // c-docs: empty
       h('div', { class: 'c-docs' }),
-      // c-upd: empty
       h('div', { class: 'c-upd' }),
-      // c-act: claude button
       h('div', { class: 'c-act' }, claudeGroupButton),
     );
   };

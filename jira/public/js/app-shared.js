@@ -42,7 +42,6 @@ function renderMeta() {
 function applyTheme() {
   const root = document.documentElement;
 
-  // Clear first
   root.classList.remove('light', 'dark');
 
   if (state.theme === 'dark') {
@@ -54,7 +53,6 @@ function applyTheme() {
     if (prefersDark) root.classList.add('dark');
   }
 
-  // Update theme menu
   if (window.__updateThemeMenu) window.__updateThemeMenu();
 }
 
@@ -146,6 +144,107 @@ function showAuth(me) {
   if (!login) return;
   showLogin(me.auth.source !== 'own');
   renderMeta();
+}
+
+// ---------------------------------------------------------------------------
+// Shared header controls: user filter, sprint filter, and their logic.
+// These are identical across all three pages.
+
+function viewedUserName() {
+  return state.users?.users.find((u) => u.accountId === state.user)?.name || 'selected user';
+}
+
+async function loadUsers() {
+  const select = $('#user-filter');
+  try {
+    state.users = await api('/api/users');
+  } catch (e) {
+    select.title = `Failed to load user list: ${e.message}`;
+    return;
+  }
+  const sorted = [...state.users.users].sort((a, b) => a.name.localeCompare(b.name, 'en'));
+  const opts = sorted.map((u) => h('option', { value: u.accountId }, `${u.name} (${u.count})`));
+  if (state.user && !state.users.users.some((u) => u.accountId === state.user)) {
+    opts.unshift(h('option', { value: state.user }, 'Selected user'));
+  }
+  select.replaceChildren(
+    h('option', { value: '' }, 'Mine'),
+    ...opts,
+  );
+  select.value = state.user;
+  syncUrl();
+  renderMeta();
+}
+
+function renderSprints() {
+  const sprints = new Map();
+  const counts = new Map();
+  for (const i of state.issues) {
+    for (const sp of sprintsOf(i)) {
+      sprints.set(sp.id, sp);
+      counts.set(sp.id, (counts.get(sp.id) || 0) + 1);
+    }
+  }
+  const select = $('#sprint-filter');
+  if (sprints.size === 0) {
+    select.hidden = true;
+    return;
+  }
+  const sorted = [...sprints.values()].sort((a, b) => {
+    if (a.state === 'active' && b.state !== 'active') return -1;
+    if (a.state !== 'active' && b.state === 'active') return 1;
+    return b.name.localeCompare(a.name);
+  });
+  select.replaceChildren(
+    h('option', { value: '', selected: !state.sprint }, 'All sprints'),
+    ...sorted.map((s) => 
+      h('option', { value: s.id, selected: state.sprint === s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''} (${counts.get(s.id) || 0})`)
+    ),
+  );
+  select.hidden = false;
+  syncUrl();
+}
+
+// Each page defines window.onUserFilterChange and window.onSprintFilterChange
+// to handle their own data reloading / rendering logic.
+// state.jql is shared by all pages (issuesQuery() keys on it), so the JQL row works everywhere.
+// Pages hook window.onJqlChange to reload their own data.
+function applyJql(jql) {
+  state.jql = jql.trim() === state.defaultJql ? '' : jql.trim();
+  LS.set('jql', state.jql);
+  window.onJqlChange?.();
+}
+
+function setupSharedFilters() {
+  const jqlInput = $('#jql');
+  const toggle = $('#jql-toggle');
+  if (jqlInput && toggle) {
+    toggle.replaceChildren(icon('code'));
+    jqlInput.value = state.jql;
+    $('#apply').addEventListener('click', () => applyJql(jqlInput.value));
+    jqlInput.addEventListener('keydown', (e) => e.key === 'Enter' && applyJql(e.target.value));
+    toggle.addEventListener('click', (e) => {
+      const row = $('#jql-row');
+      row.hidden = !row.hidden;
+      e.currentTarget.setAttribute('aria-expanded', String(!row.hidden));
+      if (!row.hidden) {
+        if (!state.jql && state.defaultJql) jqlInput.value = state.defaultJql;
+        jqlInput.focus();
+      }
+    });
+  }
+
+  $('#user-filter')?.addEventListener('change', (e) => {
+    state.user = e.target.value;
+    LS.set('user', state.user);
+    syncUrl();
+    if (window.onUserFilterChange) window.onUserFilterChange();
+  });
+  $('#sprint-filter')?.addEventListener('change', (e) => {
+    state.sprint = e.target.value ? Number(e.target.value) : null;
+    syncUrl();
+    if (window.onSprintFilterChange) window.onSprintFilterChange();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +351,7 @@ async function init() {
   });
 
   scheduleRefresh();
+  setupSharedFilters();
 
   api('/api/me')
     .then(showAuth)

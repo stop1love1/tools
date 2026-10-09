@@ -38,7 +38,10 @@
       <div class="bar">
         <input id="search" type="search" placeholder="Search pages, files, task key… ( / )" aria-label="Search docs" />
         <div class="bar-actions">
+          <select id="user-filter" aria-label="View tasks of" title="View tasks of"><option value="">Mine</option></select>
+          <select id="sprint-filter" aria-label="Filter by sprint" hidden></select>
           <button class="icon-btn outline" id="recent-btn" title="Recently viewed" aria-label="Recently viewed"></button>
+          <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Edit JQL" aria-label="Edit JQL"></button>
           <div class="seg icons labeled" id="views" role="tablist">
             <a data-view="list" href="/tasks.html" role="tab" title="Task list" aria-label="Task list"></a>
             <a data-view="docs" href="/docs.html" role="tab" title="Confluence pages & attachments" aria-label="Documents"></a>
@@ -76,6 +79,10 @@
           </div>
         </div>
       </div>
+      <div class="jql-row" id="jql-row" hidden>
+        <input id="jql" class="mono" spellcheck="false" aria-label="JQL" placeholder="JQL…" />
+        <button class="btn primary" id="apply">Apply</button>
+      </div>
     </header>
 
     <main id="main"></main>
@@ -91,6 +98,7 @@
     <script src="/js/format.js"></script>
     <script src="/js/ai.js"></script>
     <script src="/js/panels.js"></script>
+    <script src="/js/progress.js"></script>
     <script src="/js/docs.js"></script>
     <script src="/js/menu.js"></script>
     <script src="/js/settings.js"></script>

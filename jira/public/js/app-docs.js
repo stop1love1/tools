@@ -24,6 +24,7 @@ function load(opts) {
 function render() {
   renderMeta();
   $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
+  renderSprints();
   syncUrl();
   const main = $('#main');
   if (state.view === 'settings') {
@@ -47,8 +48,13 @@ function render() {
     return;
   }
   if (!state.fetchedAt) return;
-  main.replaceChildren(renderDocs(state.issues));
+  const filtered = state.sprint ? state.issues.filter((i) => inSprint(i, state.sprint)) : state.issues;
+  main.replaceChildren(renderDocs(filtered));
 }
+
+window.onUserFilterChange = () => load();
+window.onJqlChange = () => load();
+window.onSprintFilterChange = () => render();
 
 window.onShortcutR = (opts) => load(opts);
 window.onShortcutExtra = (e, typing) => {
@@ -70,6 +76,7 @@ async function initPage() {
   const cached = !!state.fetchedAt;
   if (cached || state.view === 'settings') render();
   const firstLoad = load({ silent: cached });
+  loadUsers();
   return cached ? undefined : firstLoad;
 }
 window.initPage = initPage;
