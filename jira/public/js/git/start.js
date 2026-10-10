@@ -10,43 +10,26 @@
 // Supports patterns: [FE], FE:, FE, FE-, FE/, "FE " at the start, and combinations like [FE][BE], FE/BE
 function guessRepos(issue) {
   const repos = gitRepos();
-  const summary = issue.summary;
-  
-  // Extract all tags from the beginning of the summary
-  // Matches: [FE], [BE], [TOOLS], FE:, BE:, TOOLS:, FE,, BE,, TOOLS,, FE, BE, TOOLS
-  const tagMatches = [];
-  const prefixRegex = /^[\s]*(?:\[([A-Z]+)\]|\s*([A-Z]+)[\s:,\-/])/;
-  let text = summary;
-  
-  // Extract all sequential prefixes
-  while (text && tagMatches.length < 5) {
-    const match = text.match(prefixRegex);
-    if (!match) break;
-    const tag = (match[1] || match[2] || '').toUpperCase();
-    if (!tag || !['FE', 'BE', 'TOOLS', 'FRONTEND', 'BACKEND'].includes(tag.split(/[\s:,\-/]/)[0])) break;
-    
-    const normalizedTag = tag.split(/[\s:,\-/]/)[0]; // Get first part if combined like "FE/BE"
-    tagMatches.push(normalizedTag);
-    text = text.slice(match[0].length);
-  }
-  
-  // Map tags to repos: FE/FRONTEND → front, BE/BACKEND → back, TOOLS → tools
-  const selectedRepos = [];
-  for (const tag of tagMatches) {
-    if (tag === 'FE' || tag === 'FRONTEND') {
-      const frontRepo = repos.find((r) => r.startsWith('front'));
-      if (frontRepo && !selectedRepos.includes(frontRepo)) selectedRepos.push(frontRepo);
-    } else if (tag === 'BE' || tag === 'BACKEND') {
-      const backRepo = repos.find((r) => r.startsWith('back'));
-      if (backRepo && !selectedRepos.includes(backRepo)) selectedRepos.push(backRepo);
-    } else if (tag === 'TOOLS') {
-      const toolsRepo = repos.find((r) => r.startsWith('tools'));
-      if (toolsRepo && !selectedRepos.includes(toolsRepo)) selectedRepos.push(toolsRepo);
+  const TAGS = { fe: 'front', frontend: 'front', be: 'back', backend: 'back' };
+  const picked = [];
+  let rest = issue.summary || '';
+  // Leading tags, up to 3 groups: "[FE]", "FE:", "FE,", "FE -", "FE ", "[FE][BE]", "FE/BE:", "[fe/be]".
+  for (let i = 0; i < 3; i++) {
+    const m = rest.match(/^\s*(?:\[([^\]]*)\]|([A-Za-z]+(?:\s*[\/+&]\s*[A-Za-z]+)*)(\s*[:,\-–|]|\s|$))/);
+    if (!m) break;
+    const bracketed = m[1] !== undefined;
+    const names = (bracketed ? m[1] : m[2]).split(/[^A-Za-z]+/).filter(Boolean);
+    // A bare word followed only by a space must be upper case ("FE Foo", not "Be able to…").
+    const bareWord = !bracketed && !/[:,\-–|]/.test(m[3]);
+    if (!names.length || !names.every((n) => TAGS[n.toLowerCase()]) || (bareWord && names.some((n) => n !== n.toUpperCase()))) break;
+    for (const n of names) {
+      const repo = repos.find((r) => r.startsWith(TAGS[n.toLowerCase()]));
+      if (repo && !picked.includes(repo)) picked.push(repo);
     }
+    rest = rest.slice(m[0].length);
   }
-  
-  // If nothing matched, default to first repo
-  return selectedRepos.length ? selectedRepos : repos.slice(0, 1);
+  // No recognised tag: FE is the default.
+  return picked.length ? picked : [repos.find((r) => r.startsWith('front')) || repos[0]].filter(Boolean);
 }
 
 // Everything needed to start coding a ticket, in one popover: type + short description (+ BE/FE, stash, Jira status).
