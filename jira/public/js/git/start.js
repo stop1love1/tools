@@ -6,11 +6,47 @@
 // Start a ticket (from its drawer). The task list itself shows no git state: nothing git-related is fetched
 // until a ticket's detail is opened.
 
-// "[FE] …" / "BE: …" in the summary picks the repo whose id starts with front / back; otherwise the first repo.
+// Auto-detect repos from issue summary prefix.
+// Supports patterns: [FE], FE:, FE, FE-, FE/, "FE " at the start, and combinations like [FE][BE], FE/BE
 function guessRepos(issue) {
-  const tag = issue.summary.match(/^\W*(FE|BE)\b/i)?.[1].toLowerCase();
-  const named = tag && gitRepos().filter((r) => r.startsWith(tag[0] === 'f' ? 'front' : 'back'));
-  return named?.length ? named : gitRepos().slice(0, 1);
+  const repos = gitRepos();
+  const summary = issue.summary;
+  
+  // Extract all tags from the beginning of the summary
+  // Matches: [FE], [BE], [TOOLS], FE:, BE:, TOOLS:, FE,, BE,, TOOLS,, FE, BE, TOOLS
+  const tagMatches = [];
+  const prefixRegex = /^[\s]*(?:\[([A-Z]+)\]|\s*([A-Z]+)[\s:,\-/])/;
+  let text = summary;
+  
+  // Extract all sequential prefixes
+  while (text && tagMatches.length < 5) {
+    const match = text.match(prefixRegex);
+    if (!match) break;
+    const tag = (match[1] || match[2] || '').toUpperCase();
+    if (!tag || !['FE', 'BE', 'TOOLS', 'FRONTEND', 'BACKEND'].includes(tag.split(/[\s:,\-/]/)[0])) break;
+    
+    const normalizedTag = tag.split(/[\s:,\-/]/)[0]; // Get first part if combined like "FE/BE"
+    tagMatches.push(normalizedTag);
+    text = text.slice(match[0].length);
+  }
+  
+  // Map tags to repos: FE/FRONTEND → front, BE/BACKEND → back, TOOLS → tools
+  const selectedRepos = [];
+  for (const tag of tagMatches) {
+    if (tag === 'FE' || tag === 'FRONTEND') {
+      const frontRepo = repos.find((r) => r.startsWith('front'));
+      if (frontRepo && !selectedRepos.includes(frontRepo)) selectedRepos.push(frontRepo);
+    } else if (tag === 'BE' || tag === 'BACKEND') {
+      const backRepo = repos.find((r) => r.startsWith('back'));
+      if (backRepo && !selectedRepos.includes(backRepo)) selectedRepos.push(backRepo);
+    } else if (tag === 'TOOLS') {
+      const toolsRepo = repos.find((r) => r.startsWith('tools'));
+      if (toolsRepo && !selectedRepos.includes(toolsRepo)) selectedRepos.push(toolsRepo);
+    }
+  }
+  
+  // If nothing matched, default to first repo
+  return selectedRepos.length ? selectedRepos : repos.slice(0, 1);
 }
 
 // Everything needed to start coding a ticket, in one popover: type + short description (+ BE/FE, stash, Jira status).
