@@ -9,6 +9,13 @@ function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
+// Dashboard-relative links (attachments) are useless to Claude: make them absolute.
+// Lazy require: config.js requires this module.
+function dashboardUrl(rel) {
+  const port = require('./config').startupValue('server.port');
+  return rel.startsWith('/') ? `http://localhost:${port}${rel}` : rel;
+}
+
 function send(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
@@ -98,4 +105,4 @@ const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A Jira issue key such as VLEARN-123 (shared by the HTTP API, the MCP server and the git flow).
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
-module.exports = { httpError, send, sendHtml, readJson, safeJson, mapPool, loadEnv, tilde, escapeRe, htmlToText, ISSUE_KEY_RE };
+module.exports = { httpError, send, sendHtml, readJson, safeJson, mapPool, loadEnv, tilde, escapeRe, htmlToText, dashboardUrl, ISSUE_KEY_RE };

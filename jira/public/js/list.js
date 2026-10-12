@@ -253,32 +253,9 @@ function renderList(list) {
               class: 'icon-btn sm claude-btn',
               title: `Open ${parent.key} + ${items.length} subtasks in Claude Code`,
               'aria-label': `Open group ${parent.key} in Claude Code`,
-              onClick: async (e) => {
+              onClick: (e) => {
                 e.stopPropagation();
-                let combined = `# ${parent.key}: ${parent.summary}\n`;
-                combined += `- Jira: ${parent.url || siteOf(items[0]) + '/browse/' + parent.key}\n`;
-                combined += `- Type: ${parent.type?.name || parent.type}\n`;
-                combined += `\n---\n\n## Subtasks (${items.length}):\n\n`;
-                for (const item of items) {
-                  combined += `### ${item.key}: ${item.summary}\n`;
-                  combined += `- Status: ${item.status.name}\n`;
-                  combined += `- Jira: ${item.url}\n`;
-                  const u = urgency(item);
-                  if (u.reasons.length) combined += `- Needs attention: ${u.reasons.map((r) => r.label).join(', ')}\n`;
-                  combined += '\n';
-                }
-                combined = combined.slice(0, 11_000);
-                try {
-                  await navigator.clipboard.writeText(combined);
-                } catch {
-                  // Clipboard unavailable
-                }
-                try {
-                  await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt: combined }) });
-                  toast(`Opened ${parent.key} + ${items.length} subtasks in Claude Code`);
-                } catch (err) {
-                  toast(`Failed to open Claude Code: ${err.message}. Content copied.`, 'error');
-                }
+                startWithClaude(parent);
               },
             },
             icon('ai'),

@@ -99,7 +99,7 @@ function startWithClaude(issue) {
       notes: notes.value.trim(),
     };
     if (!options.repos.length) return toast('Pick at least one repo', 'error');
-    LS.set('agentOpts', { mode, mrKinds: options.mrKinds, draft: options.draft, moveStatus: options.moveStatus, writes: options.writes });
+    LS.set('agentOpts', { mode, mrKinds: options.mrKinds, draft: options.draft, moveStatus: options.moveStatus });
     startBtn.disabled = true;
     try {
       const { prompt } = await api('/api/claude/prompt', { method: 'POST', body: JSON.stringify(options) });

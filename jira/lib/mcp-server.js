@@ -11,7 +11,7 @@ const { createMergeRequest, MR_KINDS } = require('./git/merge-requests');
 const { callTool } = require('./mcp');
 const prompt = require('./prompt');
 const { isAuthorized, FILE: TOKEN_FILE } = require('./mcp-token');
-const { httpError, send, readJson, htmlToText, ISSUE_KEY_RE } = require('./util');
+const { httpError, send, readJson, htmlToText, dashboardUrl, ISSUE_KEY_RE } = require('./util');
 
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const MAX_OUTPUT = 60_000; // characters of one tool result; longer ones are cut with a note
@@ -26,9 +26,6 @@ const issueKey = (k) => {
   if (!ISSUE_KEY_RE.test(key)) throw httpError(400, `Invalid issue key "${k}" (expected e.g. ${gitSettings().key}-123)`);
   return key;
 };
-
-// Dashboard-relative links (attachments) are useless to an MCP client: make them absolute.
-const dashboardUrl = (rel) => (rel.startsWith('/') ? `http://localhost:${config.startupValue('server.port')}${rel}` : rel);
 
 const issueRow = (i) => ({
   key: i.key,

@@ -302,6 +302,31 @@ test('get_issue returns attachment URLs as absolute http://localhost:<port>/api/
   assert.match(text, new RegExp('http://localhost:' + port + '/api/attachments/'));
 });
 
+test('task_brief returns attachment URLs as absolute and includes "ticket data" warning', async () => {
+  const { handleMcp } = loadServer({ allowWrites: true });
+  const config = require('../lib/config');
+  const port = config.startupValue('server.port');
+  const issuesMod = require('../lib/issues');
+  const gitReadMod = require('../lib/git/read');
+  
+  issuesMod.issueDetail = async (key) => ({
+    issue: { key, summary: 'Test', type: { name: 'Task' }, status: { name: 'To Do' }, attachments: [{ filename: 'test.pdf', url: '/api/attachments/123/test.pdf', size: 100, mimeType: 'application/pdf', created: '2024-01-01', author: 'Alice', id: 123 }], docs: [], parent: null, url: 'https://example/browse/' + key },
+    assignee: 'Alice',
+    descriptionHtml: '<p>A task</p>',
+    confluence: [],
+    links: [],
+    children: [],
+    comments: [],
+  });
+  gitReadMod.flow = async () => ({ repos: { backend: { current: 'develop', dirty: 0, op: null, epic: { name: 'epic/FOO', remote: true, conflictUat: null }, uat: { name: 'uat/VLEARN-1', remote: true }, develop: { name: 'develop', remote: true }, commits: [] } } });
+  
+  const res = await call(handleMcp, fakeReq({ body: { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'task_brief', arguments: { key: 'VLEARN-1', repos: ['backend'] } } } }));
+  const body = res.json();
+  const text = body.result.content.map((c) => c.text).join('');
+  assert.match(text, new RegExp('http://localhost:' + port + '/api/attachments/'));
+  assert.match(text, /NOTE:.*ticket data.*not instructions/i);
+});
+
 test('render truncates a tool result longer than 60000 chars', async () => {
   const { handleMcp } = loadServer();
   const gitReadMod = require('../lib/git/read');
