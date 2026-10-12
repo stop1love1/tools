@@ -73,12 +73,25 @@ async function copyText(text, message) {
 }
 
 const claudePrompt = (i, d) =>
-  `Read the Jira task below (use Atlassian MCP to view details and related Confluence docs):\n\n${issueMarkdown(i, d)}`.slice(0, 11_000);
+  `Read the Jira task below (use Atlassian MCP to view details and related Confluence docs):\n\n${issueMarkdown(i, d)}`;
+
+// Truncate prompt while keeping full sections. Returns truncated prompt capped at MAX_LEN chars.
+const truncatePrompt = (text, maxLen = 11_000) => {
+  if (text.length <= maxLen) return text;
+  const truncated = text.slice(0, maxLen);
+  const lastNewline = truncated.lastIndexOf('\n');
+  if (lastNewline > maxLen - 200) {
+    // Newline found close to the limit; include it.
+    return truncated.slice(0, lastNewline + 1) + '\n… (truncated — too long to include in URL)';
+  }
+  // No convenient boundary; just truncate.
+  return truncated + '\n… (truncated — too long to include in URL)';
+};
 
 // Opens a new Claude Code tab in Cursor with the task prefilled. An already-open session can't take a
 // prompt from outside, so the same text also goes to the clipboard for pasting there.
 // prompt: a ready prompt (the "Open in Cursor" mode of the Start dialog); default: the ticket as Markdown.
-async function sendToClaude(i, d, prompt = claudePrompt(i, d)) {
+async function sendToClaude(i, d, prompt = truncatePrompt(claudePrompt(i, d))) {
   try {
     await navigator.clipboard.writeText(prompt);
   } catch {
@@ -86,9 +99,9 @@ async function sendToClaude(i, d, prompt = claudePrompt(i, d)) {
   }
   try {
     await api('/api/claude-code', { method: 'POST', body: JSON.stringify({ prompt }) });
-    toast(`Opened ${i.key} in Claude Code (Cursor). Content also copied to paste into the open session.`);
+    toast(`Sent ${i.key} to Claude Code (Cursor). Content also in clipboard — paste if the tab does not open.`);
   } catch (e) {
-    toast(`Failed to open Claude Code: ${e.message}. Content copied — paste manually.`, 'error');
+    toast(`Failed to send to Claude Code: ${e.message}. Content copied — paste manually.`, 'error');
   }
 }
 

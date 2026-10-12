@@ -105,7 +105,8 @@ function startWithClaude(issue) {
       const { prompt } = await api('/api/claude/prompt', { method: 'POST', body: JSON.stringify(options) });
       const detail = CFG.agent?.mcp ? null : await getDetail(issue.key).catch(() => null);
       dlg.close();
-      sendToClaude(issue, detail, detail ? `${prompt}\n\n---\nThe jira-dashboard MCP is off; the ticket:\n\n${issueMarkdown(issue, detail)}`.slice(0, 11_500) : prompt);
+      const fullPrompt = detail ? `${prompt}\n\n---\nThe jira-dashboard MCP is off; the ticket:\n\n${issueMarkdown(issue, detail)}` : prompt;
+      sendToClaude(issue, detail, truncatePrompt(fullPrompt));
     } catch (e) {
       startBtn.disabled = false;
       toast(e.message, 'error');
