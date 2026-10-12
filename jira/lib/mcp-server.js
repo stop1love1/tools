@@ -5,21 +5,30 @@ const issues = require('./issues');
 const notifications = require('./notifications');
 const gitRead = require('./git/read');
 const git = require('./git');
-const { getJob } = require('./git/jobs');
+const { getJob, listJobs } = require('./git/jobs');
 const { settings: gitSettings } = require('./git/settings');
 const { createMergeRequest, MR_KINDS } = require('./git/merge-requests');
 const { callTool } = require('./mcp');
 const prompt = require('./prompt');
-const { httpError, send, readJson, htmlToText } = require('./util');
+const { isAuthorized, FILE: TOKEN_FILE } = require('./mcp-token');
+const { httpError, send, readJson, htmlToText, ISSUE_KEY_RE } = require('./util');
 
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
-const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
+const MAX_OUTPUT = 60_000; // characters of one tool result; longer ones are cut with a note
+const JOB_WAIT_DEFAULT = 20; // seconds run_git_action waits before handing back a still-running job id
+
+// run_git_action steps that rewrite or delete history / refs: they need "Allow destructive git steps" on top of "Allow write tools".
+const DESTRUCTIVE_ACTIONS = new Set(['sync-task', 'sync-develop', 'rebase-epic', 'undo', 'delete-branches', 'prune-backups']);
+const isDestructive = (action, params) => DESTRUCTIVE_ACTIONS.has(action) || (action === 'push' && !!params?.force);
 
 const issueKey = (k) => {
   const key = String(k || '').trim().toUpperCase();
-  if (!KEY_RE.test(key)) throw httpError(400, `Invalid issue key "${k}" (expected e.g. ${gitSettings().key}-123)`);
+  if (!ISSUE_KEY_RE.test(key)) throw httpError(400, `Invalid issue key "${k}" (expected e.g. ${gitSettings().key}-123)`);
   return key;
 };
+
+// Dashboard-relative links (attachments) are useless to an MCP client: make them absolute.
+const dashboardUrl = (rel) => (rel.startsWith('/') ? `http://localhost:${config.startupValue('server.port')}${rel}` : rel);
 
 const issueRow = (i) => ({
   key: i.key,
@@ -47,7 +56,15 @@ async function waitJob(id, waitSeconds = 120) {
     job = getJob(id);
   }
   if (!job) throw httpError(404, 'Job not found');
-  return { id: job.id, title: job.title, status: job.status, error: job.error, result: job.result, log: job.log.join('\n').slice(-12_000) };
+  return {
+    id: job.id,
+    title: job.title,
+    status: job.status,
+    ...(job.status === 'running' ? { note: 'Still running: call get_git_job with this id to wait for it. Do not start the same step again.' } : {}),
+    error: job.error,
+    result: job.result,
+    log: job.log.join('\n').slice(-12_000),
+  };
 }
 
 const str = (description) => ({ type: 'string', description });
@@ -71,8 +88,8 @@ const TOOLS = [
         writes: {
           type: 'boolean',
           description:
-            'true (default): use the write tools yourself end-to-end (transition_issue, run_git_action, create_merge_request) — no need to ask me between steps. ' +
-            'false: tell me the steps instead and do nothing by hand without asking first. Has no effect if write tools are off in Settings → MCP.',
+            'false (default): tell me the steps instead and do nothing by hand without asking first. ' +
+            'true: use the write tools yourself (transition_issue, run_git_action, create_merge_request) — only when I asked for it. Has no effect if write tools are off in Settings → MCP.',
         },
       },
       required: ['key'],
@@ -87,7 +104,10 @@ const TOOLS = [
     run: async ({ jql, limit = 100 }) => {
       const q = String(jql || '').trim() || config.get().jira.defaultJql;
       const list = await issues.listIssues(q);
-      return { jql: q, total: list.length, issues: list.slice(0, Math.max(1, Math.min(Number(limit) || 100, 300))).map(issueRow) };
+      const max = Math.max(1, Math.min(Number(limit) || 100, 300));
+      // The search itself stops at Settings → Max issues per load, so a full page may hide more.
+      const capped = list.length >= config.get().jira.maxIssues;
+      return { jql: q, total: list.length, truncated: list.length > max || capped, issues: list.slice(0, max).map(issueRow) };
     },
   },
   {
@@ -105,7 +125,7 @@ const TOOLS = [
         subtasks: d.children.map((c) => ({ key: c.key, summary: c.summary, type: c.type, status: c.status?.name, assignee: c.assignee })),
         confluence: [...d.issue.docs, ...d.confluence].map((c) => ({ title: c.title, url: c.url, pageId: c.pageId, from: c.from })),
         links: d.links.map((l) => ({ kind: l.kind, title: l.title, url: l.url })),
-        attachments: d.issue.attachments.map((a) => ({ filename: a.filename, size: a.size, url: a.url })),
+        attachments: d.issue.attachments.map((a) => ({ filename: a.filename, size: a.size, url: dashboardUrl(a.url) })),
       };
     },
   },
@@ -164,9 +184,17 @@ const TOOLS = [
   },
   {
     name: 'get_git_job',
+    needsToken: true, // job logs carry git / pre-commit hook output
     description: 'Status and log of a git job started by run_git_action (waits up to waitSeconds while it runs).',
     inputSchema: { type: 'object', properties: { id: str('Job id'), waitSeconds: { type: 'number', description: 'Default 30' } }, required: ['id'] },
     run: ({ id, waitSeconds = 30 }) => waitJob(String(id), Number(waitSeconds)),
+  },
+  {
+    name: 'list_git_jobs',
+    needsToken: true,
+    description: 'Recent git jobs (newest first) with id, title, repo and status — to find a job whose id you did not receive (e.g. run_git_action timed out on the client side).',
+    inputSchema: { type: 'object', properties: {} },
+    run: () => ({ jobs: listJobs() }),
   },
 
   {
@@ -240,7 +268,8 @@ const TOOLS = [
       '- create-task {epic, branch}; sync-task {epic, branch} (rebase task onto epic + push); sync-develop {branch (…-develop)} (rebase onto develop + push); rebase-epic {epic}',
       '- pick-develop {branch (…-develop), shas[]}; pick-epic {epic, branch (task …-uat), shas[]} (how a task gets into the epic, instead of an MR task → epic: cherry-pick the task\'s commits straight onto the epic and push, fast-forward only; the log ends with a git cherry check — no "+" line = fully on the epic); commit {message "<KEY>-123: …", files[], push?, skip?[] (pre-commit hook ids to skip, passed as SKIP=; only for a hook failing for reasons unrelated to the change, e.g. npm-audit / trivy-fs)}',
       '- continue / skip / abort {dir?} (continue / skip also do the push the stopped step owed); undo {branch}; delete-branches {branches[]}; prune-backups {days}',
-      'Waits for the job up to waitSeconds (default 120) and returns its status and log.',
+      `Waits for the job up to waitSeconds (default ${JOB_WAIT_DEFAULT}) and returns its status and log; a job still running then comes back with status "running" and its id: follow it with get_git_job.`,
+      'Destructive steps (sync-task, sync-develop, rebase-epic, undo, delete-branches, prune-backups, push with force) are refused unless "Allow destructive git steps" is on in Settings → MCP.',
     ].join('\n'),
     inputSchema: {
       type: 'object',
@@ -252,7 +281,10 @@ const TOOLS = [
       },
       required: ['action'],
     },
-    run: async ({ action, repo, params, waitSeconds = 120 }) => {
+    run: async ({ action, repo, params, waitSeconds = JOB_WAIT_DEFAULT }) => {
+      if (isDestructive(action, params) && !config.get().mcp.allowDestructive) {
+        throw httpError(403, `"${action}" rewrites or deletes history; enable it in the dashboard: Settings → MCP → Allow destructive git steps.`);
+      }
       const job = git.startAction({ ...(params || {}), action, ...(repo ? { repo } : {}) });
       return waitJob(job.id, Number(waitSeconds));
     },
@@ -268,14 +300,30 @@ const PROMPT_START = {
     { name: 'mode', description: 'implement (default) or plan' },
     { name: 'repos', description: 'Repo ids, comma separated (default: the first repo)' },
     { name: 'mrs', description: 'MRs to open, comma separated: epic-uat, develop (default epic-uat; task-epic is legacy)' },
-    { name: 'writes', description: 'true (default) to use the write tools yourself end-to-end, false to tell me the steps instead' },
+    { name: 'writes', description: 'true to use the write tools yourself end-to-end; default false: tell me the steps instead' },
     { name: 'notes', description: 'Anything else Claude should know' },
   ],
 };
 
 const visibleTools = () => TOOLS.filter((t) => !t.write || canWrite());
 
-async function rpc(msg) {
+// Hints for MCP clients (Cursor, Claude Code): auto-approve reads, ask before writes, warn on run_git_action.
+const annotations = (t) => ({
+  readOnlyHint: !t.write,
+  ...(t.write ? { destructiveHint: t.name === 'run_git_action', idempotentHint: false } : {}),
+  openWorldHint: t.name !== 'git_overview' && !t.name.startsWith('git_branches'),
+});
+
+// Compact JSON, cut at MAX_OUTPUT so one huge page or issue cannot flood the model's context.
+function render(data) {
+  const text = typeof data === 'string' ? data : JSON.stringify(data);
+  return text.length > MAX_OUTPUT ? `${text.slice(0, MAX_OUTPUT)}\n… (truncated: ${text.length - MAX_OUTPUT} more characters; narrow the request)` : text;
+}
+
+async function rpc(msg, { authorized = false } = {}) {
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.method !== 'string') {
+    return { jsonrpc: '2.0', id: msg && typeof msg === 'object' ? (msg.id ?? null) : null, error: { code: -32600, message: 'Invalid Request' } };
+  }
   const { id, method, params = {} } = msg;
   const ok = (result) => ({ jsonrpc: '2.0', id, result });
   const fail = (code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
@@ -306,19 +354,23 @@ async function rpc(msg) {
       }
     }
     case 'tools/list':
-      return ok({ tools: visibleTools().map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return ok({ tools: visibleTools().map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: annotations(t) })) });
     case 'tools/call': {
       const tool = visibleTools().find((t) => t.name === params.name);
       if (!tool) {
         const hidden = TOOLS.some((t) => t.name === params.name);
         return fail(-32602, hidden ? `${params.name} is a write tool; enable it in the dashboard: Settings → MCP → Allow write tools.` : `Unknown tool: ${params.name}`);
       }
+      if ((tool.write || tool.needsToken) && !authorized) {
+        console.warn(`[mcp-server] refused ${params.name}: missing or wrong bearer token`);
+        return fail(-32001, `${params.name} needs the dashboard token: send "Authorization: Bearer <contents of ${TOKEN_FILE}>" (see README → MCP).`);
+      }
       const started = Date.now();
       console.log(`[mcp-server] -> tools/call ${params.name}`, params.arguments ? JSON.stringify(params.arguments) : '{}');
       try {
         const data = await tool.run(params.arguments || {});
         console.log(`[mcp-server] <- ${params.name} ok (${Date.now() - started}ms)`);
-        return ok({ content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data, null, 1) }] });
+        return ok({ content: [{ type: 'text', text: render(data) }] });
       } catch (e) {
         console.error(`[mcp-server] <- ${params.name} failed after ${Date.now() - started}ms: ${e.message}`);
         return ok({ content: [{ type: 'text', text: `Error: ${e.name === 'TimeoutError' ? 'Atlassian MCP timed out' : e.message}` }], isError: true });
@@ -335,7 +387,8 @@ async function handleMcp(req, res) {
     return send(res, 404, { error: 'MCP is turned off (Settings → MCP)' });
   }
   const origin = req.headers.origin;
-  if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+  const port = config.startupValue('server.port');
+  if (origin && ![`http://localhost:${port}`, `http://127.0.0.1:${port}`].includes(origin)) {
     console.warn(`[mcp-server] rejected request: disallowed origin "${origin}"`);
     return send(res, 403, { error: 'Origin not allowed' });
   }
@@ -344,14 +397,20 @@ async function handleMcp(req, res) {
     return res.end();
   }
   if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Content-Type must be application/json' });
-  const body = await readJson(req);
-  if (!body) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch (e) {
+    return send(res, e.status || 400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: e.message } });
+  }
+  if (!body || (Array.isArray(body) && !body.length)) {
     console.warn('[mcp-server] rejected request: JSON parse error');
     return send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
   }
-  const methods = (Array.isArray(body) ? body : [body]).map((m) => m.method).join(', ');
-  console.log(`[mcp-server] POST /mcp: ${methods}`);
-  const replies = (await Promise.all((Array.isArray(body) ? body : [body]).map(rpc))).filter(Boolean);
+  const messages = Array.isArray(body) ? body : [body];
+  const authorized = isAuthorized(req);
+  console.log(`[mcp-server] POST /mcp: ${messages.map((m) => m?.method).join(', ')}`);
+  const replies = (await Promise.all(messages.map((m) => rpc(m, { authorized })))).filter(Boolean);
   if (!replies.length) {
     res.writeHead(202);
     return res.end();

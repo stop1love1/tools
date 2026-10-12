@@ -31,9 +31,23 @@ claude mcp add --transport http --scope user jira-dashboard http://localhost:474
 
 Cursor (`~/.cursor/mcp.json`): `{ "mcpServers": { "jira-dashboard": { "url": "http://localhost:4747/mcp" } } }`
 
-- Tool đọc: `list_issues`, `get_issue` (mô tả, comment, Confluence, MR), `list_transitions`, `get_notifications`, `git_overview`, `git_flow`, `git_epic`, `git_branches`, `get_git_job`.
-- Tool ghi (tắt mặc định, bật ở Settings → MCP → *Allow write tools*): `transition_issue`, `run_git_action` (các bước git flow giống nút trên dashboard).
-- Chỉ nhận request từ máy này (`127.0.0.1`, kiểm tra `Host` và `Origin`). Tắt hẳn: Settings → MCP → *Serve MCP at /mcp*.
+- Tool đọc (không cần token): `task_brief`, `list_issues`, `get_issue` (mô tả, comment, Confluence, MR), `get_confluence_page`, `list_transitions`, `get_notifications`, `git_overview`, `git_flow`, `git_epic`, `git_branches`.
+- `get_git_job` và `list_git_jobs` chỉ đọc nhưng **cần token**, vì log job có output của git và pre-commit hook.
+- Tool ghi (tắt mặc định, bật ở Settings → MCP → *Allow write tools*): `transition_issue`, `create_merge_request`, `run_git_action` (các bước git flow giống nút trên dashboard). Tool ghi cần **token** (xem dưới).
+- Bước phá huỷ của `run_git_action` (`sync-task`, `sync-develop`, `rebase-epic`, `undo`, `delete-branches`, `prune-backups`, `push` với `force`) cần bật thêm Settings → MCP → *Allow destructive git steps*.
+- `run_git_action` chờ job tối đa 20 giây (đổi bằng `waitSeconds`); job chạy lâu hơn trả về `status: "running"` kèm id, theo dõi bằng `get_git_job`. Quên id thì dùng `list_git_jobs`.
+- Chỉ nhận request từ máy này (`127.0.0.1`, kiểm tra `Host` và `Origin` đúng cổng của dashboard). Tắt hẳn: Settings → MCP → *Serve MCP at /mcp*.
+
+### Token cho tool ghi
+
+Khi khởi động, server tạo file `jira/.mcp-token` nếu chưa có (quyền 0600, đã gitignore) và in đường dẫn ra console. Tool đọc không cần token; tool ghi chỉ chạy khi request có header `Authorization: Bearer <nội dung file>`. Đổi token: xoá file (server tự tạo token mới ở request kế tiếp có gọi tool cần token hoặc lần khởi động sau), rồi cập nhật lại header trong cấu hình client, vì token cũ sẽ bị từ chối.
+
+```bash
+claude mcp add --transport http --scope user jira-dashboard http://localhost:4747/mcp \
+  --header "Authorization: Bearer $(cat jira/.mcp-token)"
+```
+
+Cursor: `{ "mcpServers": { "jira-dashboard": { "url": "http://localhost:4747/mcp", "headers": { "Authorization": "Bearer <token>" } } } }`
 
 ## Start with Claude
 

@@ -247,16 +247,37 @@ async function doTransition(key, id) {
 // ---------------------------------------------------------------------------
 // The epic branch of the git flow follows the parent Epic on Jira; a ticket without one is its own epic.
 
-const epicCache = new Map();
-const summaryCache = new Map(); // ticket → summary, filled while resolving epics
+// Both caches expire: the parent Epic can change on Jira while the server keeps running.
+const CACHE_TTL = 10 * 60_000;
+const CACHE_MAX = 500;
+const epicCache = new Map(); // ticket → { value, at }
+const summaryCache = new Map(); // ticket → { value, at }, filled while resolving epics
+
+function cacheGet(cache, key) {
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > CACHE_TTL) {
+    cache.delete(key);
+    return undefined;
+  }
+  return hit.value;
+}
+
+function cacheSet(cache, key, value) {
+  cache.delete(key);
+  cache.set(key, { value, at: Date.now() });
+  // Maps iterate in insertion order, so the first key is the oldest.
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
 
 async function resolveEpic(key) {
-  if (epicCache.has(key)) return epicCache.get(key);
+  const cached = cacheGet(epicCache, key);
+  if (cached !== undefined) return cached;
   let epic = key;
   let cur = key;
   for (let depth = 0; depth < 3 && cur; depth++) {
     const j = await callTool('getJiraIssue', { issueIdOrKey: cur, fields: ['parent', 'issuetype', 'summary'] });
-    if (j.fields?.summary) summaryCache.set(cur, j.fields.summary);
+    if (j.fields?.summary) cacheSet(summaryCache, cur, j.fields.summary);
     if (/epic/i.test(j.fields?.issuetype?.name || '')) {
       epic = cur;
       break;
@@ -268,11 +289,11 @@ async function resolveEpic(key) {
     }
     cur = p?.key;
   }
-  epicCache.set(key, epic);
+  cacheSet(epicCache, key, epic);
   return epic;
 }
 
-const ticketSummary = (key) => summaryCache.get(key);
+const ticketSummary = (key) => cacheGet(summaryCache, key);
 
 // Sprint of a set of tickets by key, regardless of the default JQL (closed/old tickets a branch
 // still names are often outside it). Used by the workspace branch cleanup's sprint filter.

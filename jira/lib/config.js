@@ -71,6 +71,7 @@ function defaults() {
     mcp: {
       enabled: true,
       allowWrites: false,
+      allowDestructive: false,
     },
     agent: {
       extraInstructions: [],
@@ -117,7 +118,8 @@ const SCHEMA = [
   ] },
   { section: 'MCP (for Claude Code, Cursor…)', fields: [
     { key: 'mcp.enabled', label: 'Serve MCP at /mcp', type: 'bool', help: 'AI tools on this machine can read your Jira issues, docs and git flow.' },
-    { key: 'mcp.allowWrites', label: 'Allow write tools', type: 'bool', help: 'Changing Jira status and running git steps (branch, commit, push, rebase, cherry-pick…).' },
+    { key: 'mcp.allowWrites', label: 'Allow write tools', type: 'bool', help: 'Changing Jira status and running git steps (branch, commit, push, cherry-pick…). Clients must send the token from .mcp-token as a Bearer header.' },
+    { key: 'mcp.allowDestructive', label: 'Allow destructive git steps', type: 'bool', help: 'Also allow force-push, rebase of task / epic branches, undo, deleting branches and pruning backups. Needs "Allow write tools".' },
   ] },
   { section: 'Start with Claude', fields: [
     { key: 'agent.extraInstructions', label: 'Extra instructions in every prompt', type: 'lines', optional: true, help: 'Team conventions, commands to run before committing…' },

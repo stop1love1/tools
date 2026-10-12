@@ -95,4 +95,7 @@ function htmlToText(html) {
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-module.exports = { httpError, send, sendHtml, readJson, safeJson, mapPool, loadEnv, tilde, escapeRe, htmlToText };
+// A Jira issue key such as VLEARN-123 (shared by the HTTP API, the MCP server and the git flow).
+const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
+
+module.exports = { httpError, send, sendHtml, readJson, safeJson, mapPool, loadEnv, tilde, escapeRe, htmlToText, ISSUE_KEY_RE };

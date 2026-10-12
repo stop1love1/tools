@@ -17,9 +17,9 @@ const path = require('node:path');
 const { BACKUP_NS, git, hookEnv, counts, refs, worktrees, operation, wtState, backupsOf, stamp, stampTime } = require('./exec');
 const { ticketIds } = require('./read');
 const { resolveEpic } = require('../issues');
-const { httpError, tilde } = require('../util');
+const { httpError, tilde, ISSUE_KEY_RE } = require('../util');
 
-const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
+const KEY_RE = ISSUE_KEY_RE;
 const SHA_RE = /^[0-9a-f]{7,40}$/;
 
 // -------------------------------------------------------------------------

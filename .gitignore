@@ -16,6 +16,7 @@ dist/
 *.local
 .oauth.json
 .oauth.json.tmp
+.mcp-token
 jira/config.json
 jira/config.json.tmp
 

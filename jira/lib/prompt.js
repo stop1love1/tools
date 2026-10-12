@@ -5,9 +5,9 @@ const issues = require('./issues');
 const gitRead = require('./git/read');
 const { settings: gitSettings } = require('./git/settings');
 const { MR_KINDS } = require('./git/merge-requests');
-const { httpError, htmlToText } = require('./util');
+const { httpError, htmlToText, ISSUE_KEY_RE } = require('./util');
 
-const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
+const KEY_RE = ISSUE_KEY_RE;
 const DESC_MAX = 6000;
 const COMMENTS_MAX = 8;
 
@@ -19,7 +19,8 @@ function validate(opts = {}) {
   const repos = list(opts.repos).filter((r) => Object.hasOwn(s.repos, r));
   const mode = opts.mode === 'plan' ? 'plan' : 'implement';
   const mrKinds = mode === 'plan' ? [] : list(opts.mrKinds ?? ['epic-uat']).filter((k) => Object.hasOwn(MR_KINDS, k));
-  const writesWanted = opts.writes !== false && opts.writes !== 'false';
+  // Opt-in: the model only drives the write tools end-to-end when the user asked for it.
+  const writesWanted = opts.writes === true || opts.writes === 'true';
   const writes = mode !== 'plan' && writesWanted && config.get().mcp.allowWrites;
   return {
     key,

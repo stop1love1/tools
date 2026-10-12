@@ -7,24 +7,49 @@ const config = require('./config');
 const { getCredential, LOGIN_HINT } = require('./auth');
 const { httpError, safeJson } = require('./util');
 
-let session = null; // { token, id }
+const CLIENT_PROTOCOL = '2025-06-18';
+const MAX_CONCURRENT = 6; // calls in flight at once: a burst (notifications, epics) must not trip Atlassian's rate limit
+const MAX_TRANSIENT_RETRIES = 2;
+// Only these can be repeated after a 5xx without risking a double write (transitions, edits).
+const READ_ONLY_TOOL = /^(get|search|atlassianUserInfo)/;
+
+let session = null; // { token, id, version }
+let opening = null; // { token, promise }: the session being opened, shared by concurrent callers
 let rpcId = 0;
 
 const ts = () => new Date().toISOString();
 const log = (...args) => console.log(`[${ts()}]`, ...args);
 const logError = (...args) => console.error(`[${ts()}]`, ...args);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The cloud id the tools take is the site's host name.
 const cloudId = () => new URL(config.get().jira.siteUrl).host;
 
-async function mcpPost(cred, sessionId, message) {
+// Concurrency gate. A finishing call hands its slot straight to the next waiter, so the cap is never exceeded.
+let active = 0;
+const waiting = [];
+async function limited(fn) {
+  if (active >= MAX_CONCURRENT) await new Promise((resolve) => waiting.push(resolve));
+  else active++;
+  try {
+    return await fn();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
+  }
+}
+
+// sess: { id, version } once the session is open, null for `initialize`.
+async function mcpPost(cred, sess, message) {
   const res = await fetch(cred.url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${cred.token}`,
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
-      ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
+      ...(sess?.id ? { 'Mcp-Session-Id': sess.id } : {}),
+      ...(sess?.version ? { 'MCP-Protocol-Version': sess.version } : {}),
     },
     body: JSON.stringify({ jsonrpc: '2.0', ...message }),
     signal: AbortSignal.timeout(30_000),
@@ -46,28 +71,51 @@ async function openSession(cred) {
   const { res, reply } = await mcpPost(cred, null, {
     id: ++rpcId,
     method: 'initialize',
-    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'jira-dashboard', version: '1.0.0' } },
+    params: { protocolVersion: CLIENT_PROTOCOL, capabilities: {}, clientInfo: { name: 'jira-dashboard', version: '1.0.0' } },
   });
   if (!res.ok || !reply || reply.error) {
     logError(`[mcp] initialize failed: HTTP ${res.status}${reply?.error ? ` — ${reply.error.message}` : ''}`);
     throw httpError(502, `Could not start an MCP session (HTTP ${res.status})`);
   }
   const id = res.headers.get('mcp-session-id');
-  await mcpPost(cred, id, { method: 'notifications/initialized' });
-  session = { token: cred.token, id };
-  log(`[mcp] session opened (id: ${id})`);
-  return id;
+  const version = reply.result?.protocolVersion || CLIENT_PROTOCOL; // what the server agreed to
+  await mcpPost(cred, { id, version }, { method: 'notifications/initialized' });
+  session = { token: cred.token, id, version };
+  log(`[mcp] session opened (id: ${id}, protocol ${version})`);
+  return session;
 }
 
-async function callTool(name, args) {
+// Single-flight: callers that arrive while a session is being opened share it instead of opening their own.
+function ensureSession(cred) {
+  if (session && session.token === cred.token) return Promise.resolve(session);
+  if (opening && opening.token === cred.token) return opening.promise;
+  const promise = openSession(cred).finally(() => {
+    if (opening?.promise === promise) opening = null;
+  });
+  opening = { token: cred.token, promise };
+  return promise;
+}
+
+// Seconds from a Retry-After header, else exponential backoff with jitter (0.5 s, 1 s, …).
+function backoffMs(res, n) {
+  const after = Number(res?.headers.get('retry-after'));
+  if (Number.isFinite(after) && after > 0) return Math.min(after, 10) * 1000;
+  return 500 * 2 ** n + Math.floor(Math.random() * 250);
+}
+
+async function run(name, args) {
   let cred = await getCredential();
+  const readOnly = READ_ONLY_TOOL.test(name);
+  let refreshed = false;
+  let reopened = false;
+  let transient = 0;
   for (let attempt = 0; ; attempt++) {
     const started = Date.now();
-    let res, reply;
+    let sess, res, reply;
     try {
-      const sessionId = session && session.token === cred.token ? session.id : await openSession(cred);
+      sess = await ensureSession(cred);
       log(`[mcp] -> tools/call ${name}${attempt ? ` (attempt ${attempt + 1})` : ''}`);
-      ({ res, reply } = await mcpPost(cred, sessionId, {
+      ({ res, reply } = await mcpPost(cred, sess, {
         id: ++rpcId,
         method: 'tools/call',
         params: { name, arguments: { cloudId: cloudId(), ...args } },
@@ -75,17 +123,31 @@ async function callTool(name, args) {
     } catch (e) {
       logError(`[mcp] <- ${name} threw after ${Date.now() - started}ms: ${e.message}`);
       // Our own token was revoked or expired early: refresh once and retry.
-      if (e.unauthorized && cred.source === 'own' && attempt === 0) {
+      if (e.unauthorized && cred.source === 'own' && !refreshed) {
+        refreshed = true;
         log('[mcp] token unauthorized, refreshing and retrying once');
         cred = await getCredential({ forceRefresh: true });
         continue;
       }
+      // Network failure or timeout (no HTTP status): safe to repeat only for reads.
+      if (!e.status && readOnly && transient < MAX_TRANSIENT_RETRIES) {
+        await sleep(backoffMs(null, transient++));
+        continue;
+      }
       throw e;
     }
-    // 404 = the server dropped our session; start a new one once.
-    if (res.status === 404 && attempt === 0) {
+    // 404 = the server dropped our session; start a new one once (without discarding a newer session another call opened).
+    if (res.status === 404 && !reopened) {
+      reopened = true;
       log('[mcp] session dropped by server (404), opening a new one');
-      session = null;
+      if (session === sess) session = null;
+      continue;
+    }
+    // Rate limit or server hiccup: back off and repeat reads; a write may already have been applied, so it is not repeated.
+    if ((res.status === 429 || res.status >= 500) && readOnly && transient < MAX_TRANSIENT_RETRIES) {
+      const wait = backoffMs(res, transient++);
+      logError(`[mcp] <- ${name} HTTP ${res.status}, retrying in ${wait}ms`);
+      await sleep(wait);
       continue;
     }
     if (!res.ok || !reply) {
@@ -106,6 +168,9 @@ async function callTool(name, args) {
     return data ?? text;
   }
 }
+
+// Every Jira / Confluence call goes through here, at most MAX_CONCURRENT at a time.
+const callTool = (name, args) => limited(() => run(name, args));
 
 // Tool errors wrap Jira's error JSON inside a message string, e.g.
 // "Failed to search issues: Bad Request. {"errorMessages":[...]}".
@@ -130,6 +195,10 @@ async function searchAll(jql, fields) {
       responseContentFormat: 'adf',
       ...(nextPageToken ? { nextPageToken } : {}),
     });
+    // A plain-text reply means the tool did not return search JSON: fail loudly instead of looking like "no issues".
+    if (!data || typeof data !== 'object' || !('issues' in data)) {
+      throw httpError(502, `Unexpected reply from searchJiraIssuesUsingJql: ${String(typeof data === 'string' ? data : JSON.stringify(data)).slice(0, 200)}`);
+    }
     // ADF responses use the raw REST shape ({issues: [], nextPageToken}); markdown ones use {issues: {nodes, pageInfo}}.
     const page = data.issues || [];
     out.push(...(Array.isArray(page) ? page : page.nodes || []));
@@ -138,6 +207,9 @@ async function searchAll(jql, fields) {
   return out;
 }
 
-const resetSession = () => void (session = null);
+const resetSession = () => {
+  session = null;
+  opening = null;
+};
 
-module.exports = { callTool, searchAll, resetSession };
+module.exports = { callTool, searchAll, resetSession, toolErrorMessage };

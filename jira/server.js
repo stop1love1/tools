@@ -11,7 +11,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadEnv, httpError, send, sendHtml, readJson } = require('./lib/util');
+const { loadEnv, httpError, send, sendHtml, readJson, ISSUE_KEY_RE } = require('./lib/util');
 
 loadEnv(path.join(__dirname, '.env'));
 
@@ -25,13 +25,12 @@ const { listUsers } = require('./lib/users');
 const { openClaudeCode } = require('./lib/editor');
 const git = require('./lib/git');
 const { handleMcp } = require('./lib/mcp-server');
+const { getToken, FILE: tokenFile } = require('./lib/mcp-token');
 const { shortPrompt } = require('./lib/prompt');
 
 const PORT = config.startupValue('server.port');
 const HOST = '127.0.0.1';
 const MAX_PROMPT = 12_000;
-const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
-
 // Browser scripts, in load order (index.html lists the same files).
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
@@ -175,6 +174,9 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const how = auth.hasOwnSession() ? 'own session, auto-refresh' : 'Claude Code token';
   console.log(`Jira dashboard: http://localhost:${PORT}  (${config.get().jira.siteUrl}, via MCP — ${how})`);
+  // Create the token file now so there is something to copy into the MCP client config.
+  getToken();
+  console.log(`MCP write tools need "Authorization: Bearer <token>" — token file: ${tokenFile}`);
   if (DEV) startLiveReloadServer();
 });
 

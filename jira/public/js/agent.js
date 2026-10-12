@@ -24,7 +24,7 @@ function startWithClaude(issue) {
   const kindBoxes = kinds.map((k) => box(defaultKinds.includes(k), { value: k }));
   const draft = box(!!saved.draft);
   const moveStatus = box(saved.moveStatus ?? true);
-  const writes = box(saved.writes ?? true, { disabled: !CFG.agent?.writes });
+  const writes = box(saved.writes ?? false, { disabled: !CFG.agent?.writes });
   const moveStatusLabel = h('span', null, 'Move Jira status');
   const notes = h('textarea', { class: 'gin', rows: '3', placeholder: 'Anything Claude should know: scope, approach, files, what to skip…' });
   const implementOnly = h(
