@@ -56,7 +56,7 @@ const state = {
   theme: LS.get('theme', 'auto'),
   docsQ: initParams.get('docsQ') || '',
   docsKind: ['pages', 'attachments'].includes(initParams.get('docsKind')) ? initParams.get('docsKind') : 'all',
-  docsSort: ['name', 'date', 'size', 'task'].includes(initParams.get('docsSort')) ? initParams.get('docsSort') : 'date',
+  docsSort: ['name', 'date', 'size', 'task', 'links'].includes(initParams.get('docsSort')) ? initParams.get('docsSort') : 'date',
   docsOrder: initParams.get('docsOrder') === 'asc' ? 'asc' : 'desc',
 };
 const cache = { transitions: new Map(), details: new Map() };

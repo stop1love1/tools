@@ -126,8 +126,25 @@
 .bar-actions {
   margin-left: auto;
 }
+/* Fixed width: the options arrive after the first paint, and an auto-sized select would resize (and push the
+   controls next to it) when "Mine" is replaced by the user list. */
 #user-filter {
+  width: 200px;
   max-width: 200px;
+  text-overflow: ellipsis;
+}
+/* While the user list loads: a small spinner left of the native arrow. */
+#user-filter.loading {
+  padding-right: 44px;
+  background-repeat: no-repeat;
+  background-position: right 26px center;
+  background-size: 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M12 3a9 9 0 1 0 9 9'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 12 12' to='360 12 12' dur='0.8s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E");
+}
+@media (prefers-reduced-motion: reduce) {
+  #user-filter.loading {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M12 3a9 9 0 1 0 9 9'/%3E%3C/svg%3E");
+  }
 }
 #sprint-filter {
   min-width: 190px;

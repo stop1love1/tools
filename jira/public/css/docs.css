@@ -20,6 +20,29 @@
   flex: 0 0 auto;
 }
 
+/* Which tasks / filters the lists below reflect, with "Clear filters" when any is active. */
+.docs-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-bottom: 12px;
+}
+.docs-ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .section-title {
   display: flex;
   align-items: baseline;

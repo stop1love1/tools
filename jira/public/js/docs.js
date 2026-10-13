@@ -27,22 +27,30 @@ function renderDocs(list) {
   const showPages = state.docsKind !== 'attachments';
   const showAttachments = state.docsKind !== 'pages';
 
+  // Confluence pages carry no date or size, so those sorts only make sense for attachments. Offer only the
+  // sorts that mean something for what is on screen; a stale choice (e.g. from the URL) falls back to the first.
+  const SORT_LABELS = { date: 'Date', name: 'Name', size: 'Size', task: 'Task', links: 'Linked tasks' };
+  const sortKeys = state.docsKind === 'pages' ? ['name', 'task', 'links'] : ['date', 'name', 'size', 'task'];
+  const sortKey = sortKeys.includes(state.docsSort) ? state.docsSort : sortKeys[0];
+
   const dir = state.docsOrder === 'asc' ? 1 : -1;
   const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0) * dir;
+  const pageName = (p) => docTitle(p.doc).toLowerCase();
   const pageSorters = {
-    name: (a, b) => cmp(docTitle(a.doc).toLowerCase(), docTitle(b.doc).toLowerCase()),
-    date: (a, b) => cmp(a.issues.length, b.issues.length), // pages carry no own date; fall back to relevance
-    size: (a, b) => cmp(a.issues.length, b.issues.length),
+    name: (a, b) => cmp(pageName(a), pageName(b)),
     task: (a, b) => cmp(a.issues[0]?.key || '', b.issues[0]?.key || ''),
+    links: (a, b) => cmp(a.issues.length, b.issues.length),
   };
+  // "All" with a date / size sort: those apply to attachments, so pages are listed by name (A-Z) instead.
+  const sortPages = pageSorters[sortKey] || ((a, b) => (pageName(a) < pageName(b) ? -1 : pageName(a) > pageName(b) ? 1 : 0));
   const attachmentSorters = {
     name: (a, b) => cmp(a.filename.toLowerCase(), b.filename.toLowerCase()),
     date: (a, b) => cmp(a.created || '', b.created || ''),
     size: (a, b) => cmp(a.size || 0, b.size || 0),
     task: (a, b) => cmp(a.issue.key, b.issue.key),
   };
-  const sortedPages = matchedPages.slice().sort(pageSorters[state.docsSort] || pageSorters.date);
-  const sortedAttachments = matchedAttachments.slice().sort(attachmentSorters[state.docsSort] || attachmentSorters.date);
+  const sortedPages = matchedPages.slice().sort(sortPages);
+  const sortedAttachments = matchedAttachments.slice().sort(attachmentSorters[sortKey] || attachmentSorters.date);
 
   // On tasks.html this opens the detail drawer in place; elsewhere (docs.html) it navigates
   // to the task list with that issue's drawer open (see app-docs.js).
@@ -78,12 +86,10 @@ function renderDocs(list) {
         render();
       },
     },
-    h('option', { value: 'date' }, 'Sort: Date'),
-    h('option', { value: 'name' }, 'Sort: Name'),
-    h('option', { value: 'size' }, 'Sort: Size'),
-    h('option', { value: 'task' }, 'Sort: Task'),
+    ...sortKeys.map((k) => h('option', { value: k }, `Sort: ${SORT_LABELS[k]}`)),
   );
-  sortSelect.value = state.docsSort;
+  sortSelect.value = sortKey;
+  if (state.docsKind === 'all') sortSelect.title = 'Date and size apply to attachments; Confluence pages are listed by name.';
 
   const toolbar = h(
     'div',
@@ -112,11 +118,46 @@ function renderDocs(list) {
     ),
   );
 
+  // One line saying whose tasks and which filters the lists below reflect, with a way out of the filters.
+  // The user filter is left out of "Clear": it reloads the data, and it lives in the header.
+  const sprintName = state.sprint ? state.issues.flatMap(sprintsOf).find((s) => s.id === state.sprint)?.name || `Sprint ${state.sprint}` : null;
+  const active = [
+    q && `Search: “${state.docsQ.trim()}”`,
+    state.docsKind !== 'all' && (state.docsKind === 'pages' ? 'Confluence only' : 'Attachments only'),
+    sprintName && sprintName,
+  ].filter(Boolean);
+  const withDocs = list.filter((i) => i.docs.length || i.attachments.length).length;
+  const scope = state.user ? viewedUserName() : 'Mine';
+  const context = h(
+    'div',
+    { class: 'docs-context' },
+    h('span', { class: 'muted small' }, `${withDocs} ${withDocs === 1 ? 'task' : 'tasks'} with documents · ${scope}`),
+    active.map((t) => h('span', { class: 'docs-ctx-chip' }, t)),
+    active.length > 0 &&
+      h(
+        'button',
+        {
+          class: 'btn sm',
+          onClick: () => {
+            state.docsQ = '';
+            state.docsKind = 'all';
+            state.sprint = null;
+            const search = $('#search');
+            if (search) search.value = '';
+            syncUrl();
+            render();
+          },
+        },
+        'Clear filters',
+      ),
+  );
+
   return h(
     'div',
     null,
     toolbar,
-    showPages && h('h2', { class: 'section-title' }, 'Trang Confluence', h('span', { class: 'muted small' }, sortedPages.length)),
+    context,
+    showPages && h('h2', { class: 'section-title' }, 'Confluence pages', h('span', { class: 'muted small' }, sortedPages.length)),
     showPages &&
     sortedPages.length
       ? h(
@@ -142,7 +183,7 @@ function renderDocs(list) {
           ),
         )
       : showPages && h('div', { class: 'empty-state', style: 'margin-bottom:28px' }, q ? 'No matching Confluence page.' : 'No tasks link to this Confluence page.'),
-    showAttachments && h('h2', { class: 'section-title' }, 'Jira attachments', h('span', { class: 'muted small' }, sortedAttachments.length)),
+    showAttachments && h('h2', { class: 'section-title' }, 'Attachments', h('span', { class: 'muted small' }, sortedAttachments.length)),
     showAttachments && sortedAttachments.length
       ? h(
           'ul',

@@ -173,28 +173,44 @@ window.syncNavLinks = syncNavLinks;
 
 // Value of the user filter that means "every assignee" (the server swaps it into the JQL).
 const ALL_USERS = '__all__';
+// Value that means "tasks nobody is assigned to" (the server swaps it into the JQL).
+const UNASSIGNED = '__unassigned__';
 
 function viewedUserName() {
   if (state.user === ALL_USERS) return 'everyone';
+  if (state.user === UNASSIGNED) return 'nobody (unassigned)';
   return state.users?.users.find((u) => u.accountId === state.user)?.name || 'selected user';
 }
 
+// What the select shows for the current choice before the user list has arrived.
+const userLabel = () => ({ [ALL_USERS]: 'All', [UNASSIGNED]: 'Unassigned', '': 'Mine' })[state.user] ?? 'Loading…';
+
 async function loadUsers() {
   const select = $('#user-filter');
+  // Until the list arrives the select holds just the current choice, with a spinner, so the first paint
+  // does not show a wrong "Mine" and then jump when the real options replace it.
+  select.replaceChildren(h('option', { value: state.user }, userLabel()));
+  select.value = state.user;
+  select.classList.add('loading');
+  select.setAttribute('aria-busy', 'true');
   try {
     state.users = await api('/api/users');
   } catch (e) {
     select.title = `Failed to load user list: ${e.message}`;
     return;
+  } finally {
+    select.classList.remove('loading');
+    select.removeAttribute('aria-busy');
   }
   const sorted = [...state.users.users].sort((a, b) => a.name.localeCompare(b.name, 'en'));
   const opts = sorted.map((u) => h('option', { value: u.accountId }, `${u.name} (${u.count})`));
-  if (state.user && state.user !== ALL_USERS && !state.users.users.some((u) => u.accountId === state.user)) {
+  if (state.user && state.user !== ALL_USERS && state.user !== UNASSIGNED && !state.users.users.some((u) => u.accountId === state.user)) {
     opts.unshift(h('option', { value: state.user }, 'Selected user'));
   }
   select.replaceChildren(
     h('option', { value: ALL_USERS }, 'All'),
     h('option', { value: '' }, 'Mine'),
+    h('option', { value: UNASSIGNED }, 'Unassigned'),
     ...opts,
   );
   select.value = state.user;
