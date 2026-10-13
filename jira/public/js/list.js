@@ -164,10 +164,10 @@ function renderList(list) {
   const byGroupUrgency = (a, b) => top(b) - top(a) || latest(b) - latest(a);
 
   // Epic buckets; an Epic that is itself in the list becomes its bucket's header.
-  // An Epic that is not in the list (e.g. assigned to someone else) gets no header: its tasks go under "No epic".
+  // An Epic that is not (e.g. assigned to someone else) is still the header, from the stub on its tasks.
   const buckets = new Map();
   for (const i of list) {
-    const ek = isEpicIssue(i) ? i.key : i.epic?.key && byKey.has(i.epic.key) ? i.epic.key : null;
+    const ek = isEpicIssue(i) ? i.key : i.epic?.key || null;
     if (!buckets.has(ek)) buckets.set(ek, { epic: ek && (byKey.get(ek) || i.epic || { key: ek, summary: '' }), items: [] });
     if (!(isEpicIssue(i) && ek === i.key)) buckets.get(ek).items.push(i);
   }
@@ -175,11 +175,11 @@ function renderList(list) {
   // Inside a bucket: sub-tasks grouped under their parent; items hanging straight off the epic stay loose.
   const groupBucket = (items, epicKey) => {
     const groups = new Map();
-    // A parent that is not in the list (someone else's) gets no group header: its sub-tasks stay loose.
-    const hasGroup = (i) => i.parent && i.parent.key !== epicKey && byKey.has(i.parent.key);
+    // A parent that is not in the list (someone else's Story) is still the group header, from the stub.
+    const hasGroup = (i) => i.parent && i.parent.key !== epicKey;
     for (const i of items) {
       if (!hasGroup(i)) continue;
-      if (!groups.has(i.parent.key)) groups.set(i.parent.key, { parent: byKey.get(i.parent.key), items: [] });
+      if (!groups.has(i.parent.key)) groups.set(i.parent.key, { parent: byKey.get(i.parent.key) || i.parent, items: [] });
       groups.get(i.parent.key).items.push(i);
     }
     // A parent that is itself one of my issues is shown as its group's header.
