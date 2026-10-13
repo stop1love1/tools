@@ -18,15 +18,19 @@ function scoped() {
 // scoped() plus the sprint filter — the base for anything that should total "the selected sprint" rather
 // than every issue (status pills, urgent block, progress strip); filtered() adds status/urgency on top.
 function scopedBySprint() {
-  return scoped().filter((i) => inSprint(i, state.sprint));
+  return scoped().filter((i) => isSprintTask(i, state.sprint));
 }
 
 // An issue's own sprint plus, for an Epic (never in a sprint itself), the sprints its children are in.
 const sprintsOf = (i) => [i.sprint, ...(i.childSprints || [])].filter(Boolean);
 const inSprint = (i, id) => !id || sprintsOf(i).some((s) => s.id === Number(id));
+// A task of the sprint: its own sprint only. An Epic that is there only through its children is no task of it
+// (no row, no count); the list still shows it as the header of those children (list.js renderList).
+const isSprintTask = (i, id) => !id || i.sprint?.id === Number(id);
 
+// A row whose status just changed (heldMove) stays under the filter it was in, so it does not vanish at once.
 function filtered() {
-  return scopedBySprint().filter((i) => (!state.status || i.status.name === state.status) && (!state.urgentOnly || isUrgent(i)));
+  return scopedBySprint().filter((i) => (!state.status || i.status.name === state.status || heldMove(i.key)?.from.name === state.status) && (!state.urgentOnly || isUrgent(i)));
 }
 
 // ---------------------------------------------------------------------------
@@ -37,7 +41,7 @@ const isCancelled = (i) => i.status.category === 'done' && /cancel|hủy|huỷ|r
 // One thin bar under the status pills: a segment per status (click = filter by it), then done / story point totals.
 function renderProgress() {
   const el = $('#progress-strip');
-  const base = scopedBySprint();
+  const base = scopedBySprint().map(shownIssue);
   if (state.error || !state.fetchedAt || !base.length) return el.replaceChildren();
   const sumSP = (list) => list.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
   const cancelled = base.filter(isCancelled);

@@ -116,22 +116,29 @@ function urgency(i) {
   return { score, reasons, level };
 }
 
-const isUrgent = (i) => urgency(i).score >= 35;
+// A status change is "held" for HOLD_MS (see state.js): the row stays where it was, in the same filter and
+// group, so the user can see where it went. The sort / urgent checks use its previous status meanwhile.
+function heldMove(key) {
+  const m = recentlyTransitioned.get(key);
+  // Held while the request is in flight (up to HOLD_PENDING_MS), then for HOLD_MS after Jira confirmed.
+  return m && Date.now() - m.at < (m.settled ? HOLD_MS : HOLD_PENDING_MS) ? m : null;
+}
 
-const byUrgency = (a, b) => {
-  const now = Date.now();
-  const aLocked = recentlyTransitioned.get(a.key);
-  const bLocked = recentlyTransitioned.get(b.key);
-  
-  if (aLocked && bLocked && now - aLocked < 3000 && now - bLocked < 3000) {
-    return aLocked - bLocked;
-  }
-  
-  if (aLocked && now - aLocked < 3000) return -1;
-  if (bLocked && now - bLocked < 3000) return 1;
-  
-  return urgency(b).score - urgency(a).score || Date.parse(b.updated) - Date.parse(a.updated);
+// The issue as the list shows it: a held row still carries its previous status, so pill / progress counts add up
+// to what is on screen. Only for counting; anything that acts on an issue (menus, transitions) needs the real one.
+const shownIssue = (i) => {
+  const m = heldMove(i.key);
+  return m ? { ...i, status: m.from } : i;
 };
+
+function sortUrgency(i) {
+  const m = heldMove(i.key);
+  return urgency(m ? { ...i, status: m.from } : i);
+}
+
+const isUrgent = (i) => sortUrgency(i).score >= 35;
+
+const byUrgency = (a, b) => sortUrgency(b).score - sortUrgency(a).score || Date.parse(b.updated) - Date.parse(a.updated);
 
 const reasonChips = (i) => urgency(i).reasons.map((r) => h('span', { class: `reason r-${r.level}` }, r.label));
 

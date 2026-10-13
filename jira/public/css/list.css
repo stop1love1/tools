@@ -43,6 +43,36 @@
   opacity: 0.6;
   pointer-events: none;
 }
+/* A task whose status just changed: stays in place and shows from → to, so the user can follow it. */
+.row.moved {
+  background: var(--accent-soft);
+}
+.row.moved-flash {
+  animation: row-moved 1.6s ease-out;
+}
+.moved-chip {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+@keyframes row-moved {
+  from {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  to {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row.moved-flash {
+    animation: none;
+  }
+}
 .row.child {
   padding-left: 26px;
 }

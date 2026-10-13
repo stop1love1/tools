@@ -22,6 +22,9 @@ const issues = require('./lib/issues');
 const attachments = require('./lib/attachments');
 const notifications = require('./lib/notifications');
 const { listUsers } = require('./lib/users');
+
+// Value of the user filter that means "every assignee" (not an accountId).
+const ALL_USERS = '__all__';
 const { openClaudeCode } = require('./lib/editor');
 const git = require('./lib/git');
 const { handleMcp } = require('./lib/mcp-server');
@@ -117,7 +120,12 @@ async function api(req, res, url) {
     let jql = (url.searchParams.get('jql') || '').trim() || defaultJql;
     // Viewing someone else: the same JQL with currentUser() swapped for their account id.
     const user = url.searchParams.get('user') || '';
-    if (user) {
+    if (user === ALL_USERS) {
+      // Everyone: swap "assignee = currentUser()" for any assignee, limited to the projects I work in.
+      const { projects } = await listUsers();
+      const scope = projects.length ? `project in (${projects.join(',')}) AND ` : '';
+      jql = jql.replace(/assignee\s*=\s*currentUser\(\)/gi, `(${scope}assignee is not EMPTY)`);
+    } else if (user) {
       if (!/^[A-Za-z0-9:_-]{1,128}$/.test(user)) return send(res, 400, { error: 'Invalid accountId' });
       jql = jql.replace(/currentUser\(\)/g, `"${user}"`);
     }

@@ -6,7 +6,7 @@
 // Counts here must ignore state.type itself (it's the option list for that filter) but still
 // respect the sprint filter, so "All types (N)" matches the sprint currently selected.
 function renderTypes() {
-  const bySprint = state.issues.filter((i) => inSprint(i, state.sprint));
+  const bySprint = state.issues.filter((i) => isSprintTask(i, state.sprint));
   const counts = new Map();
   for (const i of bySprint) counts.set(i.type.name, (counts.get(i.type.name) || 0) + 1);
   if (state.type !== 'all' && !counts.has(state.type)) state.type = 'all';
@@ -27,7 +27,7 @@ function renderFocus() {
   const urgent = base.filter(isUrgent).sort(byUrgency);
   if (!urgent.length) return el.replaceChildren();
   const row = (i) => {
-    const u = urgency(i);
+    const u = sortUrgency(i);
     const isDone = i.status.category === 'done';
     return h(
       'div',
@@ -72,7 +72,7 @@ function renderFocus() {
 }
 
 function renderStats() {
-  const all = scopedBySprint();
+  const all = scopedBySprint().map(shownIssue);
   if (!all.length) return $('#stats').replaceChildren();
   const pill = (label, value, toneName, pressed, onClick) =>
     h(
@@ -121,11 +121,18 @@ function keyLink(i) {
 // Also used for Story / Epic stubs (parent, epic, drawer children): only `key` and `status` are needed.
 function statusButton(issue) {
   if (!issue.status) return null;
+  // Warm the transitions cache so the menu opens with its items already there. Hovering has to rest for a moment
+  // first, so sweeping the mouse down the column does not fetch every row; keyboard focus is deliberate, so it is immediate.
+  let hoverTimer = null;
+  const warm = () => getTransitions(issue.key).catch(() => {});
   return h(
     'button',
     {
       class: `status tone-${tone(issue.status)}`,
       title: 'Change status',
+      onMouseenter: () => (clearTimeout(hoverTimer), (hoverTimer = setTimeout(warm, 150))),
+      onMouseleave: () => clearTimeout(hoverTimer),
+      onFocus: warm,
       onClick: (e) => {
         e.stopPropagation();
         openStatusMenu(e.currentTarget, issue);
@@ -152,14 +159,15 @@ function renderList(list) {
   if (!list.length) return h('div', { class: 'empty-state' }, 'No tasks match this filter.');
   const byKey = new Map(state.issues.map((i) => [i.key, i]));
   const isEpicIssue = (i) => /epic/i.test(i.type?.name || '');
-  const top = (g) => Math.max(...g.items.map((i) => urgency(i).score));
+  const top = (g) => Math.max(...g.items.map((i) => sortUrgency(i).score));
   const latest = (g) => Math.max(...g.items.map((i) => Date.parse(i.updated)));
   const byGroupUrgency = (a, b) => top(b) - top(a) || latest(b) - latest(a);
 
   // Epic buckets; an Epic that is itself in the list becomes its bucket's header.
+  // An Epic that is not in the list (e.g. assigned to someone else) gets no header: its tasks go under "No epic".
   const buckets = new Map();
   for (const i of list) {
-    const ek = isEpicIssue(i) ? i.key : i.epic?.key || null;
+    const ek = isEpicIssue(i) ? i.key : i.epic?.key && byKey.has(i.epic.key) ? i.epic.key : null;
     if (!buckets.has(ek)) buckets.set(ek, { epic: ek && (byKey.get(ek) || i.epic || { key: ek, summary: '' }), items: [] });
     if (!(isEpicIssue(i) && ek === i.key)) buckets.get(ek).items.push(i);
   }
@@ -167,13 +175,15 @@ function renderList(list) {
   // Inside a bucket: sub-tasks grouped under their parent; items hanging straight off the epic stay loose.
   const groupBucket = (items, epicKey) => {
     const groups = new Map();
+    // A parent that is not in the list (someone else's) gets no group header: its sub-tasks stay loose.
+    const hasGroup = (i) => i.parent && i.parent.key !== epicKey && byKey.has(i.parent.key);
     for (const i of items) {
-      if (!i.parent || i.parent.key === epicKey) continue;
-      if (!groups.has(i.parent.key)) groups.set(i.parent.key, { parent: byKey.get(i.parent.key) || i.parent, items: [] });
+      if (!hasGroup(i)) continue;
+      if (!groups.has(i.parent.key)) groups.set(i.parent.key, { parent: byKey.get(i.parent.key), items: [] });
       groups.get(i.parent.key).items.push(i);
     }
     // A parent that is itself one of my issues is shown as its group's header.
-    const loose = items.filter((i) => (!i.parent || i.parent.key === epicKey) && !groups.has(i.key)).sort(byUrgency);
+    const loose = items.filter((i) => !hasGroup(i) && !groups.has(i.key)).sort(byUrgency);
     for (const g of groups.values()) g.items.sort(byUrgency);
     return { groups: [...groups.values()].sort(byGroupUrgency), loose };
   };
@@ -181,14 +191,25 @@ function renderList(list) {
   const row = (i, child, deep) => {
     const u = urgency(i);
     const isDone = i.status.category === 'done';
+    const moved = heldMove(i.key);
+    // The outline flash plays once per move: render() rebuilds every row, which would restart it each time.
+    const flash = moved && !moved.flashed;
+    if (flash) moved.flashed = true;
     return h(
       'div',
       {
-        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}`,
+        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}${moved ? ' moved' : ''}${flash ? ' moved-flash' : ''}`,
+        'data-key': i.key,
         onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
       },
       h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
-      h('div', { class: 'c-sum' }, h('span', { class: 'sum-text', title: i.summary }, i.summary), u.reasons.length ? reasonChips(i) : dueBadge(i)),
+      h(
+        'div',
+        { class: 'c-sum' },
+        h('span', { class: 'sum-text', title: i.summary }, i.summary),
+        moved && h('span', { class: 'moved-chip', title: 'Status just changed' }, `${moved.from.name} → ${i.status.name}`),
+        u.reasons.length ? reasonChips(i) : dueBadge(i),
+      ),
       h('div', { class: 'c-status' }, statusButton(i)),
       h('div', { class: 'c-prio' }, prio(i.priority), ' ', i.priority || ''),
       h('div', { class: 'c-docs' }, docBadges(i)),
@@ -200,7 +221,8 @@ function renderList(list) {
   // Groups whose subtasks are all finished (Done or Cancelled) start collapsed; everything else starts expanded.
   const isClosed = (parent, items) => {
     // Check if all subtasks in this group are done (including cancelled)
-    const allDone = items.every(i => i.status.category === 'done');
+    // A just-moved task counts with its previous status, so its group does not fold away under the user.
+    const allDone = items.every((i) => (heldMove(i.key)?.from || i.status).category === 'done');
     const override = state.closedGroups.has(parent.key);
     // An override flips whatever the auto default would be.
     const result = override ? !allDone : allDone;

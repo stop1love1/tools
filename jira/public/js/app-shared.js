@@ -171,7 +171,11 @@ window.syncNavLinks = syncNavLinks;
 // Shared header controls: user filter, sprint filter, and their logic.
 // These are identical across all three pages.
 
+// Value of the user filter that means "every assignee" (the server swaps it into the JQL).
+const ALL_USERS = '__all__';
+
 function viewedUserName() {
+  if (state.user === ALL_USERS) return 'everyone';
   return state.users?.users.find((u) => u.accountId === state.user)?.name || 'selected user';
 }
 
@@ -185,10 +189,11 @@ async function loadUsers() {
   }
   const sorted = [...state.users.users].sort((a, b) => a.name.localeCompare(b.name, 'en'));
   const opts = sorted.map((u) => h('option', { value: u.accountId }, `${u.name} (${u.count})`));
-  if (state.user && !state.users.users.some((u) => u.accountId === state.user)) {
+  if (state.user && state.user !== ALL_USERS && !state.users.users.some((u) => u.accountId === state.user)) {
     opts.unshift(h('option', { value: state.user }, 'Selected user'));
   }
   select.replaceChildren(
+    h('option', { value: ALL_USERS }, 'All'),
     h('option', { value: '' }, 'Mine'),
     ...opts,
   );
@@ -201,10 +206,9 @@ function renderSprints() {
   const sprints = new Map();
   const counts = new Map();
   for (const i of state.issues) {
-    for (const sp of sprintsOf(i)) {
-      sprints.set(sp.id, sp);
-      counts.set(sp.id, (counts.get(sp.id) || 0) + 1);
-    }
+    for (const sp of sprintsOf(i)) sprints.set(sp.id, sp);
+    // Count tasks only, as the list does: an Epic in a sprint through its children is not one.
+    if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
   }
   const select = $('#sprint-filter');
   if (sprints.size === 0) {

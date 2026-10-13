@@ -122,15 +122,18 @@ async function listIssues(jql) {
 }
 
 // Epics are never put in a sprint on Jira, so the sprint filter would always drop them. Look up the
-// sprints of their children (anyone's, not just the listed ones): epic key → [sprint], one search per 50 epics.
+// sprints of their children that are in the list (so only the viewed user's own tasks, never someone else's):
+// epic key → [sprint], one search per 50 epics.
 async function childSprintsOf(issues) {
   const epics = issues.filter((i) => /epic/i.test(i.fields.issuetype?.name || '') && !sprintOf(i.fields)).map((i) => i.key);
+  const listed = new Set(issues.map((i) => i.key));
   const out = new Map();
   for (let n = 0; n < epics.length; n += 50) {
     const keys = epics.slice(n, n + 50);
     try {
       const children = await searchAll(`parent in (${keys.join(',')}) AND sprint is not EMPTY`, ['parent', config.get().jira.sprintField]);
       for (const c of children) {
+        if (!listed.has(c.key)) continue;
         const s = sprintOf(c.fields);
         const pk = c.fields.parent?.key;
         if (!s || !pk) continue;

@@ -63,7 +63,23 @@ function toast(message, kind = 'ok', link) {
     'div',
     { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' },
     h('span', { class: 'spacer' }, message),
-    link && h('a', { href: link.href, target: '_blank', rel: 'noopener' }, link.label),
+    link &&
+      (link.onClick
+        ? h(
+            'button',
+            {
+              class: 'link-btn',
+              onClick: () => {
+                try {
+                  link.onClick();
+                } finally {
+                  el.remove();
+                }
+              },
+            },
+            link.label,
+          )
+        : h('a', { href: link.href, target: '_blank', rel: 'noopener' }, link.label)),
   );
   $('#toasts').append(el);
   setTimeout(() => el.remove(), kind === 'error' ? 9000 : 3500);

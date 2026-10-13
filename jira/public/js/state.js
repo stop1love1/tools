@@ -60,7 +60,11 @@ const state = {
   docsOrder: initParams.get('docsOrder') === 'asc' ? 'asc' : 'desc',
 };
 const cache = { transitions: new Map(), details: new Map() };
+// key → { at, from, to }: issues whose status just changed. For HOLD_MS they stay in the list, filter and
+// group they were in (format.js heldMove) so the user can follow where the task went.
 const recentlyTransitioned = new Map();
+const HOLD_MS = 6000;
+const HOLD_PENDING_MS = 30_000; // a request that never answers must not hold its row forever
 
 // What a load asks for. state.loadedFor records it for the issues on screen, so a page shows
 // "Loading…" only when those belong to another query, not on every refresh.
@@ -128,7 +132,7 @@ async function loadIssues({ silent = false } = {}) {
     state.loadedFor = query;
     saveIssues();
     cache.transitions.clear();
-    recentlyTransitioned.clear();
+    for (const k of [...recentlyTransitioned.keys()]) if (!heldMove(k)) recentlyTransitioned.delete(k);
     if (state.openKey) state.openIssue = state.issues.find((i) => i.key === state.openKey) || state.openIssue;
   } catch (e) {
     if (silent && state.issues.length) toast(`Failed to reload: ${e.message}`, 'error');
@@ -169,16 +173,18 @@ function setStatus(issue, status, pending) {
 
 async function transition(issue, t) {
   const prev = issue.status;
+  const move = { at: Date.now(), from: prev };
   setStatus(issue, { ...t.to }, true);
-
-  recentlyTransitioned.set(issue.key, Date.now());
+  recentlyTransitioned.set(issue.key, move);
 
   render();
+  let failed = false;
   try {
     const d = await api(`/api/issues/${issue.key}/transitions`, { method: 'POST', body: JSON.stringify({ id: t.id }) });
     setStatus(issue, d.status, true);
-    toast(`${issue.key} → ${d.status.name}`);
+    toast(`${issue.key}: ${prev.name} → ${d.status.name}`, 'ok', movedLink(issue, d.status));
   } catch (e) {
+    failed = true;
     setStatus(issue, prev, true);
     recentlyTransitioned.delete(issue.key);
     toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url || (state.issues[0] && `${siteOf(state.issues[0])}/browse/${issue.key}`), label: 'Open in Jira' });
@@ -187,11 +193,37 @@ async function transition(issue, t) {
     saveIssues(); // so the next page doesn't flash the old status
     cache.transitions.delete(issue.key);
     cache.details.delete(issue.key);
+    if (!failed) Object.assign(move, { at: Date.now(), settled: true }); // the hold runs from the moment Jira confirmed
     render();
-    
-    setTimeout(() => {
-      recentlyTransitioned.delete(issue.key);
-      render();
-    }, 3000);
+    if (!failed) releaseMove(issue.key, move, HOLD_MS + 50);
   }
+}
+
+// Drops the hold on an issue after `delay` ms and redraws. A newer move of the same issue owns the entry
+// then, so it is left alone; and an open status menu is never closed under the user (render() closes it):
+// the release is retried a second later.
+function releaseMove(key, move, delay) {
+  setTimeout(() => {
+    if (recentlyTransitioned.get(key) !== move) return;
+    if (state.menu) return releaseMove(key, move, 1000);
+    recentlyTransitioned.delete(key);
+    render();
+  }, delay);
+}
+
+// Toast action: drop the status / urgent filter that hides the task at its new status and scroll to it.
+// null when nothing hides it.
+function movedLink(issue, status) {
+  const hidden = (state.status && state.status !== status.name) || state.urgentOnly;
+  if (!hidden || !state.issues.some((i) => i.key === issue.key)) return null;
+  return {
+    label: `Show in ${status.name}`,
+    onClick: () => {
+      state.status = status.name;
+      state.urgentOnly = false;
+      syncUrl();
+      render();
+      for (const r of document.querySelectorAll('.row[data-key]')) if (r.dataset.key === issue.key) r.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    },
+  };
 }
