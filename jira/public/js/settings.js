@@ -3,7 +3,16 @@
 // Settings page (gear button): edits config.json through /api/config. The form is built from the schema the
 // server sends, so a new setting only needs an entry in lib/config.js.
 
-const settingsState = { data: null, el: null, error: null, saving: false, errors: {} };
+const settingsState = { data: null, el: null, error: null, saving: false, errors: {}, dirty: false };
+
+// Leaving for another page (Tasks / Docs / Workspace links, reload, closing the tab) would drop unsaved edits.
+addEventListener('beforeunload', (e) => {
+  if (!settingsState.dirty) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+
+let settingsIds = 0;
 
 async function loadSettings() {
   try {
@@ -31,10 +40,21 @@ function buildSettings(data) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const inputs = new Map(); // key → { read(): value, set(value), row }
   const saveBtn = h('button', { class: 'btn primary', onClick: () => save() }, 'Save');
-  const status = h('span', { class: 'muted small' });
+  const status = h('span', { class: 'muted small', role: 'status' });
 
-  const refresh = () => {
+  // `e` is the input event (or a { target } stand-in): editing a field clears its server-side error.
+  const refresh = (e) => {
+    const t = e?.target;
+    if (t instanceof Node) {
+      for (const [k, f] of inputs) {
+        if (f.row.contains(t) && f.err.textContent) {
+          f.err.textContent = '';
+          delete settingsState.errors[k];
+        }
+      }
+    }
     const changed = [...inputs].filter(([k, f]) => !same(f.read(), data.values[k])).length;
+    settingsState.dirty = changed > 0;
     status.textContent = changed ? `${changed} unsaved change${changed > 1 ? 's' : ''}` : 'All changes saved';
     saveBtn.disabled = !changed || settingsState.saving;
     for (const [k, f] of inputs) {
@@ -52,6 +72,7 @@ function buildSettings(data) {
       const res = await api('/api/config', { method: 'PUT', body: JSON.stringify({ values }) });
       settingsState.data = res;
       settingsState.errors = {};
+      settingsState.dirty = false;
       afterSave(res, values);
       settingsState.el = null;
       toast(res.pendingRestart.length ? 'Settings saved — restart the server for the marked fields' : 'Settings saved');
@@ -72,15 +93,28 @@ function buildSettings(data) {
       h('h3', null, sec.section),
       sec.fields.map((f) => {
         const field = fieldInput(f, data.values[f.key], refresh);
-        const reset = h('button', { class: 'link-btn small', title: `Default: ${preview(data.defaults[f.key])}`, onClick: () => (field.set(data.defaults[f.key]), refresh()) }, 'Reset to default');
-        const err = h('div', { class: 'set-err' }, settingsState.errors[f.key] || '');
+        const reset = h('button', { class: 'link-btn small', title: `Default: ${preview(data.defaults[f.key])}`, 'aria-label': `Reset ${f.label} to default`, onClick: () => (field.set(data.defaults[f.key]), refresh()) }, 'Reset to default');
+        const err = h('div', { class: 'set-err', id: `set-err-${++settingsIds}`, role: 'alert' }, settingsState.errors[f.key] || '');
+        const labelId = `set-lbl-${settingsIds}`;
+        const label = h('label', { id: labelId }, f.label);
+        // One control: label[for] + described-by the error. Tables of rows (filters, repos): a labelled group.
+        const control = field.el.matches('input, textarea') ? field.el : field.el.querySelector('input[type=checkbox]');
+        if (control) {
+          control.id = `set-in-${settingsIds}`;
+          label.setAttribute('for', control.id);
+          control.setAttribute('aria-describedby', err.id);
+          if (control.type === 'checkbox') control.setAttribute('aria-labelledby', labelId); // not the "On"/"Off" text
+        } else {
+          field.el.setAttribute('role', 'group');
+          field.el.setAttribute('aria-labelledby', labelId);
+        }
         const row = h(
           'div',
           { class: 'set-row' },
           h(
             'div',
             { class: 'set-label' },
-            h('label', null, f.label),
+            label,
             f.restart && h('span', { class: `gchip ${data.pendingRestart.includes(f.key) ? 'warn' : ''}`, title: 'Read when the server starts' }, data.pendingRestart.includes(f.key) ? 'restart pending' : 'needs restart'),
             f.help && h('div', { class: 'muted small' }, f.help),
           ),
@@ -100,19 +134,21 @@ function buildSettings(data) {
       { class: 'set-head' },
       h('h2', { class: 'section-title' }, icon('gear'), 'Settings'),
       h('span', { class: 'muted small set-file', title: data.file }, 'Saved to ', data.file),
-      h('span', { class: 'spacer' }),
-      status,
-      saveBtn,
     ),
     data.pendingRestart.length > 0 && h('div', { class: 'gconflict ghint' }, 'Restart the server (npm start) to apply: ', data.pendingRestart.map((k) => h('code', { class: 'gcode' }, k))),
     sections,
-    mcpConnectCard(data.values['mcp.enabled']),
+    mcpConnectCard(data),
+    h('div', { class: 'set-bar' }, status, saveBtn),
   );
   refresh();
   return el;
 }
 
-const preview = (v) => (Array.isArray(v) ? `${v.length} item(s)` : String(v));
+// What "Reset to default" would restore, for its tooltip.
+function preview(v) {
+  const text = Array.isArray(v) ? v.map((x) => (x && typeof x === 'object' ? x.label || x.id : x)).join(', ') : String(v);
+  return text.length > 160 ? `${text.slice(0, 157)}…` : text;
+}
 
 // One input per schema type; each returns { el, read(), set(value) }.
 function fieldInput(f, value, onChange) {
@@ -123,10 +159,13 @@ function fieldInput(f, value, onChange) {
     return { el: ta, set, read: () => ta.value.split('\n').map((l) => l.trim()).filter(Boolean) };
   }
   if (f.type === 'bool') {
-    const box = h('input', { type: 'checkbox', onChange: onChange });
-    const set = (v) => (box.checked = !!v);
+    const text = h('span', null);
+    const box = h('input', { type: 'checkbox', role: 'switch' });
+    const sync = () => (text.textContent = box.checked ? 'On' : 'Off');
+    box.addEventListener('change', (e) => (sync(), onChange(e)));
+    const set = (v) => ((box.checked = !!v), sync());
     set(value);
-    return { el: h('label', { class: 'set-switch' }, box, h('span', null, 'On')), set, read: () => box.checked };
+    return { el: h('label', { class: 'set-switch' }, box, text), set, read: () => box.checked };
   }
   if (f.type === 'presets') return listInput(value, onChange, [['label', 'Label', 'set-col-s'], ['jql', 'JQL', 'mono']], { label: '', jql: '' }, 'Add filter');
   if (f.type === 'repos') return listInput(value, onChange, [['id', 'id', 'mono set-col-xs'], ['label', 'Label', 'set-col-s'], ['dir', 'Folder', 'mono']], { id: '', label: '', dir: '' }, 'Add repo');
@@ -147,16 +186,25 @@ function fieldInput(f, value, onChange) {
 // Editable table of objects (saved filters, repos): one row per item, a text input per column.
 function listInput(value, onChange, cols, blank, addLabel) {
   const body = h('div', { class: 'set-list' });
+  // Every control says which row it belongs to ("JQL, row 2"), so a screen reader can tell the rows apart.
+  const relabel = () => {
+    [...body.children].forEach((row, i) => {
+      row.querySelectorAll('input').forEach((inp) => inp.setAttribute('aria-label', `${inp.placeholder}, row ${i + 1}`));
+      row.querySelector('[data-act=up]').setAttribute('aria-label', `Move row ${i + 1} up`);
+      row.querySelector('[data-act=del]').setAttribute('aria-label', `Remove row ${i + 1}`);
+      row.querySelector('[data-act=up]').disabled = i === 0;
+    });
+  };
   const rowOf = (item) => {
     const cells = cols.map(([k, ph, cls]) => h('input', { class: `gin ${cls || ''}`, placeholder: ph, value: item[k] ?? '', spellcheck: 'false', autocomplete: 'off', 'data-k': k, onInput: onChange }));
-    const del = h('button', { class: 'icon-btn sm', title: 'Remove', onClick: () => (row.remove(), onChange()) }, icon('trash'));
-    const up = h('button', { class: 'icon-btn sm', title: 'Move up', onClick: () => (row.previousElementSibling?.before(row), onChange()) }, icon('chevUp'));
+    const del = h('button', { class: 'icon-btn sm', title: 'Remove', 'data-act': 'del', onClick: () => (row.remove(), relabel(), onChange()) }, icon('trash'));
+    const up = h('button', { class: 'icon-btn sm', title: 'Move up', 'data-act': 'up', onClick: () => (row.previousElementSibling?.before(row), relabel(), onChange()) }, icon('chevUp'));
     const row = h('div', { class: 'set-list-row' }, cells, up, del);
     return row;
   };
-  const set = (v) => body.replaceChildren(...v.map(rowOf));
+  const set = (v) => (body.replaceChildren(...v.map(rowOf)), relabel());
   set(value);
-  const add = h('button', { class: 'btn sm', onClick: () => (body.append(rowOf(blank)), body.lastChild.querySelector('input').focus(), onChange()) }, addLabel);
+  const add = h('button', { class: 'btn sm', onClick: () => (body.append(rowOf(blank)), relabel(), body.lastChild.querySelector('input').focus(), onChange()) }, addLabel);
   const read = () => [...body.children].map((row) => Object.fromEntries([...row.querySelectorAll('input')].map((i) => [i.dataset.k, i.value.trim()])));
   return { el: h('div', null, body, add), set, read };
 }
@@ -181,13 +229,19 @@ function afterSave(res, changed) {
 }
 
 // How to plug Claude Code / Cursor into the dashboard's MCP endpoint.
-function mcpConnectCard(enabled) {
+function mcpConnectCard(data) {
+  const enabled = data.values['mcp.enabled'];
+  const writes = data.values['mcp.allowWrites'];
   const url = `${location.origin}/mcp`;
+  // Write tools need the Bearer token. Only the file's path is shown, never its contents.
+  const tokenFile = data.mcpTokenFile || '.mcp-token';
+  const authHeader = `Bearer <contents of ${tokenFile}>`;
+  const entry = (type) => ({ ...(type ? { type } : {}), url, ...(writes ? { headers: { Authorization: authHeader } } : {}) });
   const snippet = (title, text) =>
     h(
       'div',
       { class: 'set-snippet' },
-      h('div', { class: 'set-snippet-head' }, h('b', null, title), h('button', { class: 'icon-btn sm', title: 'Copy', onClick: () => copyText(text, 'Copied') }, icon('copy'))),
+      h('div', { class: 'set-snippet-head' }, h('b', null, title), h('button', { class: 'icon-btn sm', title: 'Copy', 'aria-label': `Copy ${title}`, onClick: () => copyText(text, 'Copied') }, icon('copy'))),
       h('pre', { class: 'mono' }, text),
     );
   return h(
@@ -199,8 +253,9 @@ function mcpConnectCard(enabled) {
       { class: 'muted small' },
       enabled ? ['The dashboard serves MCP at ', h('code', { class: 'gcode' }, url), ' while it runs. Only tools on this machine can reach it.'] : 'Turn on "Serve MCP at /mcp" above first.',
     ),
-    snippet('Claude Code (terminal)', `claude mcp add --transport http --scope user jira-dashboard ${url}`),
-    snippet('Cursor — ~/.cursor/mcp.json', JSON.stringify({ mcpServers: { 'jira-dashboard': { url } } }, null, 2)),
-    snippet('Claude Code — .mcp.json in a project', JSON.stringify({ mcpServers: { 'jira-dashboard': { type: 'http', url } } }, null, 2)),
+    writes && h('p', { class: 'muted small' }, 'Write tools are on, so clients must send the token. Replace the placeholder with the contents of ', h('code', { class: 'gcode' }, tokenFile), '.'),
+    snippet('Claude Code (terminal)', `claude mcp add --transport http --scope user jira-dashboard ${url}${writes ? ` --header "Authorization: Bearer $(cat ${tokenFile})"` : ''}`),
+    snippet('Cursor — ~/.cursor/mcp.json', JSON.stringify({ mcpServers: { 'jira-dashboard': entry() } }, null, 2)),
+    snippet('Claude Code — .mcp.json in a project', JSON.stringify({ mcpServers: { 'jira-dashboard': entry('http') } }, null, 2)),
   );
 }

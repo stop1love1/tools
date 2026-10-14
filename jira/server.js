@@ -89,11 +89,12 @@ async function api(req, res, url) {
     });
   }
 
-  if (route === 'GET /api/config') return send(res, 200, { ...config.view(), client: config.client() });
+  // The token file's path (never its contents) lets the Settings page show a working MCP connect command.
+  if (route === 'GET /api/config') return send(res, 200, { ...config.view(), client: config.client(), mcpTokenFile: tokenFile });
   if (route === 'PUT /api/config') {
     const body = await readJson(req);
     if (!body || typeof body.values !== 'object') throw httpError(400, 'Missing values');
-    return send(res, 200, { ...config.save(body.values), client: config.client() });
+    return send(res, 200, { ...config.save(body.values), client: config.client(), mcpTokenFile: tokenFile });
   }
   if (route === 'GET /api/client-config') return send(res, 200, config.client());
 

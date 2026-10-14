@@ -9,23 +9,42 @@ body[data-view='settings'] :is(.subbar, .progress-strip, .focus) {
   background: var(--accent-soft);
 }
 
+/* Controls that only apply to the task list; nothing to search, filter or reload JQL for here. */
+body[data-view='settings'] :is(#search, #user-filter, #sprint-filter, #sprint-left, #recent-btn, #jql-toggle, #jql-row) {
+  display: none;
+}
+
 .settings {
   max-width: 920px;
   margin: 0 auto;
   display: grid;
+  /* minmax(0, …) lets the track shrink below its content, so a wide input can't push the cards past the viewport. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
 .set-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 10px 0;
-  background: var(--bg);
+  padding: 10px 0 0;
+}
+
+/* Save + unsaved count stay at the bottom of the viewport while you scroll through the fields. */
+.set-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
 }
 
 .set-head .section-title {

@@ -9,8 +9,16 @@
 function setView(view) {
   state.view = view;
   document.body.dataset.view = view; // settings.css / git-flow.css hide the task subbar by this
+  syncViewTabs();
   syncUrl();
   render();
+}
+
+// The page tab is only "selected" while its own content shows; Settings is a detour with its own pressed button.
+function syncViewTabs() {
+  for (const a of document.querySelectorAll('#views a')) {
+    a.setAttribute('aria-selected', String(a.dataset.view === window.PAGE && state.view !== 'settings'));
+  }
 }
 
 // The full-screen cover in each page's markup (page-loader.css): up from first paint until
@@ -327,10 +335,8 @@ function setupSharedFilters() {
 async function init() {
   await loadClientConfig();
 
-  for (const b of document.querySelectorAll('#views a')) {
-    b.setAttribute('aria-selected', String(b.dataset.view === window.PAGE));
-  }
   document.body.dataset.view = state.view;
+  syncViewTabs();
 
   // Scoped to #views: <body> carries the same data-view attribute.
   $('#views [data-view="list"]').append(icon('list'), h('span', null, 'Tasks'));
