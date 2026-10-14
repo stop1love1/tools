@@ -41,6 +41,7 @@ const issueRow = (i) => ({
   parent: i.parent ? `${i.parent.key} ${i.parent.summary}` : null,
   epic: i.epic ? `${i.epic.key} ${i.epic.summary}` : null,
   labels: i.labels.length ? i.labels : undefined,
+  fixVersions: i.fixVersions?.length ? i.fixVersions.map((v) => v.name) : undefined,
   docs: i.docs.length ? i.docs.map((d) => ({ title: d.title, url: d.url })) : undefined,
   url: i.url,
 });

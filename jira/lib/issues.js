@@ -13,7 +13,7 @@ function issueFields() {
   const { sprintField, storyPointsField } = config.get().jira;
   return [
     'summary', 'status', 'issuetype', 'priority', 'updated', 'created', 'duedate',
-    'parent', 'project', 'description', 'attachment', 'labels', sprintField, storyPointsField,
+    'parent', 'project', 'description', 'attachment', 'labels', 'fixVersions', sprintField, storyPointsField,
   ];
 }
 
@@ -49,6 +49,8 @@ function issueDto(issue, docs) {
     updated: f.updated,
     due: f.duedate || null,
     labels: f.labels || [],
+    // Empty for a task with no fix version.
+    fixVersions: (f.fixVersions || []).map((v) => ({ id: v.id, name: v.name, released: !!v.released, releaseDate: v.releaseDate || null })),
     sprint: sprintOf(f),
     storyPoints: f[storyPointsField] || null,
     parent: f.parent

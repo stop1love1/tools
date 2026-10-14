@@ -106,7 +106,7 @@ async function brief(opts) {
   const i = d.issue;
   const L = [
     `# ${i.key}: ${i.summary}`,
-    [`${i.type.name}`, i.status?.name, i.priority && `priority ${i.priority}`, i.due && `due ${i.due}`, i.sprint?.name, i.storyPoints && `${i.storyPoints} SP`].filter(Boolean).join(' · '),
+    [`${i.type.name}`, i.status?.name, i.priority && `priority ${i.priority}`, i.due && `due ${i.due}`, i.sprint?.name, i.storyPoints && `${i.storyPoints} SP`, i.fixVersions?.length && `fix version ${i.fixVersions.map((v) => v.name).join(', ')}`].filter(Boolean).join(' · '),
     [i.parent && `Parent: ${i.parent.key} ${i.parent.summary}`, f.epic && `Epic branch: epic/${f.epic}`, d.assignee && `Assignee: ${d.assignee}`].filter(Boolean).join(' · '),
     i.url,
     '',

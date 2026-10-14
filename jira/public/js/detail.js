@@ -113,6 +113,9 @@ function renderDetail(issue, d) {
     d && fact('Assignee', d.assignee || '—'),
     d?.reporter && fact('Reporter', d.reporter),
     p && fact('Parent', h('a', { class: 'key', href: '#' + p.key, onClick: (e) => (e.preventDefault(), openDetail(p.key)) }, p.key), h('span', { class: 'fact-sum', title: p.summary }, p.summary)),
+    // Older cached issue lists (sessionStorage) have no fixVersions yet.
+    issue.fixVersions?.length > 0 &&
+      fact('Fix version', issue.fixVersions.map((v) => h('span', { class: 'badge', title: v.releaseDate ? `${v.released ? 'Released' : 'Release date'} ${v.releaseDate}` : v.released ? 'Released' : 'Unreleased' }, v.name))),
     issue.labels.length > 0 && fact('Labels', issue.labels.map((l) => h('span', { class: 'badge' }, l))),
     h('span', { class: 'fact muted small' }, `Updated ${rel(issue.updated)} · created ${fmtDate(issue.created)}`),
   );
