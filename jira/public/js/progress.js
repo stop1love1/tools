@@ -21,6 +21,14 @@ function scopedBySprint() {
   return scoped().filter((i) => isSprintTask(i, state.sprint));
 }
 
+const isEpicType = (i) => /epic/i.test(i.type?.name || '');
+
+// What the status pills and the progress strip total: scopedBySprint() without Epics. An Epic is only ever a group
+// header in the list (never a row), and "All sprints" lets it through isSprintTask, so counting it made N exceed the rows shown.
+function countedBySprint() {
+  return scopedBySprint().filter((i) => !isEpicType(i));
+}
+
 // An issue's own sprint plus, for an Epic (never in a sprint itself), the sprints its children are in.
 const sprintsOf = (i) => [i.sprint, ...(i.childSprints || [])].filter(Boolean);
 const inSprint = (i, id) => !id || sprintsOf(i).some((s) => s.id === Number(id));
@@ -41,7 +49,7 @@ const isCancelled = (i) => i.status.category === 'done' && /cancel|hủy|huỷ|r
 // One thin bar under the status pills: a segment per status (click = filter by it), then done / story point totals.
 function renderProgress() {
   const el = $('#progress-strip');
-  const base = scopedBySprint().map(shownIssue);
+  const base = countedBySprint(); // real statuses: progress must move the moment a task does (the list alone holds the row)
   if (state.error || !state.fetchedAt || !base.length) return el.replaceChildren();
   const sumSP = (list) => list.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
   const cancelled = base.filter(isCancelled);

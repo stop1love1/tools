@@ -22,7 +22,7 @@ function renderTypes() {
 
 function renderFocus() {
   const el = $('#focus');
-  const base = scopedBySprint();
+  const base = countedBySprint(); // same set as the pills, so "View all N" matches the Urgent pill
   if (state.error || !state.fetchedAt || !base.length) return el.replaceChildren();
   const urgent = base.filter(isUrgent).sort(byUrgency);
   if (!urgent.length) return el.replaceChildren();
@@ -72,7 +72,7 @@ function renderFocus() {
 }
 
 function renderStats() {
-  const all = scopedBySprint().map(shownIssue);
+  const all = countedBySprint(); // real statuses, so the pills follow a transition at once
   if (!all.length) return $('#stats').replaceChildren();
   const pill = (label, value, toneName, pressed, onClick) =>
     h(
@@ -89,7 +89,7 @@ function renderStats() {
       syncUrl();
       render();
     }),
-    pill('Urgent', all.filter(isUrgent).length, 'hot', state.urgentOnly, () => {
+    pill('Urgent', all.filter(isUrgentNow).length, 'hot', state.urgentOnly, () => {
       state.urgentOnly = !state.urgentOnly;
       syncUrl();
       render();

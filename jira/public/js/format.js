@@ -93,6 +93,8 @@ function dayDiff(day) {
   return Math.round((new Date(day + 'T00:00:00') - today) / 86400000);
 }
 
+const URGENT_LABELS = new Set(['hotfix', 'urgent', 'gấp', 'gap', 'asap', 'blocker']);
+
 function urgency(i) {
   const reasons = [];
   let score = 0;
@@ -106,8 +108,9 @@ function urgency(i) {
   }
   const p = (i.priority || '').toLowerCase();
   if (/highest|blocker|critical|urgent/.test(p)) (score += 60), reasons.push({ level: 'danger', label: `Priority ${i.priority}` });
-  else if (/high|major/.test(p)) score += 35;
-  if (i.labels.some((l) => /hotfix|urgent|gấp|gap|asap|blocker/i.test(l))) (score += 40), reasons.push({ level: 'warn', label: 'Urgent label' });
+  else if (/high|major/.test(p)) (score += 35), reasons.push({ level: 'info', label: `Priority ${i.priority}` }); // 35 = the urgent threshold: say why it is listed
+  // Whole labels only: "data-gap" or "non-urgent" must not count as urgent.
+  if (i.labels.some((l) => URGENT_LABELS.has(l.trim().toLowerCase()))) (score += 40), reasons.push({ level: 'warn', label: 'Urgent label' });
   const t = tone(i.status);
   score += t === 'prog' ? 8 : t === 'review' ? 4 : 0;
   const idle = Math.floor((Date.now() - Date.parse(i.updated)) / 86400000);
@@ -124,19 +127,16 @@ function heldMove(key) {
   return m && Date.now() - m.at < (m.settled ? HOLD_MS : HOLD_PENDING_MS) ? m : null;
 }
 
-// The issue as the list shows it: a held row still carries its previous status, so pill / progress counts add up
-// to what is on screen. Only for counting; anything that acts on an issue (menus, transitions) needs the real one.
-const shownIssue = (i) => {
-  const m = heldMove(i.key);
-  return m ? { ...i, status: m.from } : i;
-};
-
 function sortUrgency(i) {
   const m = heldMove(i.key);
   return urgency(m ? { ...i, status: m.from } : i);
 }
 
-const isUrgent = (i) => sortUrgency(i).score >= 35;
+const URGENT_SCORE = 35;
+// For placing a row (urgent filter, urgent block): a held row keeps its previous status, so it does not vanish at once.
+const isUrgent = (i) => sortUrgency(i).score >= URGENT_SCORE;
+// For counting (the Urgent pill): the real status, so the number moves the moment a task does.
+const isUrgentNow = (i) => urgency(i).score >= URGENT_SCORE;
 
 const byUrgency = (a, b) => sortUrgency(b).score - sortUrgency(a).score || Date.parse(b.updated) - Date.parse(a.updated);
 
