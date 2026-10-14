@@ -113,7 +113,7 @@ function startWithClaude(issue) {
     }
   };
 
-  const settingsLink = (label) => h('button', { class: 'link-btn', onClick: () => (dlg.close(), setView('settings')) }, label);
+  const settingsLink = (label) => h('button', { class: 'link-btn', onClick: () => (dlg.close(), showPageLoader(), (location.href = pageHref('/settings.html'))) }, label);
   const mcpNote = !CFG.agent?.mcp
     ? h('div', { class: 'gconflict ghint' }, 'MCP is off: the ticket is pasted into the prompt instead of loaded by Claude. ', settingsLink('Turn it on'))
     : !CFG.agent?.writes &&

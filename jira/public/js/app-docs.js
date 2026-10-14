@@ -23,15 +23,9 @@ function load(opts) {
 
 function render() {
   renderMeta();
-  $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
   renderSprints();
   syncUrl();
   const main = $('#main');
-  if (state.view === 'settings') {
-    const el = renderSettingsView();
-    if (main.firstChild !== el) main.replaceChildren(el);
-    return;
-  }
   if (state.error) {
     main.replaceChildren(
       h(
@@ -74,7 +68,7 @@ async function initPage() {
 
   // Issues cached by the previous page (state.js): show them now and refresh behind them.
   const cached = !!state.fetchedAt;
-  if (cached || state.view === 'settings') render();
+  if (cached) render();
   const firstLoad = load({ silent: cached });
   loadUsers();
   return cached ? undefined : firstLoad;

@@ -1,38 +1,19 @@
 'use strict';
 
-// Wiring shared by all three pages (tasks.html, docs.html, workspace.html): theme, auth banner,
-// settings, notif/recent panels, and the keyboard shortcuts that make sense everywhere.
-// Each page's own script (app-tasks.js / app-docs.js / app-workspace.js) defines initPage()
-// and onShortcut(e) hooks that this file calls.
-
-// Settings is a detour from whichever page you're on; it renders over #main without navigating away.
-function setView(view) {
-  state.view = view;
-  document.body.dataset.view = view; // settings.css / git-flow.css hide the task subbar by this
-  syncViewTabs();
-  syncUrl();
-  render();
-}
-
-// The page tab is only "selected" while its own content shows; Settings is a detour with its own pressed button.
 function syncViewTabs() {
   for (const a of document.querySelectorAll('#views a')) {
-    a.setAttribute('aria-selected', String(a.dataset.view === window.PAGE && state.view !== 'settings'));
+    a.setAttribute('aria-selected', String(a.dataset.view === window.PAGE));
   }
 }
 
-// The full-screen cover in each page's markup (page-loader.css): up from first paint until
-// initPage()'s first data render, and raised again when leaving for another page.
 function hidePageLoader() {
   $('#page-loader')?.classList.add('done');
 }
 function showPageLoader() {
   $('#page-loader')?.classList.remove('done');
 }
-// Back/forward cache restores the page as it was left, cover included.
 window.addEventListener('pageshow', (e) => e.persisted && hidePageLoader());
 
-// Who's signed in, token expiry and last refresh, shown as the tooltip of the sign-in entry.
 function renderMeta() {
   const parts = [];
   if (state.me) {
@@ -56,7 +37,7 @@ function applyTheme() {
     root.classList.add('dark');
   } else if (state.theme === 'light') {
     root.classList.add('light');
-  } else { // auto
+  } else {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     if (prefersDark) root.classList.add('dark');
   }
@@ -91,7 +72,6 @@ function closeThemePicker() {
   $('#theme-toggle')?.setAttribute('aria-expanded', 'false');
 }
 
-// Listen for system theme changes
 if (window.matchMedia) {
   const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
   darkModeQuery.addEventListener('change', () => {
@@ -101,7 +81,6 @@ if (window.matchMedia) {
   });
 }
 
-// Close picker on outside click
 document.addEventListener('click', (e) => {
   const picker = $('#theme-picker');
   if (!picker) return;
@@ -110,8 +89,6 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Each page lists only the shortcuts that apply to it (PAGE_SHORTCUTS in its app-*.js),
-// followed by the common set below.
 function showKeyboardShortcuts() {
   const shortcuts = (window.PAGE_SHORTCUTS || []).concat([
     ['Esc', 'Close drawer/menu/panels or unfocus'],
@@ -136,14 +113,12 @@ function showKeyboardShortcuts() {
   document.body.append(modal);
 }
 
-// The sign-in entry of the ⋯ menu; while it's offered, a dot on the ⋯ button points at it.
 function showLogin(show) {
   $('#login').hidden = !show;
   $('#theme-toggle').classList.toggle('attn', !!show);
 }
 
 function showAuth(me) {
-  // Older servers returned { tokenExpiresAt } instead of { auth }.
   me.auth ??= { source: 'claude', expiresAt: me.tokenExpiresAt || null };
   state.me = me;
   const brand = $('.brand');
@@ -154,8 +129,6 @@ function showAuth(me) {
   renderMeta();
 }
 
-// Header filters that travel with you between pages (the search boxes are per page and stay behind).
-// The JQL already persists in localStorage, so only the URL-only ones are carried here.
 function headerQuery() {
   const params = new URLSearchParams();
   if (state.user) params.set('user', state.user);
@@ -164,24 +137,16 @@ function headerQuery() {
   return query ? '?' + query : '';
 }
 
-// Page link that keeps the header filters, e.g. pageHref('/tasks.html', '#PROJ-1').
 function pageHref(path, hash = '') {
   return path + headerQuery() + hash;
 }
 
-// The view tabs are static links; keep their query in step with the active header filters.
 function syncNavLinks() {
-  for (const a of $$('#views a')) a.href = pageHref(new URL(a.getAttribute('href'), location.origin).pathname);
+  for (const a of $$('#views a, #settings-btn, #back-btn')) a.href = pageHref(new URL(a.getAttribute('href'), location.origin).pathname);
 }
 window.syncNavLinks = syncNavLinks;
 
-// ---------------------------------------------------------------------------
-// Shared header controls: user filter, sprint filter, and their logic.
-// These are identical across all three pages.
-
-// Value of the user filter that means "every assignee" (the server swaps it into the JQL).
 const ALL_USERS = '__all__';
-// Value that means "tasks nobody is assigned to" (the server swaps it into the JQL).
 const UNASSIGNED = '__unassigned__';
 
 function viewedUserName() {
@@ -190,13 +155,10 @@ function viewedUserName() {
   return state.users?.users.find((u) => u.accountId === state.user)?.name || 'selected user';
 }
 
-// What the select shows for the current choice before the user list has arrived.
 const userLabel = () => ({ [ALL_USERS]: 'All', [UNASSIGNED]: 'Unassigned', '': 'Mine' })[state.user] ?? 'Loading…';
 
 async function loadUsers() {
   const select = $('#user-filter');
-  // Until the list arrives the select holds just the current choice, with a spinner, so the first paint
-  // does not show a wrong "Mine" and then jump when the real options replace it.
   select.replaceChildren(h('option', { value: state.user }, userLabel()));
   select.value = state.user;
   select.classList.add('loading');
@@ -231,7 +193,6 @@ function renderSprints() {
   const counts = new Map();
   for (const i of state.issues) {
     for (const sp of sprintsOf(i)) sprints.set(sp.id, sp);
-    // Count tasks only, as the list does: an Epic in a sprint through its children is not one.
     if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
   }
   const select = $('#sprint-filter');
@@ -257,8 +218,6 @@ function renderSprints() {
   syncUrl();
 }
 
-// Days left of the selected sprint, shown next to the sprint select. Hidden for "All sprints"
-// or when Jira gave no end date for the sprint.
 function renderSprintLeft() {
   const el = $('#sprint-left');
   if (!el) return;
@@ -268,7 +227,6 @@ function renderSprintLeft() {
     el.hidden = true;
     return;
   }
-  // Count calendar days in local time, so a sprint ending later today reads "ends today", not "1 day left".
   const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const days = Math.round((startOfDay(end) - startOfDay(new Date())) / 86400000);
   let text;
@@ -283,10 +241,6 @@ function renderSprintLeft() {
   el.hidden = false;
 }
 
-// Each page defines window.onUserFilterChange and window.onSprintFilterChange
-// to handle their own data reloading / rendering logic.
-// state.jql is shared by all pages (issuesQuery() keys on it), so the JQL row works everywhere.
-// Pages hook window.onJqlChange to reload their own data.
 function applyJql(jql) {
   state.jql = jql.trim() === state.defaultJql ? '' : jql.trim();
   LS.set('jql', state.jql);
@@ -326,29 +280,20 @@ function setupSharedFilters() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Shared init: wires the header chrome that's the same on every page, then
-// hands off to the page's own initPage() for its subbar/filters/data loading.
-// Each page sets window.PAGE ('list' | 'docs' | 'git') inline and its script defines
-// render(), initPage(), and onShortcutR() for the "r" shortcut and the refresh button.
-
 async function init() {
   await loadClientConfig();
 
   document.body.dataset.view = state.view;
   syncViewTabs();
 
-  // Scoped to #views: <body> carries the same data-view attribute.
   $('#views [data-view="list"]').append(icon('list'), h('span', null, 'Tasks'));
   $('#views [data-view="docs"]').append(icon('doc'), h('span', null, 'Docs'));
   $('#views [data-view="git"]').append(icon('branch'), h('span', null, 'Workspace'));
   for (const a of $$('#views a')) {
     a.addEventListener('click', (e) => {
-      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // opening in a new tab
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       if (a.dataset.view === window.PAGE) {
-        // Already here: just leave the Settings detour instead of reloading.
         e.preventDefault();
-        if (state.view === 'settings') setView(window.PAGE);
         return;
       }
       showPageLoader();
@@ -358,21 +303,24 @@ async function init() {
   $('#login').append(h('span', { class: 'theme-icon' }, icon('key')), h('span', { class: 'theme-label' }, 'Enable token auto-refresh'));
   $('#login').title = 'Sign in to Atlassian once to give the dashboard its own session, independent of Claude Code tokens';
   $('#settings-btn').append(h('span', { class: 'theme-icon' }, icon('gear')), h('span', { class: 'theme-label' }, 'Settings'));
-  $('#settings-btn').addEventListener('click', () => {
-    closeThemePicker();
-    setView(state.view === 'settings' ? window.PAGE : 'settings');
-  });
+  if (window.PAGE === 'settings') $('#settings-btn').setAttribute('aria-current', 'page');
+  else {
+    $('#settings-btn').addEventListener('click', (e) => {
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      showPageLoader();
+    });
+  }
 
-  $('#refresh').append(icon('refresh'));
-  $('#refresh').addEventListener('click', () => window.onShortcutR?.());
+  $('#refresh')?.append(icon('refresh'));
+  $('#refresh')?.addEventListener('click', () => window.onShortcutR?.());
 
   $('#bell').prepend(icon('bell'));
   $('#bell').addEventListener('click', (e) => {
     e.stopPropagation();
     toggleNotif();
   });
-  $('#recent-btn').replaceChildren(icon('clock'));
-  $('#recent-btn').addEventListener('click', (e) => {
+  $('#recent-btn')?.replaceChildren(icon('clock'));
+  $('#recent-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleRecent();
   });
@@ -406,7 +354,7 @@ async function init() {
   document.addEventListener('click', (e) => {
     if (state.menu && !state.menu.contains(e.target)) closeMenu();
     if (state.notif.open && !e.target.closest('#notif')) toggleNotif(false);
-    if (!$('#recent').hidden && !e.target.closest('#recent') && !e.target.closest('#recent-btn')) toggleRecent(false);
+    if ($('#recent')?.hidden === false && !e.target.closest('#recent') && !e.target.closest('#recent-btn')) toggleRecent(false);
   });
   document.addEventListener('scroll', closeMenu, true);
   document.addEventListener('keydown', (e) => {
@@ -414,8 +362,8 @@ async function init() {
     if (e.key === 'Escape') {
       if (state.menu) closeMenu();
       else if (state.notif.open) toggleNotif(false);
-      else if (!$('#recent').hidden) toggleRecent(false);
-      else if (state.openKey) window.closeDrawer?.(); // the drawer only exists on tasks.html
+      else if ($('#recent')?.hidden === false) toggleRecent(false);
+      else if (state.openKey) window.closeDrawer?.();
       else if (typing) document.activeElement.blur();
     } else if (!typing && e.key === '?') {
       e.preventDefault();
@@ -439,10 +387,9 @@ async function init() {
     });
   loadNotifications();
 
-  await window.initPage(); // resolves after the page's first data render
+  await window.initPage();
 }
 
-// Quiet refresh while the tab is visible and nothing is in flight (Settings → Jira → Auto refresh).
 let refreshTimer = null;
 function scheduleRefresh() {
   clearInterval(refreshTimer);
@@ -456,8 +403,6 @@ function scheduleRefresh() {
   }, minutes * 60 * 1000);
 }
 
-// A slow Jira/GitLab shouldn't hold the whole page hostage: past this the page's own
-// in-place "Loading…" state takes over.
 setTimeout(hidePageLoader, 8000);
 init()
   .catch((e) => toast(e.message, 'error'))

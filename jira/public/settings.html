@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Jira — Settings</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 10h14M9 16h10M9 22h6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <script>
+      try {
+        const t = JSON.parse(localStorage.getItem('jd:theme'));
+        if (t === 'light' || t === 'dark') document.documentElement.classList.add(t);
+      } catch {}
+    </script>
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/page-loader.css" />
+    <link rel="stylesheet" href="/css/controls.css" />
+    <link rel="stylesheet" href="/css/header.css" />
+    <link rel="stylesheet" href="/css/urgency.css" />
+    <link rel="stylesheet" href="/css/shared.css" />
+    <link rel="stylesheet" href="/css/list.css" />
+    <link rel="stylesheet" href="/css/docs.css" />
+    <link rel="stylesheet" href="/css/drawer.css" />
+    <link rel="stylesheet" href="/css/panels.css" />
+    <link rel="stylesheet" href="/css/responsive.css" />
+    <link rel="stylesheet" href="/css/git-flow.css" />
+    <link rel="stylesheet" href="/css/git-dialogs.css" />
+    <link rel="stylesheet" href="/css/git-workspace.css" />
+    <link rel="stylesheet" href="/css/git-popover.css" />
+    <link rel="stylesheet" href="/css/git-summary.css" />
+    <link rel="stylesheet" href="/css/review.css" />
+    <link rel="stylesheet" href="/css/settings.css" />
+  </head>
+  <body>
+    <div class="page-loader" id="page-loader" role="status" aria-label="Loading"><span class="page-loader-spin"></span></div>
+    <header class="topbar">
+      <div class="bar">
+        <a class="icon-btn outline" id="back-btn" href="/tasks.html" title="Back" aria-label="Back"></a>
+        <div class="bar-actions">
+          <nav class="seg icons labeled" id="views" aria-label="Pages">
+            <a data-view="list" href="/tasks.html" title="Task list" aria-label="Task list"></a>
+            <a data-view="docs" href="/docs.html" title="Confluence pages & attachments" aria-label="Documents"></a>
+            <a data-view="git" href="/workspace.html" title="Workspace: your checkouts, changes, stashes and branch cleanup" aria-label="Workspace"></a>
+          </nav>
+        </div>
+        <div class="bar-icons">
+          <button class="icon-btn outline bell" id="bell" title="Notifications" aria-label="Notifications" aria-expanded="false" aria-controls="notif">
+            <span class="bell-badge" id="bell-badge" hidden></span>
+          </button>
+          <div class="theme-picker" id="theme-picker">
+            <button class="icon-btn outline" id="theme-toggle" title="More: theme, sign-in, settings" aria-label="More" aria-expanded="false" aria-controls="theme-menu"></button>
+            <div class="theme-menu" id="theme-menu" role="menu">
+              <div class="menu-label">Theme</div>
+              <button class="theme-option" data-theme="auto" role="menuitem">
+                <span class="theme-icon" id="theme-icon-auto"></span>
+                <span class="theme-label">System</span>
+                <span class="theme-check" id="theme-check-auto"></span>
+              </button>
+              <button class="theme-option" data-theme="light" role="menuitem">
+                <span class="theme-icon" id="theme-icon-light"></span>
+                <span class="theme-label">Light</span>
+                <span class="theme-check" id="theme-check-light"></span>
+              </button>
+              <button class="theme-option" data-theme="dark" role="menuitem">
+                <span class="theme-icon" id="theme-icon-dark"></span>
+                <span class="theme-label">Dark</span>
+                <span class="theme-check" id="theme-check-dark"></span>
+              </button>
+              <div class="menu-sep" role="separator"></div>
+              <a class="theme-option" id="login" href="/oauth/login" role="menuitem" hidden></a>
+              <a class="theme-option" id="settings-btn" href="/settings.html" role="menuitem"></a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="main"></main>
+
+    <div class="notif-panel" id="notif" role="dialog" aria-label="Notifications" hidden></div>
+    <div class="scrim" id="scrim" hidden></div>
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <script>window.PAGE = 'settings';</script>
+    <script src="/js/core.js"></script>
+    <script src="/js/state.js"></script>
+    <script src="/js/format.js"></script>
+    <script src="/js/ai.js"></script>
+    <script src="/js/panels.js"></script>
+    <script src="/js/menu.js"></script>
+    <script src="/js/settings.js"></script>
+    <script src="/js/app-shared.js"></script>
+    <script src="/js/app-settings.js"></script>
+    <script src="/js/livereload.js?port=35729"></script>
+  </body>
+</html>

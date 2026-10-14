@@ -89,7 +89,6 @@ async function api(req, res, url) {
     });
   }
 
-  // The token file's path (never its contents) lets the Settings page show a working MCP connect command.
   if (route === 'GET /api/config') return send(res, 200, { ...config.view(), client: config.client(), mcpTokenFile: tokenFile });
   if (route === 'PUT /api/config') {
     const body = await readJson(req);

@@ -1,24 +1,12 @@
-/* Settings page. */
-
-body[data-view='settings'] :is(.subbar, .progress-strip, .focus) {
-  display: none;
-}
-
-#settings-btn[aria-pressed='true'] {
+#settings-btn[aria-current='page'] {
   color: var(--accent);
   background: var(--accent-soft);
-}
-
-/* Controls that only apply to the task list; nothing to search, filter or reload JQL for here. */
-body[data-view='settings'] :is(#search, #user-filter, #sprint-filter, #sprint-left, #recent-btn, #jql-toggle, #jql-row) {
-  display: none;
 }
 
 .settings {
   max-width: 920px;
   margin: 0 auto;
   display: grid;
-  /* minmax(0, …) lets the track shrink below its content, so a wide input can't push the cards past the viewport. */
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
@@ -31,7 +19,6 @@ body[data-view='settings'] :is(#search, #user-filter, #sprint-filter, #sprint-le
   padding: 10px 0 0;
 }
 
-/* Save + unsaved count stay at the bottom of the viewport while you scroll through the fields. */
 .set-bar {
   position: sticky;
   bottom: 12px;

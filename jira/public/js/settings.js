@@ -1,11 +1,7 @@
 'use strict';
 
-// Settings page (gear button): edits config.json through /api/config. The form is built from the schema the
-// server sends, so a new setting only needs an entry in lib/config.js.
-
 const settingsState = { data: null, el: null, error: null, saving: false, errors: {}, dirty: false };
 
-// Leaving for another page (Tasks / Docs / Workspace links, reload, closing the tab) would drop unsaved edits.
 addEventListener('beforeunload', (e) => {
   if (!settingsState.dirty) return;
   e.preventDefault();
@@ -25,7 +21,6 @@ async function loadSettings() {
   if (state.view === 'settings') render();
 }
 
-// Kept across render() calls so edits survive a background reload of the task list.
 function renderSettingsView() {
   if (!settingsState.data && !settingsState.error) {
     loadSettings();
@@ -38,11 +33,10 @@ function renderSettingsView() {
 
 function buildSettings(data) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  const inputs = new Map(); // key → { read(): value, set(value), row }
+  const inputs = new Map();
   const saveBtn = h('button', { class: 'btn primary', onClick: () => save() }, 'Save');
   const status = h('span', { class: 'muted small', role: 'status' });
 
-  // `e` is the input event (or a { target } stand-in): editing a field clears its server-side error.
   const refresh = (e) => {
     const t = e?.target;
     if (t instanceof Node) {
@@ -97,13 +91,12 @@ function buildSettings(data) {
         const err = h('div', { class: 'set-err', id: `set-err-${++settingsIds}`, role: 'alert' }, settingsState.errors[f.key] || '');
         const labelId = `set-lbl-${settingsIds}`;
         const label = h('label', { id: labelId }, f.label);
-        // One control: label[for] + described-by the error. Tables of rows (filters, repos): a labelled group.
         const control = field.el.matches('input, textarea') ? field.el : field.el.querySelector('input[type=checkbox]');
         if (control) {
           control.id = `set-in-${settingsIds}`;
           label.setAttribute('for', control.id);
           control.setAttribute('aria-describedby', err.id);
-          if (control.type === 'checkbox') control.setAttribute('aria-labelledby', labelId); // not the "On"/"Off" text
+          if (control.type === 'checkbox') control.setAttribute('aria-labelledby', labelId);
         } else {
           field.el.setAttribute('role', 'group');
           field.el.setAttribute('aria-labelledby', labelId);
@@ -144,13 +137,11 @@ function buildSettings(data) {
   return el;
 }
 
-// What "Reset to default" would restore, for its tooltip.
 function preview(v) {
   const text = Array.isArray(v) ? v.map((x) => (x && typeof x === 'object' ? x.label || x.id : x)).join(', ') : String(v);
   return text.length > 160 ? `${text.slice(0, 157)}…` : text;
 }
 
-// One input per schema type; each returns { el, read(), set(value) }.
 function fieldInput(f, value, onChange) {
   if (f.type === 'lines') {
     const ta = h('textarea', { class: `gin${f.mono ? ' mono' : ''}`, rows: String(Math.min(12, Math.max(3, value.length + 1))), spellcheck: 'false', onInput: onChange });
@@ -183,10 +174,8 @@ function fieldInput(f, value, onChange) {
   return { el: input, set, read: () => (f.type === 'number' ? (input.value === '' ? NaN : Number(input.value)) : input.value.trim()) };
 }
 
-// Editable table of objects (saved filters, repos): one row per item, a text input per column.
 function listInput(value, onChange, cols, blank, addLabel) {
   const body = h('div', { class: 'set-list' });
-  // Every control says which row it belongs to ("JQL, row 2"), so a screen reader can tell the rows apart.
   const relabel = () => {
     [...body.children].forEach((row, i) => {
       row.querySelectorAll('input').forEach((inp) => inp.setAttribute('aria-label', `${inp.placeholder}, row ${i + 1}`));
@@ -209,13 +198,11 @@ function listInput(value, onChange, cols, blank, addLabel) {
   return { el: h('div', null, body, add), set, read };
 }
 
-// Apply what the browser uses right away; the server already uses the new values.
 function afterSave(res, changed) {
   applyClientConfig(res.client);
   renderPresets();
   scheduleRefresh();
   const keys = Object.keys(changed);
-  // Each page loads only its own data scripts: git ones on tasks/workspace, load() on tasks/docs.
   if (keys.some((k) => k.startsWith('git.')) && typeof gitState !== 'undefined') {
     gitState.overview = null;
     gitState.branches = {};
@@ -228,12 +215,10 @@ function afterSave(res, changed) {
   }
 }
 
-// How to plug Claude Code / Cursor into the dashboard's MCP endpoint.
 function mcpConnectCard(data) {
   const enabled = data.values['mcp.enabled'];
   const writes = data.values['mcp.allowWrites'];
   const url = `${location.origin}/mcp`;
-  // Write tools need the Bearer token. Only the file's path is shown, never its contents.
   const tokenFile = data.mcpTokenFile || '.mcp-token';
   const authHeader = `Bearer <contents of ${tokenFile}>`;
   const entry = (type) => ({ ...(type ? { type } : {}), url, ...(writes ? { headers: { Authorization: authHeader } } : {}) });

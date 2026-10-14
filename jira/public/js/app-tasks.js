@@ -28,13 +28,6 @@ function render() {
   queueMicrotask(holdMenu());
   renderMeta();
   renderSprints();
-  $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
-  if (state.view === 'settings') {
-    syncUrl();
-    const el = renderSettingsView();
-    if ($('#main').firstChild !== el) $('#main').replaceChildren(el);
-    return;
-  }
   const list = filtered();
   renderTypes();
   renderProgress();
@@ -154,7 +147,6 @@ async function initPage() {
     if (!state.jql && state.defaultJql) $('#jql').value = state.defaultJql;
   });
   loadUsers();
-  if (state.view === 'settings') render(); // detour: don't wait for the task list
   const initial = decodeURIComponent(location.hash.slice(1));
   if (ISSUE_KEY_RE.test(initial)) openDetail(initial);
   window.addEventListener('hashchange', () => {

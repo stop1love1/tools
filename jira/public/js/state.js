@@ -1,17 +1,7 @@
 'use strict';
 
-// App state, URL sync, and loading issues / transitions / details from the server.
-
-// ---------------------------------------------------------------------------
-// State
-
-// Saved filters (Settings → Jira); the first one is the default JQL (empty = let the server use it).
 const presets = () => [{ label: 'Default', jql: '' }, ...CFG.jira.presets];
 
-// Fills #preset with an <option> per saved filter plus a trailing "Custom" slot, then
-// selects whichever one matches the active JQL. Called on page init and after Settings saves.
-// Note: tasks.html additionally defines syncPreset() (app-tasks.js) to re-sync this select
-// whenever state.jql changes later; this function only handles the initial render + selection.
 function renderPresets() {
   const select = $('#preset');
   if (!select) return;
@@ -25,20 +15,24 @@ const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
 const initParams = new URLSearchParams(location.search);
 
+if (window.PAGE !== 'settings' && initParams.get('view') === 'settings') {
+  initParams.delete('view');
+  const rest = initParams.toString();
+  location.replace('/settings.html' + (rest ? '?' + rest : ''));
+}
+
 const state = {
   issues: [],
   jql: LS.get('jql', ''),
   usedJql: '',
   defaultJql: '',
-  // 'settings' is a detour overlay available from any page; otherwise it mirrors window.PAGE.
-  view: initParams.get('view') === 'settings' ? 'settings' : window.PAGE,
+  view: window.PAGE,
   me: null,
   user: initParams.get('user') || LS.get('user', ''),
   users: null,
   q: initParams.get('q') || '',
   type: initParams.get('type') || 'all',
   status: initParams.get('status') || null,
-  // URL-only (like type/status): a sprint ends, so there's no reason to carry last session's choice forward.
   sprint: initParams.get('sprint') ? Number(initParams.get('sprint')) : null,
   urgentOnly: initParams.get('urgent') === '1',
   loading: false,
@@ -60,25 +54,18 @@ const state = {
   docsOrder: initParams.get('docsOrder') === 'asc' ? 'asc' : 'desc',
 };
 const cache = { transitions: new Map(), details: new Map() };
-// key → { at, from, to }: issues whose status just changed. For HOLD_MS they stay in the list, filter and
-// group they were in (format.js heldMove) so the user can follow where the task went.
 const recentlyTransitioned = new Map();
 const HOLD_MS = 6000;
-const HOLD_PENDING_MS = 30_000; // a request that never answers must not hold its row forever
+const HOLD_PENDING_MS = 30_000;
 
-// What a load asks for. state.loadedFor records it for the issues on screen, so a page shows
-// "Loading…" only when those belong to another query, not on every refresh.
 const issuesQuery = () => JSON.stringify([state.jql, state.user]);
 
-// The last issue list of this browser tab, so switching pages shows it at once and
-// refreshes behind it instead of starting from an empty page.
 const ISSUES_CACHE = 'jd:issues';
 function saveIssues() {
   try {
     const { issues, defaultJql, usedJql, fetchedAt, loadedFor } = state;
     sessionStorage.setItem(ISSUES_CACHE, JSON.stringify({ issues, defaultJql, usedJql, fetchedAt, loadedFor }));
   } catch {
-    // Storage full or unavailable: the next page just loads from scratch.
   }
 }
 (function restoreIssues() {
@@ -87,7 +74,6 @@ function saveIssues() {
     if (c?.loadedFor !== issuesQuery()) return;
     Object.assign(state, { issues: c.issues, defaultJql: c.defaultJql, usedJql: c.usedJql, fetchedAt: new Date(c.fetchedAt), loadedFor: c.loadedFor });
   } catch {
-    // Unreadable cache: load as usual.
   }
 })();
 
@@ -99,7 +85,6 @@ function syncUrl() {
   if (state.urgentOnly) params.set('urgent', '1');
   if (state.user) params.set('user', state.user);
   if (state.sprint) params.set('sprint', String(state.sprint));
-  if (state.view === 'settings') params.set('view', 'settings');
   if (state.docsQ) params.set('docsQ', state.docsQ);
   if (state.docsKind !== 'all') params.set('docsKind', state.docsKind);
   if (state.docsSort !== 'date') params.set('docsSort', state.docsSort);
@@ -110,11 +95,6 @@ function syncUrl() {
   window.syncNavLinks?.();
 }
 
-// ---------------------------------------------------------------------------
-// Data
-
-// Fetches issues into state.issues. Pure data + state; DOM-specific bits (spinner, jql field,
-// render()) are layered on by each page's load() wrapper (see app-tasks.js / app-docs.js).
 async function loadIssues({ silent = false } = {}) {
   if (state.loading) return;
   state.loading = true;
@@ -160,7 +140,6 @@ function getDetail(key) {
   return cache.details.get(key);
 }
 
-// A Story / Epic is also carried as a stub (`parent`, `epic`) on every issue under it: keep all copies in step.
 function setStatus(issue, status, pending) {
   const copies = [issue, state.openIssue];
   for (const i of state.issues) copies.push(i, i.parent, i.epic);
@@ -190,18 +169,15 @@ async function transition(issue, t) {
     toast(`${issue.key}: ${e.message}`, 'error', { href: issue.url || (state.issues[0] && `${siteOf(state.issues[0])}/browse/${issue.key}`), label: 'Open in Jira' });
   } finally {
     setStatus(issue, issue.status, false);
-    saveIssues(); // so the next page doesn't flash the old status
+    saveIssues();
     cache.transitions.delete(issue.key);
     cache.details.delete(issue.key);
-    if (!failed) Object.assign(move, { at: Date.now(), settled: true }); // the hold runs from the moment Jira confirmed
+    if (!failed) Object.assign(move, { at: Date.now(), settled: true });
     render();
     if (!failed) releaseMove(issue.key, move, HOLD_MS + 50);
   }
 }
 
-// Drops the hold on an issue after `delay` ms and redraws. A newer move of the same issue owns the entry
-// then, so it is left alone; and an open status menu is never closed under the user (render() closes it):
-// the release is retried a second later.
 function releaseMove(key, move, delay) {
   setTimeout(() => {
     if (recentlyTransitioned.get(key) !== move) return;
@@ -211,8 +187,6 @@ function releaseMove(key, move, delay) {
   }, delay);
 }
 
-// Toast action: drop the status / urgent filter that hides the task at its new status and scroll to it.
-// null when nothing hides it.
 function movedLink(issue, status) {
   const hidden = (state.status && state.status !== status.name) || state.urgentOnly;
   if (!hidden || !state.issues.some((i) => i.key === issue.key)) return null;

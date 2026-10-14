@@ -19,7 +19,7 @@ Mọi thứ đi qua Atlassian MCP server (`mcp.atlassian.com`) — token của n
 
 ## Cấu hình
 
-Bấm nút ⚙ (Settings) trên header. Trang này sửa `config.json` (đã gitignore): Jira (site, JQL mặc định, bộ lọc lưu sẵn, field story point / sprint, auto refresh…), editor, git flow (thư mục repo, danh sách repo, project key, tên nhánh uat / develop / main, loại nhánh, số ngày tra commit / MR, checklist MR) và server. Đa số áp dụng ngay; mục có nhãn *needs restart* cần chạy lại `npm start`. `.env` vẫn dùng được làm giá trị mặc định (xem `.env.example`).
+Mở menu ⋯ trên header rồi chọn Settings (trang riêng `/settings.html`; link cũ `?view=settings` tự chuyển sang đó). Trang này sửa `config.json` (đã gitignore): Jira (site, JQL mặc định, bộ lọc lưu sẵn, field story point / sprint, auto refresh…), editor, git flow (thư mục repo, danh sách repo, project key, tên nhánh uat / develop / main, loại nhánh, số ngày tra commit / MR, checklist MR) và server. Đa số áp dụng ngay; mục có nhãn *needs restart* cần chạy lại `npm start`. `.env` vẫn dùng được làm giá trị mặc định (xem `.env.example`).
 
 ## MCP cho Claude Code / Cursor
 

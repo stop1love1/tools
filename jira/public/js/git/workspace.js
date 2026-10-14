@@ -11,7 +11,6 @@ function renderRepoPills() {
   const box = $('#bar-repos');
   if (!box) return;
   const ov = gitState.overview;
-  box.hidden = state.view === 'settings';
   box.title = ov ? ov.root : '';
   const label = (id) => CFG.git.repos.find((r) => r.id === id)?.label || id;
   const jump = (id) => {
