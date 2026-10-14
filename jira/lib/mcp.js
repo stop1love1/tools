@@ -183,8 +183,7 @@ function toolErrorMessage(message) {
   return parts.length ? parts.join(' · ') : raw;
 }
 
-async function searchAll(jql, fields) {
-  const max = config.get().jira.maxIssues;
+async function searchAll(jql, fields, max = config.get().jira.maxIssues) {
   const out = [];
   let nextPageToken;
   do {

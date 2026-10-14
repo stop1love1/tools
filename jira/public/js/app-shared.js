@@ -286,6 +286,7 @@ async function init() {
   document.body.dataset.view = state.view;
   syncViewTabs();
 
+  $('#views [data-view="overview"]')?.append(icon('chart'), h('span', null, 'Overview'));
   $('#views [data-view="list"]').append(icon('list'), h('span', null, 'Tasks'));
   $('#views [data-view="docs"]').append(icon('doc'), h('span', null, 'Docs'));
   $('#views [data-view="git"]').append(icon('branch'), h('span', null, 'Workspace'));

@@ -12,7 +12,7 @@ const base = () => config.get().jira.siteUrl.replace(/\/+$/, '');
 function issueFields() {
   const { sprintField, storyPointsField } = config.get().jira;
   return [
-    'summary', 'status', 'issuetype', 'priority', 'updated', 'created', 'duedate',
+    'summary', 'status', 'issuetype', 'priority', 'updated', 'created', 'duedate', 'resolutiondate',
     'parent', 'project', 'description', 'attachment', 'labels', 'fixVersions', sprintField, storyPointsField,
   ];
 }
@@ -47,6 +47,7 @@ function issueDto(issue, docs) {
     project: f.project ? { key: f.project.key, name: f.project.name } : null,
     created: f.created,
     updated: f.updated,
+    resolved: f.resolutiondate || null,
     due: f.duedate || null,
     labels: f.labels || [],
     // Empty for a task with no fix version.
@@ -79,6 +80,35 @@ function classifyLink(url) {
   if (/\/merge_requests\/\d+|\/pull\/\d+/.test(url)) return 'mr';
   if (/\/commits?\/[0-9a-f]{7,}/.test(url)) return 'commit';
   return 'other';
+}
+
+// ---------------------------------------------------------------------------
+// History (Overview trends): only the fields the charts need, over a longer window than the task list.
+
+const HISTORY_MAX = 2000;
+const HISTORY_TTL = 10 * 60 * 1000;
+const historyCache = new Map(); // jql → { at, data }
+
+async function listHistory(jql, { fresh = false } = {}) {
+  const hit = historyCache.get(jql);
+  if (!fresh && hit && Date.now() - hit.at < HISTORY_TTL) return hit.data;
+  const { storyPointsField } = config.get().jira;
+  const raw = await searchAll(jql, ['issuetype', 'status', 'created', 'updated', 'resolutiondate', 'duedate', storyPointsField], HISTORY_MAX);
+  const data = {
+    truncated: raw.length >= HISTORY_MAX,
+    issues: raw.map(({ key, fields: f }) => ({
+      key,
+      type: { name: f.issuetype?.name || '' },
+      status: statusDto(f.status),
+      created: f.created,
+      updated: f.updated,
+      resolved: f.resolutiondate || null,
+      due: f.duedate || null,
+      storyPoints: f[storyPointsField] || null,
+    })),
+  };
+  historyCache.set(jql, { at: Date.now(), data });
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,4 +359,4 @@ async function sprintsOf(keys) {
   return out;
 }
 
-module.exports = { listIssues, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary, sprintsOf };
+module.exports = { listIssues, listHistory, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary, sprintsOf };

@@ -65,10 +65,11 @@ function serveStatic(url, req, res) {
     res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
     return fs.createReadStream(LIVERELOAD_CLIENT).pipe(res);
   }
-  const rel = url.pathname === '/' ? 'tasks.html' : url.pathname.slice(1);
+  const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
   const file = path.join(PUBLIC, rel);
   const type = TYPES[path.extname(file)];
   if (req.method !== 'GET' || !type || !file.startsWith(PUBLIC + path.sep) || !/^[a-z0-9/_-]+\.[a-z]+$/.test(rel) || !fs.existsSync(file)) {
+    if (req.method === 'GET' && url.pathname === '/') console.log(`[debug] root request: rel=${rel}, file=${file}, exists=${fs.existsSync(file)}`);
     return send(res, 404, { error: 'Not found' });
   }
   res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
@@ -117,22 +118,35 @@ async function api(req, res, url) {
     return send(res, 200, await notifications.listNotifications());
   }
 
-  if (route === 'GET /api/issues') {
-    const defaultJql = config.get().jira.defaultJql;
-    let jql = (url.searchParams.get('jql') || '').trim() || defaultJql;
-    // Viewing someone else: the same JQL with currentUser() swapped for their account id.
+  // Viewing someone else: the same JQL with currentUser() swapped for their account id.
+  async function forUser(jql) {
     const user = url.searchParams.get('user') || '';
     if (user === ALL_USERS || user === UNASSIGNED) {
       // Everyone / nobody: swap "assignee = currentUser()" for any assignee / no assignee, limited to the projects I work in.
       const { projects } = await listUsers();
       const scope = projects.length ? `project in (${projects.join(',')}) AND ` : '';
       const who = user === ALL_USERS ? 'assignee is not EMPTY' : 'assignee is EMPTY';
-      jql = jql.replace(/assignee\s*=\s*currentUser\(\)/gi, `(${scope}${who})`);
-    } else if (user) {
-      if (!/^[A-Za-z0-9:_-]{1,128}$/.test(user)) return send(res, 400, { error: 'Invalid accountId' });
-      jql = jql.replace(/currentUser\(\)/g, `"${user}"`);
+      return jql.replace(/assignee\s*=\s*currentUser\(\)/gi, `(${scope}${who})`);
     }
+    if (user) {
+      if (!/^[A-Za-z0-9:_-]{1,128}$/.test(user)) throw httpError(400, 'Invalid accountId');
+      return jql.replace(/currentUser\(\)/g, `"${user}"`);
+    }
+    return jql;
+  }
+
+  if (route === 'GET /api/issues') {
+    const defaultJql = config.get().jira.defaultJql;
+    const jql = await forUser((url.searchParams.get('jql') || '').trim() || defaultJql);
     return send(res, 200, { jql, defaultJql, site: config.get().jira.siteUrl, issues: await issues.listIssues(jql) });
+  }
+
+  // Overview trends: everything created or resolved in the window, plus whatever is still open (the backlog at each point).
+  if (route === 'GET /api/history') {
+    const days = Number(url.searchParams.get('days'));
+    if (!Number.isInteger(days) || days < 1 || days > 1830) return send(res, 400, { error: 'days must be 1–1830' });
+    const jql = await forUser(`assignee = currentUser() AND (created >= -${days}d OR resolved >= -${days}d OR statusCategory != Done) ORDER BY created DESC`);
+    return send(res, 200, { jql, ...(await issues.listHistory(jql, { fresh: url.searchParams.has('fresh') })) });
   }
 
   const att = url.pathname.match(/^\/api\/attachments\/(\d+)\/([^/]+)$/);

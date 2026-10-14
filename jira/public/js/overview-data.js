@@ -40,37 +40,6 @@ const OverviewData = (() => {
     };
   }
 
-  function byCategory(list) {
-    const n = (cat) => list.filter((i) => i.status.category === cat).length;
-    return [
-      { name: 'To Do', tone: 'new', n: n('new') },
-      { name: 'In progress', tone: 'prog', n: n('indeterminate') },
-      { name: 'Done', tone: 'done', n: n('done') },
-    ];
-  }
-
-  function byStatus(list) {
-    return statusList(list).map((s) => ({ name: s.name, tone: tone(s), n: list.filter((i) => i.status.name === s.name).length }));
-  }
-
-  const PRIORITIES = ['highest', 'high', 'medium', 'low', 'lowest'];
-  function byPriority(list) {
-    const counts = new Map();
-    for (const i of list) counts.set(i.priority || 'No priority', (counts.get(i.priority || 'No priority') || 0) + 1);
-    const rank = (name) => (name === 'No priority' ? 99 : PRIORITIES.indexOf(name.toLowerCase()) < 0 ? 50 : PRIORITIES.indexOf(name.toLowerCase()));
-    return [...counts].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])).map(([name, n]) => ({ name, n }));
-  }
-
-  function byType(list) {
-    const rows = new Map();
-    for (const i of list) {
-      const r = rows.get(i.type.name) || { name: i.type.name, new: 0, prog: 0, done: 0 };
-      r[{ new: 'new', indeterminate: 'prog', done: 'done' }[i.status.category] || 'prog']++;
-      rows.set(i.type.name, r);
-    }
-    return [...rows.values()].sort((a, b) => b.new + b.prog + b.done - (a.new + a.prog + a.done));
-  }
-
   function byEpic(list) {
     const rows = new Map();
     for (const i of list) {
@@ -82,38 +51,6 @@ const OverviewData = (() => {
       rows.set(i.epic.key, r);
     }
     return [...rows.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
-  }
-
-  function bySprint(issues) {
-    const rows = new Map();
-    for (const i of issues) {
-      if (!i.sprint || isEpicType(i) || isCancelled(i)) continue;
-      const s = i.sprint;
-      const r = rows.get(s.id) || { id: s.id, name: s.name, state: s.state, start: s.startDate, total: 0, done: 0, spTotal: 0, spDone: 0 };
-      r.total++;
-      r.spTotal += sp(i);
-      if (isDone(i)) (r.done++, (r.spDone += sp(i)));
-      rows.set(s.id, r);
-    }
-    return [...rows.values()].sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')) || a.id - b.id);
-  }
-
-  function dueTimeline(list, now, days = 14) {
-    const open = list.filter((i) => isOpen(i) && i.due);
-    const slots = Array.from({ length: days }, (_, k) => ({ date: isoDay(addDays(now, k)), n: 0 }));
-    let overdue = 0;
-    for (const i of open) {
-      const d = dueIn(i, now);
-      if (d < 0) overdue++;
-      else if (d < days) slots[d].n++;
-    }
-    return { overdue, slots };
-  }
-
-  const AGE_BUCKETS = [['0-2 days', 0, 2], ['3-7 days', 3, 7], ['8-14 days', 8, 14], ['Over 14 days', 15, Infinity]];
-  function ageBuckets(list, now) {
-    const open = list.filter(isOpen);
-    return AGE_BUCKETS.map(([name, lo, hi]) => ({ name, n: open.filter((i) => idleDays(i, now) >= lo && idleDays(i, now) <= hi).length }));
   }
 
   function burndown(all, sprint, now) {
@@ -138,27 +75,156 @@ const OverviewData = (() => {
     return { unit: useSP ? 'SP' : 'tasks', total, length, today, points };
   }
 
-  function weeklyDone(list, now, weeks = 8) {
-    const monday = (d) => addDays(startOf(d), -((startOf(d).getDay() + 6) % 7));
-    const first = addDays(monday(now), -7 * (weeks - 1));
-    const slots = Array.from({ length: weeks }, (_, k) => ({ date: isoDay(addDays(first, 7 * k)), n: 0, sp: 0 }));
-    for (const i of list.filter(isDone)) {
-      const k = Math.floor(daysBetween(first, startOf(doneAt(i))) / 7);
-      if (k >= 0 && k < weeks) (slots[k].n++, (slots[k].sp += sp(i)));
-    }
-    return slots;
-  }
-
-  const byDueThenUrgency = (now) => (a, b) => (dueIn(a, now) ?? 9999) - (dueIn(b, now) ?? 9999) || Date.parse(b.updated) - Date.parse(a.updated);
-  function lists(list, now) {
-    const open = list.filter(isOpen);
+  // How far the sprint (or the whole scope) is: work split by status category, in SP when anything is estimated.
+  function progress(list, sprint, now) {
+    const useSP = sumSP(list) > 0;
+    const weight = (i) => (useSP ? sp(i) : 1);
+    const sum = (cat) => list.filter((i) => i.status.category === cat && (cat !== 'done' || isDone(i))).reduce((n, i) => n + weight(i), 0);
+    const end = sprint?.endDate ? startOf(new Date(sprint.endDate)) : null;
     return {
-      attention: open.filter((i) => dueIn(i, now) !== null && dueIn(i, now) <= 3).sort(byDueThenUrgency(now)),
-      doing: open.filter((i) => i.status.category === 'indeterminate').sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated)),
-      stale: open.filter((i) => idleDays(i, now) > 7).sort((a, b) => Date.parse(a.updated) - Date.parse(b.updated)),
-      unplanned: open.filter((i) => !i.storyPoints || !i.sprint).sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated)),
+      unit: useSP ? 'SP' : 'tasks',
+      done: sum('done'),
+      prog: sum('indeterminate'),
+      todo: sum('new'),
+      total: list.reduce((n, i) => n + weight(i), 0),
+      daysLeft: end ? Math.max(0, daysBetween(now, end)) : null,
     };
   }
 
-  return { scope, pickSprint, kpis, byCategory, byStatus, byPriority, byType, byEpic, bySprint, dueTimeline, ageBuckets, burndown, weeklyDone, lists, isOpen, isDone, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
+  // Where the burndown stands today: what is left against the ideal line, and the pace needed to finish on time.
+  function pace(b) {
+    if (!b || b.today < 0) return null;
+    const p = b.points[b.today];
+    const daysLeft = b.length - b.today;
+    return { left: p.actual, ideal: Math.round(p.ideal * 10) / 10, behind: Math.round((p.actual - p.ideal) * 10) / 10, perDay: daysLeft > 0 ? Math.round((p.actual / daysLeft) * 10) / 10 : null };
+  }
+
+  // What needs attention, each open task in at most one group: overdue, due within 3 days, then idle for over a week.
+  function lists(list, now) {
+    const open = list.filter(isOpen);
+    const byDue = (a, b) => dueIn(a, now) - dueIn(b, now) || Date.parse(b.updated) - Date.parse(a.updated);
+    const overdue = open.filter((i) => dueIn(i, now) !== null && dueIn(i, now) < 0).sort(byDue);
+    const dueSoon = open.filter((i) => dueIn(i, now) !== null && dueIn(i, now) >= 0 && dueIn(i, now) <= 3).sort(byDue);
+    const urgent = new Set([...overdue, ...dueSoon]);
+    return {
+      overdue,
+      dueSoon,
+      stale: open.filter((i) => !urgent.has(i) && idleDays(i, now) > 7).sort((a, b) => Date.parse(a.updated) - Date.parse(b.updated)),
+      unplanned: open.filter((i) => !i.storyPoints || !i.sprint),
+    };
+  }
+
+  // ---- Trends: one slot per day / week / month / year, from /api/history (a longer window than the task list).
+
+  const PERIODS = {
+    day: { slots: 30, days: 30, start: (d) => startOf(d), next: (d) => addDays(d, 1), label: (d) => `${d.getDate()}/${d.getMonth() + 1}` },
+    week: { slots: 12, days: 84, start: (d) => addDays(startOf(d), -((d.getDay() + 6) % 7)), next: (d) => addDays(d, 7), label: (d) => `${d.getDate()}/${d.getMonth() + 1}` },
+    month: { slots: 12, days: 366, start: (d) => new Date(d.getFullYear(), d.getMonth(), 1), next: (d) => new Date(d.getFullYear(), d.getMonth() + 1, 1), label: (d) => `${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}` },
+    year: { slots: 5, days: 1830, start: (d) => new Date(d.getFullYear(), 0, 1), next: (d) => new Date(d.getFullYear() + 1, 0, 1), label: (d) => String(d.getFullYear()) },
+  };
+  const quantile = (sorted, q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : null);
+  const leadDays = (i) => Math.max(0, daysBetween(new Date(i.created), doneAt(i)));
+  const isBug = (i) => /bug/i.test(i.type.name);
+
+  function trend(items, period, now) {
+    const P = PERIODS[period];
+    const tasks = items.filter((i) => !isEpicType(i));
+    let start = P.start(now);
+    const starts = [start];
+    for (let k = 1; k < P.slots; k++) starts.unshift((start = P.start(addDays(start, -1))));
+    return starts.map((s) => {
+      const e = P.next(s);
+      const until = e > now ? now : e;
+      const inSlot = (d) => d >= s && d < e;
+      const done = tasks.filter((i) => isDone(i) && inSlot(doneAt(i)));
+      const withDue = done.filter((i) => i.due);
+      const lead = done.map(leadDays).sort((a, b) => a - b);
+      const pctOf = (n, of) => (of ? Math.round((n / of) * 100) : null);
+      return {
+        start: isoDay(s),
+        label: P.label(s),
+        partial: e > now,
+        created: tasks.filter((i) => inSlot(new Date(i.created))).length,
+        done: done.length,
+        // Open at the end of the slot (or now, for the current one): created by then and not yet resolved.
+        backlog: tasks.filter((i) => new Date(i.created) < until && !(i.status.category === 'done' && doneAt(i) < until)).length,
+        leadMedian: quantile(lead, 0.5),
+        leadP85: quantile(lead, 0.85),
+        onTime: pctOf(withDue.filter((i) => daysBetween(doneAt(i), new Date(i.due + 'T00:00:00')) >= 0).length, withDue.length),
+        bugShare: pctOf(done.filter(isBug).length, done.length),
+        withDue: withDue.length,
+      };
+    });
+  }
+
+  // One trend tile: the latest finished period (or now, for a running total like open work) against the average
+  // of the periods before it.
+  function metricSummary(slots, key, { current = false } = {}) {
+    // Periods before there was any work at all would drag the average to zero: leave them out.
+    const first = slots.findIndex((r) => r.created || r.done || r.backlog);
+    const rows = slots.slice(Math.max(0, first)).filter((r) => current || !r.partial);
+    let k = rows.length - 1;
+    while (k >= 0 && rows[k][key] == null) k--;
+    if (k < 0) return null;
+    const before = rows.slice(0, k).map((r) => r[key]).filter((v) => v != null);
+    const avg = before.length ? Math.round((before.reduce((a, b) => a + b, 0) / before.length) * 10) / 10 : null;
+    return { value: rows[k][key], label: rows[k].label, avg, delta: avg == null ? null : Math.round((rows[k][key] - avg) * 10) / 10 };
+  }
+
+  // Rule-based advice from the trend and today's open work. Each tip carries the numbers behind it.
+  function insights(slots, list, now, periodName) {
+    const tips = [];
+    const add = (level, title, detail, action) => tips.push({ level, title, detail, action });
+    const sum = (key, rows = slots) => rows.reduce((n, r) => n + (r[key] || 0), 0);
+    const avgOf = (key, rows) => {
+      const vals = rows.map((r) => r[key]).filter((v) => v != null);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    };
+    const full = slots.filter((r) => !r.partial);
+    const half = Math.floor(full.length / 2);
+    const earlier = full.slice(0, half);
+    const recent = full.slice(half);
+    const change = (key) => {
+      const a = avgOf(key, earlier);
+      const b = avgOf(key, recent);
+      return a == null || b == null ? null : { from: Math.round(a * 10) / 10, to: Math.round(b * 10) / 10 };
+    };
+    const span = `the last ${slots.length} ${periodName}s`;
+
+    const created = sum('created');
+    const done = sum('done');
+    const backlogFrom = slots[0].backlog;
+    const backlogTo = slots[slots.length - 1].backlog;
+    if (created > done * 1.1 && backlogTo > backlogFrom)
+      add('bad', 'Backlog is growing', `${created} tasks came in, ${done} were finished over ${span}; open work went from ${backlogFrom} to ${backlogTo}.`, 'Finish before starting: take on less new work, and split big tasks so they close sooner.');
+    else if (done >= created && done > 0) add('good', 'Finishing faster than work comes in', `${done} done vs ${created} new over ${span}; open work ${backlogFrom} → ${backlogTo}.`);
+
+    const lead = change('leadMedian');
+    if (lead && lead.to > lead.from * 1.2 && lead.to - lead.from >= 1)
+      add('warn', 'Tasks take longer to finish', `Median lead time rose from ${lead.from}d to ${lead.to}d (earlier vs recent ${periodName}s).`, 'Look at what waits longest (review, QA, blocked) and split tasks bigger than ~3 days.');
+    else if (lead && lead.to < lead.from * 0.8) add('good', 'Tasks finish faster', `Median lead time fell from ${lead.from}d to ${lead.to}d.`);
+
+    const withDue = sum('withDue');
+    const onTimeAll = withDue ? Math.round(slots.reduce((n, r) => n + ((r.onTime || 0) * r.withDue) / 100, 0) / withDue * 100) : null;
+    if (onTimeAll != null && onTimeAll < 80)
+      add(onTimeAll < 60 ? 'bad' : 'warn', 'Due dates are missed', `${onTimeAll}% of tasks with a due date were done on time over ${span}.`, 'Re-estimate when a task grows, and move the due date (or flag it) as soon as it is at risk, not after.');
+    else if (onTimeAll != null && withDue >= 5) add('good', 'Due dates are kept', `${onTimeAll}% on time over ${span}.`);
+    if (done >= 5 && withDue / done < 0.5) add('warn', 'Most finished tasks had no due date', `${done - withDue} of ${done} done tasks had none, so on-time delivery can't be judged.`, 'Set a due date when a task enters the sprint.');
+
+    const bugs = done ? Math.round((slots.reduce((n, r) => n + ((r.bugShare || 0) * r.done) / 100, 0) / done) * 100) : 0;
+    const bugTrend = change('bugShare');
+    if (done >= 5 && bugs > 20)
+      add('warn', 'A lot of the work is fixing bugs', `${bugs}% of finished tasks were bugs over ${span}${bugTrend ? ` (${bugTrend.from}% → ${bugTrend.to}%)` : ''}.`, 'Add tests for the areas that keep breaking, and check the acceptance criteria before a task moves to review.');
+
+    const open = list.filter(isOpen);
+    const doing = open.filter((i) => i.status.category === 'indeterminate').length;
+    if (doing > 3) add('warn', 'Too much in progress at once', `${doing} tasks are in progress right now.`, 'Cap work in progress at 2–3: finish or park the rest so each one moves faster.');
+    const stale = open.filter((i) => idleDays(i, now) > 7).length;
+    if (stale) add('warn', 'Tasks are stuck', `${stale} open tasks have not been updated in over 7 days.`, 'Close, re-plan or unblock them in the next stand-up.');
+
+    const order = { bad: 0, warn: 1, good: 2 };
+    return tips.sort((a, b) => order[a.level] - order[b.level]);
+  }
+
+  return { scope, pickSprint, kpis, byEpic, burndown, progress, pace, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
 })();
