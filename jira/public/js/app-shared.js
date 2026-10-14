@@ -210,8 +210,8 @@ async function loadUsers() {
   select.replaceChildren(
     h('option', { value: ALL_USERS }, 'All'),
     h('option', { value: '' }, 'Mine'),
-    h('option', { value: UNASSIGNED }, 'Unassigned'),
     ...opts,
+    h('option', { value: UNASSIGNED }, 'Unassigned'),
   );
   select.value = state.user;
   syncUrl();
@@ -227,8 +227,10 @@ function renderSprints() {
     if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
   }
   const select = $('#sprint-filter');
+  state.sprintMap = sprints;
   if (sprints.size === 0) {
     select.hidden = true;
+    renderSprintLeft();
     return;
   }
   const sorted = [...sprints.values()].sort((a, b) => {
@@ -243,7 +245,34 @@ function renderSprints() {
     ),
   );
   select.hidden = false;
+  renderSprintLeft();
   syncUrl();
+}
+
+// Days left of the selected sprint, shown next to the sprint select. Hidden for "All sprints"
+// or when Jira gave no end date for the sprint.
+function renderSprintLeft() {
+  const el = $('#sprint-left');
+  if (!el) return;
+  const sprint = state.sprint ? state.sprintMap?.get(state.sprint) : null;
+  const end = sprint?.endDate ? new Date(sprint.endDate) : null;
+  if (!end || Number.isNaN(end.getTime())) {
+    el.hidden = true;
+    return;
+  }
+  // Count calendar days in local time, so a sprint ending later today reads "ends today", not "1 day left".
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((startOfDay(end) - startOfDay(new Date())) / 86400000);
+  let text;
+  let tone;
+  if (days > 1) [text, tone] = [`${days} days left`, days <= 3 ? 'warn' : 'ok'];
+  else if (days === 1) [text, tone] = ['1 day left', 'warn'];
+  else if (days === 0) [text, tone] = ['Ends today', 'warn'];
+  else [text, tone] = [`Ended ${-days} day${days === -1 ? '' : 's'} ago`, 'over'];
+  el.textContent = text;
+  el.dataset.tone = tone;
+  el.title = `${sprint.name} ends ${end.toLocaleDateString('en-US', { dateStyle: 'medium' })}`;
+  el.hidden = false;
 }
 
 // Each page defines window.onUserFilterChange and window.onSprintFilterChange
@@ -283,6 +312,7 @@ function setupSharedFilters() {
   });
   $('#sprint-filter')?.addEventListener('change', (e) => {
     state.sprint = e.target.value ? Number(e.target.value) : null;
+    renderSprintLeft();
     syncUrl();
     if (window.onSprintFilterChange) window.onSprintFilterChange();
   });

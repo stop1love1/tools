@@ -59,5 +59,8 @@ async function releaseScratch(ctx) {
 
 const getJob = (id) => jobs.get(id);
 const listJobs = () => [...jobs.values()].reverse().map(({ log, ...j }) => j);
+// Jobs still running or waiting in the queue, and a promise that settles once the queue drains (used on shutdown).
+const runningJobs = () => [...jobs.values()].filter((j) => j.status === 'running');
+const whenIdle = () => queue;
 
-module.exports = { startJob, getJob, listJobs };
+module.exports = { startJob, getJob, listJobs, runningJobs, whenIdle };

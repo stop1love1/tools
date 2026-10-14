@@ -7,7 +7,7 @@ Dashboard local: task Jira của bạn, trang Confluence được link, đổi t
 ```bash
 ./dev.sh        # chọn j
 # hoặc
-cd tools/jira-dashboard && npm start      # → http://localhost:4747
+cd jira && npm start      # → http://localhost:4747
 ```
 
 ## Đăng nhập & token

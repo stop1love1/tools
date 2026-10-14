@@ -28,6 +28,7 @@ const ALL_USERS = '__all__';
 const UNASSIGNED = '__unassigned__';
 const { openClaudeCode } = require('./lib/editor');
 const git = require('./lib/git');
+const gitJobs = require('./lib/git/jobs');
 const { handleMcp } = require('./lib/mcp-server');
 const { getToken, FILE: tokenFile } = require('./lib/mcp-token');
 const { shortPrompt } = require('./lib/prompt');
@@ -180,6 +181,40 @@ const server = http.createServer(async (req, res) => {
     send(res, status, { error: message, login: status === 401, fields: e.fields });
   }
 });
+
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') console.error(`Port ${PORT} is already in use. Stop the other process or change server.port in Settings.`);
+  else console.error(`Server error: ${e.message}`);
+  process.exit(1);
+});
+
+// A stray rejection must not take the server (and a running git job) down; log it and keep going.
+process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason));
+process.on('uncaughtException', (e) => {
+  console.error('[uncaughtException]', e.stack || e);
+  shutdown('uncaughtException', 1);
+});
+
+// Graceful stop: refuse new connections, give a running git job time to finish (a kill mid-rebase leaves
+// a half-done operation and a scratch worktree behind), then exit.
+const SHUTDOWN_WAIT_MS = 60_000;
+let shuttingDown = false;
+function shutdown(reason, code = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const running = gitJobs.runningJobs();
+  console.log(`\nShutting down (${reason})${running.length ? `, waiting for ${running.length} git job(s): ${running.map((j) => j.title).join(', ')}` : ''}`);
+  server.close();
+  server.closeIdleConnections?.();
+  const timer = setTimeout(() => {
+    console.error(`Git job(s) still running after ${SHUTDOWN_WAIT_MS / 1000}s, exiting anyway.`);
+    process.exit(code || 1);
+  }, SHUTDOWN_WAIT_MS);
+  timer.unref();
+  gitJobs.whenIdle().finally(() => process.exit(code));
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 server.listen(PORT, HOST, () => {
   const how = auth.hasOwnSession() ? 'own session, auto-refresh' : 'Claude Code token';

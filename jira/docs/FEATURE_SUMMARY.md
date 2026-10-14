@@ -80,7 +80,7 @@ function guessRepos(issue) {
 }
 ```
 
-**Test Coverage:** 14/14 tests passing ✓
+**Test Coverage:** `test/guess-repos.test.js` (9 tests, run with `npm test`)
 
 ---
 

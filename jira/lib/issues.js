@@ -29,7 +29,7 @@ function sprintOf(f) {
   const sprintValue = f.sprint || f[config.get().jira.sprintField];
   const sprints = Array.isArray(sprintValue) ? sprintValue : sprintValue ? [sprintValue] : [];
   const s = sprints.find((x) => x && x.state === 'active') || sprints[sprints.length - 1] || null;
-  return s ? { id: s.id, name: s.name, state: s.state } : null;
+  return s ? { id: s.id, name: s.name, state: s.state, startDate: s.startDate || null, endDate: s.endDate || null } : null;
 }
 
 function issueDto(issue, docs) {
@@ -90,15 +90,27 @@ async function listIssues(jql) {
   const parentKeys = [...new Set(issues.map((i) => i.fields.parent?.key).filter((k) => k && !byKey.has(k)))];
   const parentDesc = new Map();
   const parentFields = new Map(); // parent key → fields (its own parent tells a sub-task's Epic)
-  await mapPool(parentKeys, 4, async (key) => {
+  // One search per 50 parents instead of one getJiraIssue each: every call counts against Atlassian's rate limit.
+  for (let n = 0; n < parentKeys.length; n += 50) {
+    const chunk = parentKeys.slice(n, n + 50);
     try {
-      const p = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['description', 'parent'], responseContentFormat: 'adf' });
-      parentDesc.set(key, p.fields?.description);
-      parentFields.set(key, p.fields || {});
+      for (const p of await searchAll(`key in (${chunk.join(',')})`, ['description', 'parent'])) {
+        parentDesc.set(p.key, p.fields?.description);
+        parentFields.set(p.key, p.fields || {});
+      }
     } catch {
-      // Parent not visible to this user: skip its links.
+      // JQL rejects the whole batch when one key is not visible to this user: fall back to one call per parent.
+      await mapPool(chunk, 4, async (key) => {
+        try {
+          const p = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['description', 'parent'], responseContentFormat: 'adf' });
+          parentDesc.set(key, p.fields?.description);
+          parentFields.set(key, p.fields || {});
+        } catch {
+          // Parent not visible to this user: skip its links.
+        }
+      });
     }
-  });
+  }
   for (const [key, issue] of byKey) {
     parentDesc.set(key, issue.fields.description);
     parentFields.set(key, issue.fields);

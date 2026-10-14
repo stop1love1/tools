@@ -150,6 +150,29 @@
   min-width: 190px;
   max-width: 240px;
 }
+.sprint-left {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(46, 160, 67, 0.15);
+  color: #2ea043;
+}
+.sprint-left[hidden] {
+  display: none;
+}
+.sprint-left[data-tone='warn'] {
+  background: rgba(210, 153, 34, 0.18);
+  color: #d29922;
+}
+.sprint-left[data-tone='over'] {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
 .jql-row {
   display: flex;
   gap: 8px;

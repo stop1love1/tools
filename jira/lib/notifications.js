@@ -10,6 +10,8 @@ const { callTool, searchAll } = require('./mcp');
 const { mapPool } = require('./util');
 
 let cache = { at: 0, data: null };
+// key → { updated, accountId, events }: what the last getJiraIssue of an issue produced, reused while its `updated` is unchanged.
+const perIssue = new Map();
 
 // Changelog items expose `toString`/`fromString` as data; guard against the prototype method.
 const str = (v) => (typeof v === 'string' && v ? v : null);
@@ -68,26 +70,30 @@ async function listNotifications() {
   const days = config.get().jira.notifyDays;
   const jql = `(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) AND updated >= -${days}d ORDER BY updated DESC`;
   const me = await callTool('atlassianUserInfo', {});
-  const recent = (await searchAll(jql, ['summary'])).slice(0, 25);
+  const recent = (await searchAll(jql, ['summary', 'updated'])).slice(0, 25);
   const since = Date.now() - days * 86_400_000;
-  const events = [];
-  await mapPool(recent, 4, async ({ key }) => {
+  await mapPool(recent, 4, async ({ key, fields }) => {
+    // Unchanged since the last refresh (same `updated`): keep its events instead of paying a getJiraIssue for them.
+    const updated = fields?.updated || null;
+    const hit = perIssue.get(key);
+    if (hit && updated && hit.updated === updated && hit.accountId === me.account_id) return;
     let j;
     try {
       j = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['summary', 'issuetype', 'comment'], expand: 'changelog', responseContentFormat: 'adf' });
     } catch {
       return;
     }
+    const events = []; // all of this issue's events: the notify window is applied when the lists are merged below
     const issue = { key, summary: j.fields?.summary || '', type: j.fields?.issuetype?.name || '' };
     for (const hst of j.changelog?.histories || []) {
-      if (hst.author?.accountId === me.account_id || Date.parse(hst.created) < since) continue;
+      if (hst.author?.accountId === me.account_id) continue;
       for (const item of hst.items || []) {
         const change = describeChange(item);
         if (change) events.push({ id: `${key}:h${hst.id}:${item.field}`, at: hst.created, author: hst.author?.displayName || '', issue, ...change });
       }
     }
     for (const c of j.fields?.comment?.comments || []) {
-      if (c.author?.accountId === me.account_id || Date.parse(c.created) < since) continue;
+      if (c.author?.accountId === me.account_id) continue;
       events.push({
         id: `${key}:c${c.id}`,
         at: c.created,
@@ -98,7 +104,12 @@ async function listNotifications() {
         mention: mentions(c.body, me.account_id),
       });
     }
+    perIssue.set(key, { updated, accountId: me.account_id, events });
   });
+  // Merge the per-issue events (fresh or reused) of the issues in this window; forget issues that dropped out of it.
+  const keep = new Set(recent.map((r) => r.key));
+  for (const k of [...perIssue.keys()]) if (!keep.has(k)) perIssue.delete(k);
+  const events = recent.flatMap(({ key }) => perIssue.get(key)?.events || []).filter((e) => Date.parse(e.at) >= since);
   events.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   cache = { at: Date.now(), data: { days, events: events.slice(0, 150) } };
   return cache.data;
