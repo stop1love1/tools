@@ -294,10 +294,11 @@ a.ov-epic-name:hover {
 
 /* ---------- Trends ---------- */
 
-/* Two series colours, checked for colour-blind separation on both surfaces. */
+/* Series colours: blue and green are checked for colour-blind separation; bugs use the app's red bug colour. */
 :root {
   --chart-1: #3b76f0;
   --chart-2: #22a052;
+  --chart-3: var(--t-bug);
 }
 :root.dark {
   --chart-1: #5b8cff;

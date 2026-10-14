@@ -146,6 +146,11 @@ const OverviewData = (() => {
         partial: e > now,
         created: tasks.filter((i) => inSlot(new Date(i.created))).length,
         done: done.length,
+        // Delivered work in story points: only tasks carry them, bugs are counted apart below.
+        spDone: sumSP(done.filter((i) => !isBug(i))),
+        tasksDone: done.filter((i) => !isBug(i)).length,
+        bugsNew: tasks.filter((i) => isBug(i) && inSlot(new Date(i.created))).length,
+        bugsDone: done.filter(isBug).length,
         // Open at the end of the slot (or now, for the current one): created by then and not yet resolved.
         backlog: tasks.filter((i) => new Date(i.created) < until && !(i.status.category === 'done' && doneAt(i) < until)).length,
         leadMedian: quantile(lead, 0.5),
@@ -215,6 +220,18 @@ const OverviewData = (() => {
     const bugTrend = change('bugShare');
     if (done >= 5 && bugs > 20)
       add('warn', 'A lot of the work is fixing bugs', `${bugs}% of finished tasks were bugs over ${span}${bugTrend ? ` (${bugTrend.from}% → ${bugTrend.to}%)` : ''}.`, 'Add tests for the areas that keep breaking, and check the acceptance criteria before a task moves to review.');
+
+    const velocity = change(sum('spDone') ? 'spDone' : 'tasksDone');
+    const unit = sum('spDone') ? 'SP' : 'tasks';
+    if (velocity && velocity.to < velocity.from * 0.8)
+      add('warn', 'Less work delivered', `Delivered ${unit} per ${periodName} fell from ${velocity.from} to ${velocity.to} (earlier vs recent ${periodName}s).`, 'Check what pulled time away: bug fixing, unplanned requests, or tasks too big to finish in one sprint.');
+    else if (velocity && velocity.to > velocity.from * 1.2) add('good', 'More work delivered', `Delivered ${unit} per ${periodName} rose from ${velocity.from} to ${velocity.to}.`);
+
+    const bugsIn = sum('bugsNew');
+    const bugsOut = sum('bugsDone');
+    if (bugsIn > bugsOut && bugsIn >= 3)
+      add('bad', 'Bugs pile up', `${bugsIn} bugs were reported and ${bugsOut} fixed over ${span}.`, 'Reserve part of each sprint for bugs, and fix the most-hit areas first.');
+    else if (bugsOut >= bugsIn && bugsOut > 0) add('good', 'Bugs are fixed as fast as they come in', `${bugsOut} fixed vs ${bugsIn} reported over ${span}.`);
 
     const open = list.filter(isOpen);
     const doing = open.filter((i) => i.status.category === 'indeterminate').length;

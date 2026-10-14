@@ -9,11 +9,11 @@ const PERIOD_NAMES = { day: 'day', week: 'week', month: 'month', year: 'year' };
 const PERIOD_KEY = 'jd:ovPeriod';
 const METRIC_KEY = 'jd:ovMetric';
 // Trends come from /api/history (a longer window than the task list), one fetch per period and user.
-const trendState = { period: 'week', metric: 'done', key: null, data: null, loading: false, error: null };
+const trendState = { period: 'week', metric: 'delivered', key: null, data: null, loading: false, error: null };
 try {
   const saved = localStorage.getItem(PERIOD_KEY);
   if (PERIOD_NAMES[saved]) trendState.period = saved;
-  trendState.metric = localStorage.getItem(METRIC_KEY) || 'done';
+  trendState.metric = localStorage.getItem(METRIC_KEY) || 'delivered';
 } catch {}
 
 function openIssueChip(key) {
@@ -82,22 +82,35 @@ function buildTrends(list, now) {
   const slots = O.trend(trendState.data.issues, trendState.period, now);
   const c1 = 'var(--chart-1)';
   const c2 = 'var(--chart-2)';
+  const c3 = 'var(--chart-3)';
   const pct = (v) => `${v}%`;
   const days = (v) => `${v}d`;
   const hasDue = slots.some((r) => r.withDue);
+  // Story points when the team estimates, task counts otherwise. Bugs carry no points, so they get their own chart.
+  const useSP = slots.some((r) => r.spDone > 0);
+  const sp = (v) => `${v} SP`;
+  // Three lines in one unit (a count of issues); the story points ride along in the tooltip.
+  const workLines = [
+    { key: 'tasksDone', label: 'Tasks done', color: c1 },
+    { key: 'bugsDone', label: 'Bugs fixed', color: c2 },
+    { key: 'bugsNew', label: 'Bugs reported', color: c3 },
+    useSP && { key: 'spDone', label: 'story points delivered', hidden: true, fmt: sp },
+  ].filter(Boolean);
   const metrics = [
-    { id: 'done', label: `Done per ${name}`, key: 'done', better: 'up', series: [{ key: 'done', label: 'Done', color: c2 }, { key: 'created', label: 'New', color: c1 }] },
+    useSP
+      ? { id: 'delivered', label: `Delivered per ${name}`, key: 'spDone', better: 'up', fmt: sp, chartFmt: String, series: workLines }
+      : { id: 'delivered', label: `Tasks done per ${name}`, key: 'tasksDone', better: 'up', series: workLines },
+    { id: 'bugs', label: `Bugs reported per ${name}`, key: 'bugsNew', better: 'down', series: [{ key: 'bugsNew', label: 'Reported', color: c3 }, { key: 'bugsDone', label: 'Fixed', color: c2 }] },
     { id: 'backlog', label: 'Open work', key: 'backlog', current: true, better: 'down', series: [{ key: 'backlog', label: 'Open', color: c1 }] },
     { id: 'lead', label: 'Lead time (median)', key: 'leadMedian', better: 'down', fmt: days, series: [{ key: 'leadMedian', label: 'Median', color: c1 }, { key: 'leadP85', label: '85% done within', color: c2 }] },
-    { id: 'bugs', label: 'Bugs of done', key: 'bugShare', better: 'down', fmt: pct, max: 100, series: [{ key: 'bugShare', label: 'Bugs', color: c1 }] },
     hasDue && { id: 'onTime', label: 'Done on time', key: 'onTime', better: 'up', fmt: pct, max: 100, series: [{ key: 'onTime', label: 'On time', color: c1 }] },
   ].filter(Boolean);
   const active = metrics.find((m) => m.id === trendState.metric) || metrics[0];
   const hints = {
-    done: `tasks finished vs new tasks, per ${name}`,
+    delivered: `issues per ${name}: tasks done, bugs fixed and bugs reported${useSP ? ' · story points in the tooltip' : ''}`,
+    bugs: `new bugs reported vs bugs fixed, per ${name} — reported above fixed means bugs pile up`,
     backlog: `open tasks at the end of each ${name}`,
     lead: 'days from created to done',
-    bugs: 'share of finished tasks that were bugs',
     onTime: 'share of tasks with a due date that were done by it',
   };
   return [
@@ -105,13 +118,13 @@ function buildTrends(list, now) {
     h(
       'div',
       { class: `ov-trends${trendState.loading ? ' is-loading' : ''}` },
-      insightsCard(O.insights(slots, list, now, name)),
       h(
         'div',
         { class: 'ov-metrics', role: 'tablist', 'aria-label': 'Metric to chart' },
         metrics.map((m) => metricTile(m, O.metricSummary(slots, m.key, { current: m.current }), slots, { selected: m === active, onSelect: () => setMetric(m.id) })),
       ),
-      card(active.label, `${hints[active.id]} · hover for values`, trendChart(slots, [{ title: '', fmt: active.fmt, max: active.max, series: active.series }], { lane: 200 }), { cls: 'ov-trend-card' }),
+      card(active.label, `${hints[active.id]} · hover for values`, trendChart(slots, [{ title: '', fmt: active.chartFmt || active.fmt, max: active.max, series: active.series }], { lane: 200 }), { cls: 'ov-trend-card' }),
+      insightsCard(O.insights(slots, list, now, name)),
       h('div', { class: 'ov-trends-foot' }, trendTable(slots), trendState.data.truncated && h('p', { class: 'muted small' }, 'Only the latest 2000 tasks were loaded: the oldest periods may be incomplete.')),
     ),
   ];
@@ -144,6 +157,7 @@ function buildOverview() {
       statCard('Due in 3 days', k.dueSoon, { tone: k.dueSoon ? 'warn' : '', sub: 'today included' }),
       statCard('Not planned', lists.unplanned.length, { sub: 'no sprint or no story points' }),
     ),
+    buildTrends(list, now),
     h(
       'div',
       { class: 'ov-main' },
@@ -154,7 +168,6 @@ function buildOverview() {
       ]),
       h('div', { class: 'ov-side' }, sprint && burndownCard(burn, pace), epicsCard(O.byEpic(list), { href: (r) => pageHref('/tasks.html', `#${encodeURIComponent(r.key)}`) })),
     ),
-    buildTrends(list, now),
   );
 }
 

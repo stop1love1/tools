@@ -155,6 +155,11 @@ test('trend counts new, done, open work and lead time per week', () => {
   const last = slots[slots.length - 1]; // the week of NOW (Wed 14/10): Mon 12/10 → now
   assert.equal(last.partial, true);
   assert.equal(last.created, 1); // at(-3) is Sunday, the week before
+  assert.equal(last.tasksDone + last.bugsDone, last.done);
+  assert.equal(last.bugsDone, 1);
+  assert.equal(last.bugsNew, 0);
+  assert.equal(slots[slots.length - 2].bugsNew, 1);
+  assert.equal(O.trend([issue({ created: at(-1), category: 'done', resolved: at(0), storyPoints: 3 }), issue({ created: at(-1), category: 'done', resolved: at(0), storyPoints: 5, type: { name: 'Bug' } })], 'week', NOW).at(-1).spDone, 3);
   assert.equal(last.done, 2);
   assert.equal(last.backlog, 2);
   assert.equal(last.leadMedian, 19);

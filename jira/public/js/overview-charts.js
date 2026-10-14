@@ -160,27 +160,28 @@ function trendChart(slots, lanes, { lane: LANE = 72 } = {}) {
 
   const parts = lanes.map((lane, li) => {
     const top0 = pad.t + li * (LANE + GAP);
-    const vals = slots.flatMap((s) => lane.series.map((se) => s[se.key])).filter((v) => v != null);
+    const drawn = lane.series.filter((se) => !se.hidden);
+    const vals = slots.flatMap((s) => drawn.map((se) => s[se.key])).filter((v) => v != null);
     const top = lane.max ?? niceMax(Math.max(1, ...vals));
     const y = (v) => top0 + (1 - v / top) * LANE;
     const fmt = lane.fmt || ((v) => v);
     const g = [
       // Lane title and its series key, above the lane.
       lane.title && svg('text', { x: pad.l, y: top0 - 9, class: 'ov-lane-title' }, lane.title),
-      ...(lane.series.length < 2 ? [] : lane.series).flatMap((se, j) => {
+      ...(drawn.length < 2 ? [] : drawn).flatMap((se, j) => {
         const x = pad.l + (lane.title ? 120 : 0) + j * 150;
-        return [svg('line', { x1: x, x2: x + 12, y1: top0 - 13, y2: top0 - 13, stroke: se.color, 'stroke-width': 2, 'stroke-linecap': 'round' }), svg('text', { x: x + 17, y: top0 - 9, class: 'ov-axis' }, se.label)];
+        return [svg('line', { x1: x, x2: x + 12, y1: top0 - 13, y2: top0 - 13, stroke: se.color, 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-dasharray': se.dash ? '3 3' : null }), svg('text', { x: x + 17, y: top0 - 9, class: 'ov-axis' }, se.label)];
       }),
       ...[0, 0.5, 1].map((f) => svg('g', null, svg('line', { x1: pad.l, x2: W - pad.r, y1: y(top * f), y2: y(top * f), class: 'ov-grid' }), svg('text', { x: pad.l - 6, y: y(top * f) + 4, 'text-anchor': 'end', class: 'ov-axis' }, fmt(Math.round(top * f))))),
     ];
     if (!vals.some((v) => v > 0)) g.push(svg('text', { x: (pad.l + W - pad.r) / 2, y: top0 + LANE / 2, 'text-anchor': 'middle', class: 'ov-axis' }, 'No data in this period'));
-    for (const se of lane.series) {
+    for (const se of drawn) {
       let d = '';
       slots.forEach((s, k) => {
         if (s[se.key] == null) return;
         d += `${d && slots[k - 1]?.[se.key] != null ? 'L' : 'M'}${cx(k).toFixed(1)} ${y(s[se.key]).toFixed(1)}`;
       });
-      g.push(svg('path', { d, class: 'ov-trend-line', stroke: se.color }));
+      g.push(svg('path', { d, class: 'ov-trend-line', stroke: se.color, 'stroke-dasharray': se.dash ? '5 4' : null }));
       if (n <= 12) slots.forEach((s, k) => s[se.key] != null && g.push(svg('circle', { cx: cx(k), cy: y(s[se.key]), r: 3.5, fill: se.color, class: 'ov-dot' })));
     }
     return g;
@@ -207,7 +208,7 @@ function trendChart(slots, lanes, { lane: LANE = 72 } = {}) {
     cross.setAttribute('visibility', 'visible');
     tip.replaceChildren(
       h('div', { class: 'ov-tip-head' }, s.label, s.partial ? ' (so far)' : ''),
-      ...lanes.flatMap((lane) => lane.series.map((se) => h('div', { class: 'ov-tip-row' }, h('i', { style: `background:${se.color}` }), h('b', null, s[se.key] == null ? '—' : (lane.fmt || String)(s[se.key])), h('span', null, se.tip || se.label)))),
+      ...lanes.flatMap((lane) => lane.series.map((se) => h('div', { class: 'ov-tip-row' }, h('i', { style: se.hidden ? 'background:transparent' : `background:${se.color}` }), h('b', null, s[se.key] == null ? '—' : (se.fmt || lane.fmt || String)(s[se.key])), h('span', null, se.tip || se.label)))),
     );
     tip.hidden = false;
     // Beside the crosshair, on whichever side has room, so it never covers the period being read.
@@ -272,6 +273,10 @@ const TREND_COLS = [
   ['Period', (s) => s.label + (s.partial ? ' (so far)' : '')],
   ['New', (s) => s.created],
   ['Done', (s) => s.done],
+  ['Tasks done', (s) => s.tasksDone],
+  ['SP done', (s) => s.spDone],
+  ['Bugs reported', (s) => s.bugsNew],
+  ['Bugs fixed', (s) => s.bugsDone],
   ['Open at end', (s) => s.backlog],
   ['Lead time, median', (s) => (s.leadMedian == null ? '—' : `${s.leadMedian}d`)],
   ['Lead time, 85%', (s) => (s.leadP85 == null ? '—' : `${s.leadP85}d`)],
@@ -306,5 +311,5 @@ function insightsCard(tips) {
         ),
       )
     : emptyChart('Not enough history yet to suggest anything.');
-  return card('How to improve', 'from the trends below and today’s open work', body, { cls: 'ov-insights' });
+  return card('How to improve', 'from the trends above and today’s open work', body, { cls: 'ov-insights' });
 }
