@@ -129,6 +129,7 @@ function statusButton(issue) {
     'button',
     {
       class: `status tone-${tone(issue.status)}`,
+      'data-key': issue.key,
       title: 'Change status',
       onMouseenter: () => (clearTimeout(hoverTimer), (hoverTimer = setTimeout(warm, 150))),
       onMouseleave: () => clearTimeout(hoverTimer),

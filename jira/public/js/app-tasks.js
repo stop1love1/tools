@@ -25,7 +25,7 @@ function load(opts = {}) {
 }
 
 function render() {
-  closeMenu();
+  queueMicrotask(holdMenu());
   renderMeta();
   renderSprints();
   $('#settings-btn')?.setAttribute('aria-pressed', String(state.view === 'settings'));
