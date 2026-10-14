@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Jira — Overview</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 10h14M9 16h10M9 22h6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <script>
+      try {
+        const t = JSON.parse(localStorage.getItem('jd:theme'));
+        if (t === 'light' || t === 'dark') document.documentElement.classList.add(t);
+      } catch {}
+    </script>
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/page-loader.css" />
+    <link rel="stylesheet" href="/css/controls.css" />
+    <link rel="stylesheet" href="/css/header.css" />
+    <link rel="stylesheet" href="/css/urgency.css" />
+    <link rel="stylesheet" href="/css/shared.css" />
+    <link rel="stylesheet" href="/css/list.css" />
+    <link rel="stylesheet" href="/css/docs.css" />
+    <link rel="stylesheet" href="/css/panels.css" />
+    <link rel="stylesheet" href="/css/responsive.css" />
+    <link rel="stylesheet" href="/css/review.css" />
+    <link rel="stylesheet" href="/css/overview.css" />
+  </head>
+  <body>
+    <div class="page-loader" id="page-loader" role="status" aria-label="Loading"><span class="page-loader-spin"></span></div>
+    <header class="topbar">
+      <div class="bar">
+        <div class="bar-actions">
+          <select id="user-filter" aria-label="View tasks of" title="View tasks of"><option value="">Mine</option></select>
+          <select id="sprint-filter" aria-label="Filter by sprint" hidden></select>
+          <span id="sprint-left" class="sprint-left" role="status" hidden></span>
+          <button class="icon-btn outline" id="recent-btn" title="Recently viewed" aria-label="Recently viewed"></button>
+          <button class="icon-btn outline" id="jql-toggle" aria-expanded="false" aria-controls="jql-row" title="Edit JQL" aria-label="Edit JQL"></button>
+          <div class="seg icons labeled" id="views" role="tablist">
+            <a data-view="overview" href="/index.html" role="tab" title="Overview: progress, charts and what needs attention" aria-label="Overview"></a>
+            <a data-view="list" href="/tasks.html" role="tab" title="Task list" aria-label="Task list"></a>
+            <a data-view="docs" href="/docs.html" role="tab" title="Confluence pages & attachments" aria-label="Documents"></a>
+            <a data-view="git" href="/workspace.html" role="tab" title="Workspace: your checkouts, changes, stashes and branch cleanup" aria-label="Workspace"></a>
+          </div>
+        </div>
+        <div class="bar-icons">
+          <button class="icon-btn outline bell" id="bell" title="Notifications" aria-label="Notifications" aria-expanded="false" aria-controls="notif">
+            <span class="bell-badge" id="bell-badge" hidden></span>
+          </button>
+          <button class="icon-btn outline" id="refresh" title="Reload (R)" aria-label="Reload"></button>
+          <div class="theme-picker" id="theme-picker">
+            <button class="icon-btn outline" id="theme-toggle" title="More: theme, sign-in, settings" aria-label="More" aria-expanded="false" aria-controls="theme-menu"></button>
+            <div class="theme-menu" id="theme-menu" role="menu">
+              <div class="menu-label">Theme</div>
+              <button class="theme-option" data-theme="auto" role="menuitem">
+                <span class="theme-icon" id="theme-icon-auto"></span>
+                <span class="theme-label">System</span>
+                <span class="theme-check" id="theme-check-auto"></span>
+              </button>
+              <button class="theme-option" data-theme="light" role="menuitem">
+                <span class="theme-icon" id="theme-icon-light"></span>
+                <span class="theme-label">Light</span>
+                <span class="theme-check" id="theme-check-light"></span>
+              </button>
+              <button class="theme-option" data-theme="dark" role="menuitem">
+                <span class="theme-icon" id="theme-icon-dark"></span>
+                <span class="theme-label">Dark</span>
+                <span class="theme-check" id="theme-check-dark"></span>
+              </button>
+              <div class="menu-sep" role="separator"></div>
+              <a class="theme-option" id="login" href="/oauth/login" role="menuitem" hidden></a>
+              <a class="theme-option" id="settings-btn" href="/settings.html" role="menuitem"></a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="jql-row" id="jql-row" hidden>
+        <input id="jql" class="mono" spellcheck="false" aria-label="JQL" placeholder="JQL…" />
+        <button class="btn primary" id="apply">Apply</button>
+      </div>
+    </header>
+
+    <main id="main"></main>
+
+    <div class="notif-panel" id="notif" role="dialog" aria-label="Notifications" hidden></div>
+    <div class="recent-panel" id="recent" role="dialog" aria-label="Recently viewed" hidden></div>
+    <div class="scrim" id="scrim" hidden></div>
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <script>window.PAGE = 'overview';</script>
+    <script src="/js/core.js"></script>
+    <script src="/js/state.js"></script>
+    <script src="/js/format.js"></script>
+    <script src="/js/ai.js"></script>
+    <script src="/js/panels.js"></script>
+    <script src="/js/progress.js"></script>
+    <script src="/js/overview-data.js"></script>
+    <script src="/js/overview-charts.js"></script>
+    <script src="/js/menu.js"></script>
+    <script src="/js/app-shared.js"></script>
+    <script src="/js/app-overview.js"></script>
+    <script src="/js/livereload.js?port=35729"></script>
+  </body>
+</html>

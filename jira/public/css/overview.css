@@ -1,0 +1,276 @@
+.overview {
+  display: grid;
+  gap: 16px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.ov-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.ov-kpi {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.ov-kpi-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.ov-kpi-value {
+  font-size: 26px;
+  line-height: 1.2;
+}
+.ov-kpi.danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.ov-kpi.danger .ov-kpi-value {
+  color: var(--danger);
+}
+.ov-kpi.warn {
+  background: var(--warn-soft);
+}
+.ov-kpi.warn .ov-kpi-value {
+  color: var(--warn);
+}
+
+.ov-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+.ov-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.ov-card.wide {
+  grid-column: span 2;
+}
+.ov-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.ov-hint {
+  margin: 2px 0 10px;
+}
+.ov-empty {
+  padding: 24px 0;
+  text-align: center;
+}
+
+.ov-donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.ov-donut {
+  flex: 0 0 140px;
+  width: 140px;
+  height: 140px;
+}
+.ov-donut-n {
+  fill: var(--text);
+  font-size: 24px;
+  font-weight: 700;
+}
+.ov-donut-l {
+  fill: var(--muted);
+  font-size: 10px;
+}
+.ov-legend {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+}
+.ov-legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ov-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.ov-legend span:first-of-type {
+  flex: 1;
+}
+
+.ov-hbars,
+.ov-epics,
+.ov-tasks {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ov-hbars li {
+  display: grid;
+  grid-template-columns: minmax(70px, 120px) 1fr 36px;
+  align-items: center;
+  gap: 8px;
+}
+.ov-epics li {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) 1fr 84px;
+  align-items: center;
+  gap: 8px;
+}
+.ov-hbar-name,
+.ov-epic-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-epic-name {
+  color: inherit;
+  text-decoration: none;
+}
+a.ov-epic-name:hover {
+  color: var(--accent);
+}
+.ov-hbar-track {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.ov-hbar-fill,
+.ov-seg {
+  height: 100%;
+}
+.ov-hbars li > b,
+.ov-epics li > b {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ov-hbar-track.stacked {
+  background: var(--surface-2);
+}
+
+.ov-cols {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 170px;
+  padding-top: 4px;
+}
+.ov-col {
+  display: grid;
+  flex: 1 1 0;
+  grid-template-rows: auto 1fr auto;
+  justify-items: center;
+  min-width: 0;
+  gap: 4px;
+  font-size: 11px;
+}
+.ov-col > b {
+  font-variant-numeric: tabular-nums;
+}
+.ov-col-bar {
+  align-self: end;
+  width: 70%;
+  max-width: 28px;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+}
+.ov-col-label {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-pair {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+}
+.ov-pair .ov-col-bar {
+  width: 40%;
+}
+
+.ov-line {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.ov-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.ov-axis {
+  fill: var(--muted);
+  font-size: 10px;
+}
+.ov-line-ideal,
+.ov-line-actual {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ov-line-ideal {
+  stroke: var(--border-strong);
+  stroke-dasharray: 5 4;
+}
+.ov-line-actual {
+  stroke: var(--accent);
+}
+.ov-today {
+  stroke: var(--warn);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.ov-tasks li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ov-task-title {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-tasks .gchip {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 860px) {
+  .ov-card.wide {
+    grid-column: auto;
+  }
+  .ov-donut-wrap {
+    flex-wrap: wrap;
+  }
+  .ov-epics li {
+    grid-template-columns: 1fr 70px;
+  }
+  .ov-epics li .ov-hbar-track {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+}
