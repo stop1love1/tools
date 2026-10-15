@@ -10,7 +10,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const FILE = process.env.DASHBOARD_MCP_TOKEN_FILE || path.join(__dirname, '..', '.mcp-token');
+const baseDir = process.env.DASHBOARD_MCP_TOKEN_FILE 
+  ? path.dirname(process.env.DASHBOARD_MCP_TOKEN_FILE)
+  : (!__dirname.includes('/snapshot/') ? path.join(__dirname, '..') : process.cwd());
+
+const FILE = process.env.DASHBOARD_MCP_TOKEN_FILE || path.join(baseDir, '.mcp-token');
 const TOKEN_RE = /^[A-Za-z0-9_-]{32,}$/;
 
 // { token, mtimeMs }: re-read when the file changes, so deleting or replacing it while the server runs takes effect.

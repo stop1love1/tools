@@ -8,9 +8,25 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build": "pkg . --compress Brotli",
+    "build:linux": "pkg . --targets node18-linux-x64 --compress Brotli -o dist/jira-dashboard-linux",
+    "package": "bash build-package.sh",
+    "clean": "rm -rf dist/"
+  },
+  "bin": "server.js",
+  "pkg": {
+    "assets": [
+      "public/**/*",
+      "lib/**/*.js"
+    ],
+    "scripts": [
+      "lib/**/*.js"
+    ],
+    "outputPath": "dist"
   },
   "devDependencies": {
-    "livereload": "0.10.3"
+    "livereload": "0.10.3",
+    "pkg": "^5.8.1"
   }
 }

@@ -13,7 +13,10 @@ const crypto = require('node:crypto');
 const config = require('./config');
 const { httpError, sendHtml, safeJson } = require('./util');
 
-const OAUTH_FILE = process.env.DASHBOARD_OAUTH_FILE || path.join(__dirname, '..', '.oauth.json');
+const OAUTH_FILE = process.env.DASHBOARD_OAUTH_FILE || 
+  (process.pkg
+    ? path.join(process.cwd(), '.oauth.json')
+    : path.join(__dirname, '..', '.oauth.json'));
 const LOGIN_HINT = 'Sign in to Atlassian (key button) to give the dashboard its own auto-refreshing session.';
 
 // Read once: changing these needs a restart (the OAuth client is registered for this redirect URI).

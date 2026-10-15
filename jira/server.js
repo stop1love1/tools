@@ -41,7 +41,8 @@ const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 
 // --- Dev-only live reload (chokidar-based watcher + injected client script), see livereload npm package. ---
-const DEV = process.env.NODE_ENV !== 'production';
+// Disable livereload when running from pkg binary (no public/ dir to watch, and port conflicts)
+const DEV = process.env.NODE_ENV !== 'production' && !process.pkg;
 
 function startLiveReloadServer() {
   let LiveReloadServer;
