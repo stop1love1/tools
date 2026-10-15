@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "start:electron": "electron . --no-sandbox",
+    "start:electron": "electron . --no-sandbox --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
     "test": "node --test",
     "build": "pkg . --compress Brotli",
     "build:linux": "pkg . --targets node18-linux-x64 --compress Brotli -o dist/jira-dashboard-linux",
@@ -40,6 +40,7 @@
     "directories": {
       "output": "release"
     },
+    "afterPack": "scripts/after-pack.js",
     "files": [
       "package.json",
       "electron-main.js",

@@ -27,13 +27,16 @@ rm -f "$HOME/Documents/jira-dashboard.sh"
 
 # Exec runs Electron directly on the project dir (not on a bare .js file) so package.json names the app.
 # --no-sandbox: Ubuntu's AppArmor blocks Electron's sandbox for binaries under node_modules.
+# --ozone-platform-hint=auto: run as a native Wayland client. Under XWayland, GNOME upscales the window when the
+# display uses fractional scaling (e.g. 125%), which makes all text blurry. It must be a command-line flag:
+# app.commandLine.appendSwitch() in electron-main.js runs too late to pick the platform.
 cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Jira Dashboard
 Comment=Launch Jira Dashboard
-Exec="$ELECTRON_BIN" "$PROJECT_DIR" --no-sandbox
+Exec="$ELECTRON_BIN" "$PROJECT_DIR" --no-sandbox --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations
 Path=$PROJECT_DIR
 Icon=$ASSETS_DIR/icon.png
 Terminal=false

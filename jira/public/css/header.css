@@ -288,3 +288,15 @@
 main {
   padding: 12px var(--gutter) 48px;
 }
+
+/* ---------- desktop app (Electron, Linux) ----------
+   The window buttons are drawn over the right end of the top bar (preload.js adds .electron-wco). The bar's empty
+   space drags the window; everything in it stays clickable; the right padding keeps controls clear of the buttons
+   (titlebar-area-width is the bar width left of them; 140px is the fallback if the env var is missing). */
+.electron-wco .topbar .bar {
+  -webkit-app-region: drag;
+  padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 140px)) + var(--gutter));
+}
+.electron-wco .topbar .bar * {
+  -webkit-app-region: no-drag;
+}

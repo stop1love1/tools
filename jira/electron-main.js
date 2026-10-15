@@ -7,7 +7,7 @@
 // the launcher's icon. Launching `electron electron-main.js` (a bare file) skips package.json and names the
 // app "Electron", so we set it explicitly here as well.
 
-const { app, BrowserWindow, Menu, dialog, utilityProcess } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, utilityProcess } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -37,12 +37,28 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(init);
 }
 
+// Linux: no separate title bar. The window buttons are drawn over the right end of the page's top bar (Window
+// Controls Overlay), which also keeps them on the right: with its own client-side title bar on Wayland, Electron
+// put them on the left regardless of the GNOME button layout. preload.js keeps the overlay's colours and height
+// in step with the page theme and top bar; the page CSS makes the top bar draggable.
+const OVERLAY = process.platform === 'linux';
+const overlayDefaults = () =>
+  nativeTheme.shouldUseDarkColors ? { color: '#161a20', symbolColor: '#e5e8ec', height: 52 } : { color: '#ffffff', symbolColor: '#1a1e24', height: 52 };
+
+const COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i;
+ipcMain.on('titlebar-overlay', (e, { color, symbolColor, height } = {}) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!OVERLAY || !win || !COLOR_RE.test(color) || !COLOR_RE.test(symbolColor)) return;
+  win.setTitleBarOverlay({ color, symbolColor, height: Math.min(Math.max(Math.round(height) || 52, 28), 120) });
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     icon: ICON,
     show: false,
+    ...(OVERLAY && { titleBarStyle: 'hidden', titleBarOverlay: overlayDefaults(), autoHideMenuBar: true }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
