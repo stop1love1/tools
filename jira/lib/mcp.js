@@ -209,6 +209,31 @@ async function searchAll(jql, fields, max = config.get().jira.maxIssues) {
 const resetSession = () => {
   session = null;
   opening = null;
+  me = null;
 };
 
-module.exports = { callTool, searchAll, resetSession, toolErrorMessage };
+// The signed-in user. /api/me, the user list and notifications all ask for it on page load, and each call
+// takes ~2s, so share one in-flight call and keep the answer for the same credential.
+const ME_TTL_MS = 10 * 60_000;
+let me = null; // { token, at, promise }
+async function userInfo() {
+  const { token } = await getCredential();
+  if (me && me.token === token && Date.now() - me.at < ME_TTL_MS) return me.promise;
+  const entry = { token, at: Date.now(), promise: callTool('atlassianUserInfo', {}) };
+  me = entry;
+  entry.promise.catch(() => {
+    if (me === entry) me = null;
+  });
+  return entry.promise;
+}
+
+// Open the MCP session at startup instead of on the first page request (initialize takes ~1.5s).
+async function warmUp() {
+  try {
+    await ensureSession(await getCredential());
+  } catch (e) {
+    log(`[mcp] warm-up skipped: ${e.message}`);
+  }
+}
+
+module.exports = { callTool, searchAll, userInfo, warmUp, resetSession, toolErrorMessage };

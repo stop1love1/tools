@@ -64,13 +64,13 @@ const ISSUES_CACHE = 'jd:issues';
 function saveIssues() {
   try {
     const { issues, defaultJql, usedJql, fetchedAt, loadedFor } = state;
-    sessionStorage.setItem(ISSUES_CACHE, JSON.stringify({ issues, defaultJql, usedJql, fetchedAt, loadedFor }));
+    localStorage.setItem(ISSUES_CACHE, JSON.stringify({ issues, defaultJql, usedJql, fetchedAt, loadedFor }));
   } catch {
   }
 }
 (function restoreIssues() {
   try {
-    const c = JSON.parse(sessionStorage.getItem(ISSUES_CACHE));
+    const c = JSON.parse(localStorage.getItem(ISSUES_CACHE));
     if (c?.loadedFor !== issuesQuery()) return;
     Object.assign(state, { issues: c.issues, defaultJql: c.defaultJql, usedJql: c.usedJql, fetchedAt: new Date(c.fetchedAt), loadedFor: c.loadedFor });
   } catch {

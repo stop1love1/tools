@@ -8,11 +8,11 @@
   },
   "scripts": {
     "start": "node server.js",
-    "start:electron": "electron electron-main.js --no-sandbox",
+    "start:electron": "electron . --no-sandbox",
     "test": "node --test",
     "build": "pkg . --compress Brotli",
     "build:linux": "pkg . --targets node18-linux-x64 --compress Brotli -o dist/jira-dashboard-linux",
-    "build:electron": "electron-builder --linux AppImage",
+    "build:electron": "electron-builder --linux AppImage deb",
     "package": "bash build-package.sh",
     "clean": "rm -rf dist/"
   },
@@ -37,21 +37,33 @@
   "build": {
     "appId": "com.jira.dashboard",
     "productName": "Jira Dashboard",
-    "linux": {
-      "target": ["AppImage", "deb"],
-      "category": "Development",
-      "icon": "public/favicon.svg"
+    "directories": {
+      "output": "release"
     },
-    "extraResources": [
-      {
-        "from": "dist/jira-dashboard-linux",
-        "to": "jira-dashboard-linux"
-      }
-    ],
     "files": [
+      "package.json",
       "electron-main.js",
       "preload.js",
-      "public/**/*"
-    ]
-  }
+      "server.js",
+      "lib/**/*",
+      "public/**/*",
+      "assets/**/*"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "executableName": "jira-dashboard",
+      "icon": "assets/icon.png",
+      "desktop": {
+        "StartupWMClass": "jira-dashboard"
+      }
+    },
+    "deb": {
+      "maintainer": "pn.longdc"
+    }
+  },
+  "desktopName": "jira-dashboard.desktop"
 }

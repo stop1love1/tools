@@ -2,13 +2,13 @@
 
 // People to switch the view to: assignees active in the projects I work in.
 
-const { callTool, searchAll } = require('./mcp');
+const { searchAll, userInfo } = require('./mcp');
 
 let cache = { at: 0, data: null };
 
 async function listUsers() {
   if (cache.data && Date.now() - cache.at < 10 * 60_000) return cache.data;
-  const me = await callTool('atlassianUserInfo', {});
+  const me = await userInfo();
   const mine = await searchAll('assignee = currentUser() AND updated >= -90d ORDER BY updated DESC', ['project']);
   const projects = [...new Set(mine.map((i) => i.fields.project?.key).filter(Boolean))];
   const counts = new Map();

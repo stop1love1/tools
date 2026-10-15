@@ -1,136 +1,213 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
-const { spawn } = require('child_process');
-const path = require('path');
-const http = require('http');
-let mainWindow;
-let serverProcess;
+'use strict';
 
-const PORT = 4747;
-const SERVER_BIN = path.join(__dirname, 'dist', 'jira-dashboard-linux');
+// Desktop shell for the dashboard: runs server.js with Electron's own Node and shows it in a window.
+//
+// The app name / desktop name must be "jira-dashboard" so the window's WM_CLASS (X11) and app_id (Wayland)
+// match jira-dashboard.desktop; otherwise GNOME shows a separate "Electron" icon in the dock instead of
+// the launcher's icon. Launching `electron electron-main.js` (a bare file) skips package.json and names the
+// app "Electron", so we set it explicitly here as well.
+
+const { app, BrowserWindow, Menu, dialog, utilityProcess } = require('electron');
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+
+const APP_ID = 'jira-dashboard';
+app.setName(APP_ID);
+if (process.platform === 'linux') app.setDesktopName(`${APP_ID}.desktop`);
+
+const PORT = Number(process.env.PORT) || 4747;
+const BASE_URL = `http://localhost:${PORT}`;
+const ICON = path.join(__dirname, 'assets', 'icon.png');
+const SERVER_READY_TIMEOUT_MS = 30_000;
+
+let mainWindow = null;
+let serverProcess = null;
+
+// One instance only: a second launch (desktop icon clicked again) focuses the existing window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  app.whenReady().then(init);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    icon: path.join(__dirname, '..', 'public', 'favicon.svg'),
+    icon: ICON,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
     },
   });
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.loadURL(BASE_URL + readLastPage());
 
-  mainWindow.loadURL(`http://localhost:${PORT}`);
-  // mainWindow.webContents.openDevTools();
-
+  // The pages keep their filters in the query string (history.replaceState), so remember the last page + query
+  // and reopen it on the next start, the way a browser tab would.
+  const remember = (_e, url) => saveLastPage(url);
+  mainWindow.webContents.on('did-navigate', remember);
+  mainWindow.webContents.on('did-navigate-in-page', remember);
   mainWindow.on('closed', () => {
+    flushLastPage();
     mainWindow = null;
   });
 }
 
-function waitForServer() {
+const LAST_PAGE_FILE = () => path.join(app.getPath('userData'), 'last-page.json');
+let pendingPage = null;
+let saveTimer = null;
+
+// Path + query of the last page shown, or '' (the overview) when there is none or it is unusable.
+function readLastPage() {
+  try {
+    const page = JSON.parse(fs.readFileSync(LAST_PAGE_FILE(), 'utf8')).page;
+    return typeof page === 'string' && page.startsWith('/') && !page.startsWith('//') ? page : '';
+  } catch {
+    return '';
+  }
+}
+
+// Typing in a filter replaces the URL on every keystroke, so batch the writes.
+function saveLastPage(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return;
+  }
+  if (u.origin !== new URL(BASE_URL).origin || u.pathname.startsWith('/oauth/')) return;
+  pendingPage = u.pathname + u.search;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushLastPage, 500);
+}
+
+function flushLastPage() {
+  clearTimeout(saveTimer);
+  if (pendingPage === null) return;
+  try {
+    fs.writeFileSync(LAST_PAGE_FILE(), JSON.stringify({ page: pendingPage }));
+  } catch (e) {
+    console.error('Could not save the last page:', e.message);
+  }
+  pendingPage = null;
+}
+
+function ping() {
   return new Promise((resolve) => {
-    const check = () => {
-      http
-        .get(`http://localhost:${PORT}`, (res) => {
-          if (res.statusCode === 200) {
-            resolve();
-          } else {
-            setTimeout(check, 100);
-          }
-        })
-        .on('error', () => setTimeout(check, 100));
-    };
-    check();
-  });
-}
-
-function startServer() {
-  return new Promise((resolve, reject) => {
-    console.log(`Starting Jira Dashboard server from ${SERVER_BIN}`);
-    serverProcess = spawn(SERVER_BIN, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false,
-    });
-
-    serverProcess.stdout.on('data', (data) => {
-      console.log(`[Server] ${data.toString().trim()}`);
-    });
-
-    serverProcess.stderr.on('data', (data) => {
-      console.error(`[Server Error] ${data.toString().trim()}`);
-    });
-
-    serverProcess.on('error', (err) => {
-      console.error('Failed to start server:', err);
-      reject(err);
-    });
-
-    waitForServer()
-      .then(() => {
-        console.log('Server is ready!');
-        resolve();
+    http
+      .get(BASE_URL, (res) => {
+        res.resume();
+        resolve(res.statusCode === 200);
       })
-      .catch(reject);
+      .on('error', () => resolve(false))
+      .setTimeout(1000, function () {
+        this.destroy();
+      });
   });
 }
 
-app.on('ready', async () => {
+// Packaged (AppImage/deb): the app files are read-only, so settings, the OAuth grant and the MCP token live
+// in the user data dir. In dev they stay next to server.js, shared with `npm start`.
+function serverEnv() {
+  const env = { ...process.env, PORT: String(PORT) };
+  delete env.ELECTRON_RUN_AS_NODE; // would leak into tools the server launches (e.g. VS Code)
+  if (app.isPackaged) {
+    const data = app.getPath('userData');
+    env.NODE_ENV = 'production';
+    env.DASHBOARD_CONFIG_FILE ??= path.join(data, 'config.json');
+    env.DASHBOARD_OAUTH_FILE ??= path.join(data, '.oauth.json');
+    env.DASHBOARD_MCP_TOKEN_FILE ??= path.join(data, '.mcp-token');
+  }
+  return env;
+}
+
+async function startServer() {
+  // A dashboard already running (e.g. `npm start` in a terminal) is reused instead of fighting over the port.
+  if (await ping()) {
+    console.log(`Using the dashboard already running at ${BASE_URL}`);
+    return;
+  }
+
+  console.log('Starting Jira Dashboard server...');
+  serverProcess = utilityProcess.fork(path.join(__dirname, 'server.js'), [], {
+    cwd: app.isPackaged ? app.getPath('userData') : __dirname,
+    env: serverEnv(),
+    stdio: 'pipe',
+    serviceName: 'Jira Dashboard server',
+  });
+  serverProcess.stdout.on('data', (d) => console.log(`[Server] ${d.toString().trim()}`));
+  serverProcess.stderr.on('data', (d) => console.error(`[Server] ${d.toString().trim()}`));
+
+  let exited = null;
+  serverProcess.on('exit', (code) => {
+    exited = { code };
+    serverProcess = null;
+    if (!quitting) console.error(`Server exited (code ${code})`);
+  });
+
+  const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (exited) throw new Error(`Server exited during startup (code ${exited.code}). See the log for details.`);
+    if (await ping()) return;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error(`Server did not answer on ${BASE_URL} within ${SERVER_READY_TIMEOUT_MS / 1000}s.`);
+}
+
+async function init() {
+  Menu.setApplicationMenu(menu());
   try {
     await startServer();
     createWindow();
   } catch (err) {
     console.error('Failed to initialize:', err);
+    dialog.showErrorBox('Jira Dashboard', err.message);
     app.quit();
   }
-});
+}
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('will-quit', () => {
-  if (serverProcess) {
-    console.log('Stopping server...');
-    serverProcess.kill();
-  }
+// server.js finishes running git jobs on SIGTERM before exiting, so wait for it instead of leaving it behind.
+let quitting = false;
+app.on('before-quit', (e) => {
+  quitting = true;
+  if (!serverProcess) return;
+  e.preventDefault();
+  BrowserWindow.getAllWindows().forEach((w) => w.hide());
+  console.log('Stopping server...');
+  serverProcess.once('exit', () => app.quit());
+  serverProcess.kill();
 });
 
 app.on('activate', () => {
-  if (mainWindow === null) {
-    createWindow();
-  }
+  if (!mainWindow) createWindow();
 });
 
-// Create menu
-const menu = Menu.buildFromTemplate([
-  {
-    label: 'File',
-    submenu: [
-      {
-        label: 'Exit',
-        accelerator: 'CmdOrCtrl+Q',
-        click: () => app.quit(),
-      },
-    ],
-  },
-  {
-    label: 'View',
-    submenu: [
-      {
-        label: 'Reload',
-        accelerator: 'CmdOrCtrl+R',
-        click: () => mainWindow?.webContents.reload(),
-      },
-      {
-        label: 'Toggle DevTools',
-        accelerator: 'CmdOrCtrl+Shift+I',
-        click: () => mainWindow?.webContents.toggleDevTools(),
-      },
-    ],
-  },
-]);
-
-Menu.setApplicationMenu(menu);
+function menu() {
+  return Menu.buildFromTemplate([
+    {
+      label: 'File',
+      submenu: [{ label: 'Exit', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => mainWindow?.webContents.reload() },
+        { label: 'Toggle DevTools', accelerator: 'CmdOrCtrl+Shift+I', click: () => mainWindow?.webContents.toggleDevTools() },
+      ],
+    },
+  ]);
+}

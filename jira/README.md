@@ -1,107 +1,157 @@
-# Jira dashboard
+# Jira Dashboard - Portable Electron App
 
-Dashboard local: task Jira của bạn, trang Confluence được link, đổi trạng thái, thông báo. Không cần `npm install` (Node ≥ 18).
+A standalone desktop application for viewing Jira issues with MCP integration.
 
-## Chạy
+## Features
 
-```bash
-./dev.sh        # chọn j
-# hoặc
-cd jira && npm start      # → http://localhost:4747
+- ✅ Native desktop app (no browser needed)
+- ✅ Electron-based with Go backend
+- ✅ MCP Atlassian integration
+- ✅ Portable - works on any Linux machine
+- ✅ Desktop shortcut & app menu integration
+
+## Installation
+
+### Prerequisites
+
+1. **Node.js & npm** (via nvm recommended):
+   ```bash
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+   nvm install --lts
+   ```
+
+2. **Go** (for building the backend):
+   ```bash
+   # Install from https://go.dev/dl/
+   ```
+
+### Setup
+
+1. **Clone/Copy the project:**
+   ```bash
+   cd ~/Documents/tools
+   # Copy the jira folder here
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   cd ~/Documents/tools/jira
+   npm install
+   ```
+
+3. **Build the Go backend:**
+   ```bash
+   npm run build
+   ```
+   This creates `dist/jira-dashboard-linux`
+
+4. **Run the installer:**
+   ```bash
+   bash install.sh
+   ```
+   This will:
+   - Create a launcher script in `~/Documents/`
+   - Add desktop shortcut
+   - Add to app menu
+
+5. **Launch:**
+   - Double-click the **Jira Dashboard** icon on your Desktop
+   - Or search for "Jira Dashboard" in your app launcher
+
+## Project Structure
+
+```
+jira/
+├── assets/
+│   └── jira-icon.svg         # App icon
+├── dist/
+│   └── jira-dashboard-linux  # Go backend binary (generated)
+├── electron-main.js           # Electron main process
+├── preload.js                 # Electron preload script
+├── install.sh                 # Installer script
+├── main.go                    # Go backend server
+├── package.json
+└── public/                    # Frontend assets
+    ├── index.html
+    ├── style.css
+    └── app.js
 ```
 
-## Đăng nhập & token
+## Development
 
-Mọi thứ đi qua Atlassian MCP server (`mcp.atlassian.com`) — token của nó không dùng được với Jira REST API.
-
-- **Mặc định**: dùng token Claude Code đã lưu khi kết nối Atlassian MCP (`~/.claude/.credentials.json`), chỉ đọc. Hết hạn sau ~8 giờ; tool **không** refresh token này vì refresh token bị xoay vòng — refresh hộ sẽ làm Claude Code bị đăng xuất.
-- **Tự refresh** (khuyên dùng): bấm **Bật tự refresh** trên header → đăng nhập Atlassian một lần. Dashboard tự đăng ký OAuth client riêng, lưu token vào `.oauth.json` (chmod 600, đã gitignore) và tự refresh, độc lập với Claude Code. Xoá `.oauth.json` để quay về token của Claude Code.
-
-## Cấu hình
-
-Mở menu ⋯ trên header rồi chọn Settings (trang riêng `/settings.html`; link cũ `?view=settings` tự chuyển sang đó). Trang này sửa `config.json` (đã gitignore): Jira (site, JQL mặc định, bộ lọc lưu sẵn, field story point / sprint, auto refresh…), editor, git flow (thư mục repo, danh sách repo, project key, tên nhánh uat / develop / main, loại nhánh, số ngày tra commit / MR, checklist MR) và server. Đa số áp dụng ngay; mục có nhãn *needs restart* cần chạy lại `npm start`. `.env` vẫn dùng được làm giá trị mặc định (xem `.env.example`).
-
-## MCP cho Claude Code / Cursor
-
-Cùng server, cùng port: `http://localhost:4747/mcp` (streamable HTTP). Không phải chạy thêm gì.
-
+### Run in development mode:
 ```bash
-claude mcp add --transport http --scope user jira-dashboard http://localhost:4747/mcp
+npm run start:electron
 ```
 
-Cursor (`~/.cursor/mcp.json`): `{ "mcpServers": { "jira-dashboard": { "url": "http://localhost:4747/mcp" } } }`
-
-- Tool đọc (không cần token): `task_brief`, `list_issues`, `get_issue` (mô tả, comment, Confluence, MR), `get_confluence_page`, `list_transitions`, `get_notifications`, `git_overview`, `git_flow`, `git_epic`, `git_branches`.
-- `get_git_job` và `list_git_jobs` chỉ đọc nhưng **cần token**, vì log job có output của git và pre-commit hook.
-- Tool ghi (tắt mặc định, bật ở Settings → MCP → *Allow write tools*): `transition_issue`, `create_merge_request`, `run_git_action` (các bước git flow giống nút trên dashboard). Tool ghi cần **token** (xem dưới).
-- Bước phá huỷ của `run_git_action` (`sync-task`, `sync-develop`, `rebase-epic`, `undo`, `delete-branches`, `prune-backups`, `push` với `force`) cần bật thêm Settings → MCP → *Allow destructive git steps*.
-- `run_git_action` chờ job tối đa 20 giây (đổi bằng `waitSeconds`); job chạy lâu hơn trả về `status: "running"` kèm id, theo dõi bằng `get_git_job`. Quên id thì dùng `list_git_jobs`.
-- Chỉ nhận request từ máy này (`127.0.0.1`, kiểm tra `Host` và `Origin` đúng cổng của dashboard). Tắt hẳn: Settings → MCP → *Serve MCP at /mcp*.
-
-### Token cho tool ghi
-
-Khi khởi động, server tạo file `jira/.mcp-token` nếu chưa có (quyền 0600, đã gitignore) và in đường dẫn ra console. Tool đọc không cần token; tool ghi chỉ chạy khi request có header `Authorization: Bearer <nội dung file>`. Đổi token: xoá file (server tự tạo token mới ở request kế tiếp có gọi tool cần token hoặc lần khởi động sau), rồi cập nhật lại header trong cấu hình client, vì token cũ sẽ bị từ chối.
-
+### Rebuild after code changes:
 ```bash
-claude mcp add --transport http --scope user jira-dashboard http://localhost:4747/mcp \
-  --header "Authorization: Bearer $(cat jira/.mcp-token)"
+npm run build
 ```
 
-Cursor: `{ "mcpServers": { "jira-dashboard": { "url": "http://localhost:4747/mcp", "headers": { "Authorization": "Bearer <token>" } } } }`
+### Check logs:
+```bash
+tail -f /tmp/jira-dashboard.log
+```
 
-## Start with Claude
+## Port Configuration
 
-Nút Claude ở cột cuối mỗi dòng (và nút **Claude** trong chi tiết task) mở dialog chọn: **Implement & open MR** hoặc **Plan only**, repo, MR cần mở (task → epic, epic → uat, develop), draft MR, tự đổi status Jira, ghi chú. Bấm **Start**: như trước — copy nội dung vào clipboard và mở tab Claude Code trong Cursor — nhưng nội dung giờ là hướng dẫn đầy đủ theo các lựa chọn (đọc ticket + Confluence + git flow qua MCP `jira-dashboard`, quy tắc branch / commit / MR của team) kèm bản chụp ticket.
+The app runs on **port 4747** by default. If you need to change it:
 
-- Bật Settings → MCP → *Allow write tools* để Claude dùng các bước git của dashboard (có backup) và `create_merge_request` (MR theo mẫu, trả về link). Khi tắt, Claude tự làm bằng git / glab theo cùng quy tắc.
-- Hướng dẫn thêm cho mọi prompt: Settings → Start with Claude.
+1. Edit `main.go` - change `PORT` constant
+2. Edit `electron-main.js` - change `PORT` constant
+3. Rebuild: `npm run build`
 
-## Cấu trúc code
+## Troubleshooting
 
-- `server.js`: khởi động + router HTTP.
-- `lib/`: `config` (schema + lưu `config.json`), `auth` (OAuth / token Claude Code), `mcp` (client Atlassian MCP), `issues`, `confluence`, `notifications`, `users`, `editor`, `mcp-server` (endpoint `/mcp`), `prompt` (prompt của Start with Claude), `util`.
-- `lib/git/`: `settings` (tên nhánh, regex từ config), `exec` (plumbing git), `read` (flow / epic / workspace), `mrs` (GitLab qua glab), `merge-requests` (tạo MR theo mẫu), `jobs`, `actions` (các bước), `index` (route `/api/git/*`).
-- `public/js/`: script thường (không bundler), nạp theo thứ tự trong `index.html`; `core.js` trước, `app.js` cuối. `public/js/git/`: UI git flow. `public/css/`: style theo từng phần.
+### App won't start:
+```bash
+# Check if port is in use
+lsof -i :4747
 
-## Có gì
+# Kill existing processes
+pkill -f "electron.*jira"
 
-- **Cần xử lý gấp** ở đầu trang: quá hạn, hạn ≤ 3 ngày, ưu tiên High trở lên, nhãn hotfix/urgent. Danh sách cũng xếp theo độ gấp.
-- **Thanh tiến trình**: hoàn thành / đang làm / chưa làm trên tổng (task huỷ không tính).
-- **Danh sách** nhóm theo parent — bấm dòng parent để thu gọn/mở rộng. Đổi trạng thái bằng nút trạng thái (theo workflow Jira).
-- **Chi tiết task** ngay trong dashboard (bấm key/dòng): mô tả, bình luận, task con, tài liệu Confluence (cả kế thừa từ parent), MR GitLab. Link dạng `http://localhost:4747/#VLEARN-123`; nút ⤢ để mở toàn màn hình.
-- **Copy cho AI**: nút copy trên từng task, trong trang chi tiết (kèm mô tả, bình luận, MR, task con) và cho cả danh sách — Markdown có link Jira/Confluence để AI (vd. Claude với Atlassian MCP) đọc tiếp.
-- **Thông báo** (chuông): thay đổi và bình luận của người khác trên task bạn làm, tạo hoặc theo dõi trong 7 ngày; đánh dấu khi được @mention. Jira không mở API cho chuông thông báo gốc nên đây là bản dựng lại từ changelog/bình luận.
-- **Tài liệu**: mọi trang Confluence được link + file đính kèm Jira.
-- Phím tắt: `/` tìm kiếm, `R` tải lại, `1`–`9` đổi bộ lọc, `Esc` đóng. Tự tải lại theo chu kỳ trong Settings (mặc định 5 phút).
+# Check logs
+tail -50 /tmp/jira-dashboard.log
+```
 
-## Git flow (các repo trong Settings, mặc định lms backend + frontend)
+### Icon not showing:
+```bash
+# Reinstall
+bash install.sh
+```
 
-Quản lý nhánh / commit / cherry-pick theo đúng flow trong `lms/.cursor/rules/git-workflow.mdc`, ngay trong dashboard:
+### Backend build fails:
+```bash
+# Ensure Go is installed
+go version
 
-- **Khối "Git" trong chi tiết task**:
-  - **Next** ở trên cùng: việc cần làm của cả Backend và Frontend, mỗi việc một nút chính. Thứ tự: cần sửa (conflict…) → tới lượt bạn → đang chờ người khác (MR chờ review).
-  - **Bảng giai đoạn × repo**: Branch, Code, → Epic, rồi tách 2 nhánh song song → uat (qua MR epic) và → develop (cherry-pick + MR). Mỗi ô có 1 trong 5 trạng thái: xong / tới lượt bạn / cần sửa / chờ người khác / chưa tới.
-  - Bấm vào một ô để mở **panel chi tiết**: các bước con, commit (tick chọn khi cherry-pick), nút chính, và "Other options" cho thao tác ít dùng hoặc nguy hiểm (Undo, rebase epic).
-  - **Không có quyền merge MR vào epic**: trong panel **→ Epic**, tick các commit rồi bấm **Cherry-pick selected → epic** (push fast-forward). Pick xong, panel **→ develop** tự mở với đúng các commit đó đã được tick, chỉ cần bấm **Cherry-pick selected → develop**.
-  - **Dòng cuối**: danh sách nhánh, cảnh báo flow, lần fetch gần nhất.
-  - Epic lấy theo Epic cha trên Jira (bấm chip `into epic/…` để đổi). Nếu commit của ticket nằm ở epic khác, Next sẽ gợi ý.
-- **Khối "Git · epic" trong chi tiết epic**: cùng bố cục (Next + bảng → uat / → develop theo repo), kèm bảng ticket với cột BE | FE. Bấm vào một hàng để chọn commit và cherry-pick sang `-develop`.
-- **Nhiều nhánh cho 1 task**: nhận cả nhánh gộp nhiều task (`feature/VLEARN-4546-4547-…-uat`) và nhánh tên cũ không có hậu tố `-uat`. Mỗi repo có danh sách mọi nhánh của task kèm số commit chưa vào epic/uat (bản rebase / cherry-pick không tính). Nhánh chính được chọn theo thứ tự: đã ghim (**Use**) → đang checkout → còn commit chưa merge → tên đúng chuẩn → mới nhất. Nhánh cũ bị nhánh mới hơn bao trùm (cùng các task) được đánh dấu *older* và không được lấy commit sang develop.
-- **Tab Git** (icon nhánh trên header): trạng thái 2 repo + commit/push/fetch, ticket đang có nhánh, dọn nhánh local (`backup/*`, đã mất trên origin, đã vào uat, tên sai chuẩn), log các job gần đây.
-- **Conflict của MR**: dashboard tự mô phỏng merge bằng `git merge-tree` (không đụng working tree) cho task → epic, epic → uat và nhánh `-develop` → develop — chạy được khi tắt VPN, trước khi tạo MR và khi GitLab còn "checking". Có conflict thì hiện `⚠ conflicts with …` kèm danh sách file và nút xử lý: **Rebase & push** (task), **Rebase epic onto uat** (epic, có hỏi), **Rebase onto develop** (nhánh develop). Kết hợp với `has_conflicts` của GitLab khi có.
-- **MR**: mở trang "New merge request" của GitLab đã điền sẵn source/target/title/description theo mẫu — không cần `glab` hay API token.
-- **An toàn**:
-  - Thao tác trên nhánh không được checkout thì chạy trong worktree tạm `~/Documents/lms-worktrees/dash-<repo>` → không đụng code đang làm dở. Xong job worktree tạm tự nhả nhánh.
-  - Trước khi rebase / cherry-pick / reset / xoá nhánh, tip được lưu vào `refs/dash-backup/<nhánh>/<thời gian>` (thay cho việc tự tạo `backup/*`). Nút **Undo** đưa nhánh về bản backup gần nhất; nhánh đã xoá khôi phục bằng `git branch <tên> refs/dash-backup/<tên>/<thời gian>`.
-  - Conflict được giữ nguyên để sửa trong Cursor, rồi **Continue / Skip / Abort** từ dashboard. Continue từ chối nếu file còn conflict marker; xong thì tự push tiếp như bước ban đầu (rebase → force-push with lease, cherry-pick → push).
-  - Checkout / Start khi còn thay đổi chưa commit: stash lại (có hỏi), và tự áp lại khi chuyển về nhánh đó từ dashboard. Pop lỗi thì stash vẫn giữ trong tab Git.
-- Commit: message được kiểm tra format trước khi gửi và giữ nháp nếu commit lỗi (hook fail…); tick *Push after commit* để commit + push trong một lần.
-- Tạo / mở MR trên GitLab xong quay lại tab dashboard: trạng thái MR tự tải lại.
-  - Force-push luôn dùng `--force-with-lease`; không bao giờ push thẳng vào `uat` / `develop` / `release/*`. Mỗi lúc chỉ chạy 1 job git.
-- Commit chạy đủ hook của repo (lint-staged, typecheck, gitleaks…); `VSF_APP_TOKEN` được đọc từ `lms/dev.sh` nếu server không được chạy từ `dev.sh`.
+# Clean and rebuild
+rm -rf dist/
+npm run build
+```
 
-## Bảo mật
+## Uninstall
 
-- Server chỉ nghe `127.0.0.1`; token không bao giờ gửi xuống trình duyệt.
-- Request ghi cần header `X-Dashboard` và server kiểm tra `Host` (chặn CSRF / DNS rebinding). Đăng nhập OAuth dùng PKCE + `state`.
-- Mô tả/bình luận từ Jira hiển thị trong iframe sandbox (không chạy script).
+```bash
+# Remove shortcuts
+rm ~/Desktop/jira-dashboard.desktop
+rm ~/.local/share/applications/jira-dashboard.desktop
+rm ~/Documents/jira-dashboard.sh
+
+# Remove project
+rm -rf ~/Documents/tools/jira
+```
+
+## Platform Support
+
+Currently supports **Linux only**. The backend binary is built for Linux.
+
+To support other platforms:
+- macOS: Build with `GOOS=darwin go build`
+- Windows: Build with `GOOS=windows go build`
+
+## License
+
+MIT

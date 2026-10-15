@@ -19,6 +19,7 @@ dist/
 .mcp-token
 jira/config.json
 jira/config.json.tmp
+jira/release/
 
 # Logs
 *.log

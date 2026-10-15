@@ -31,7 +31,7 @@ function setupWith({ searchAll, callTool }) {
     },
   };
   require.cache[require.resolve('../lib/mcp')] = {
-    exports: { callTool, searchAll, resetSession: () => {}, toolErrorMessage: (m) => String(m || '') },
+    exports: { callTool, searchAll, userInfo: () => callTool('atlassianUserInfo', {}), resetSession: () => {}, toolErrorMessage: (m) => String(m || '') },
   };
   return require('../lib/notifications');
 }

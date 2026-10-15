@@ -81,7 +81,7 @@ async function api(req, res, url) {
   const route = `${req.method} ${url.pathname}`;
 
   if (route === 'GET /api/me') {
-    const me = await mcp.callTool('atlassianUserInfo', {});
+    const me = await mcp.userInfo();
     const cred = await auth.getCredential();
     return send(res, 200, {
       name: me.nickname || me.name,
@@ -237,6 +237,7 @@ server.listen(PORT, HOST, () => {
   // Create the token file now so there is something to copy into the MCP client config.
   getToken();
   console.log(`MCP write tools need "Authorization: Bearer <token>" — token file: ${tokenFile}`);
+  mcp.warmUp();
   if (DEV) startLiveReloadServer();
 });
 

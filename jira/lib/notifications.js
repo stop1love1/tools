@@ -6,7 +6,7 @@
 // changes and comments on issues I'm assigned to, reported or watch.
 
 const config = require('./config');
-const { callTool, searchAll } = require('./mcp');
+const { callTool, searchAll, userInfo } = require('./mcp');
 const { mapPool } = require('./util');
 
 let cache = { at: 0, data: null };
@@ -69,7 +69,7 @@ async function listNotifications() {
   if (cache.data && Date.now() - cache.at < 60_000) return cache.data;
   const days = config.get().jira.notifyDays;
   const jql = `(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) AND updated >= -${days}d ORDER BY updated DESC`;
-  const me = await callTool('atlassianUserInfo', {});
+  const me = await userInfo();
   const recent = (await searchAll(jql, ['summary', 'updated'])).slice(0, 25);
   const since = Date.now() - days * 86_400_000;
   await mapPool(recent, 4, async ({ key, fields }) => {
