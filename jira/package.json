@@ -8,9 +8,11 @@
   },
   "scripts": {
     "start": "node server.js",
+    "start:electron": "electron electron-main.js --no-sandbox",
     "test": "node --test",
     "build": "pkg . --compress Brotli",
     "build:linux": "pkg . --targets node18-linux-x64 --compress Brotli -o dist/jira-dashboard-linux",
+    "build:electron": "electron-builder --linux AppImage",
     "package": "bash build-package.sh",
     "clean": "rm -rf dist/"
   },
@@ -26,7 +28,30 @@
     "outputPath": "dist"
   },
   "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
     "livereload": "0.10.3",
     "pkg": "^5.8.1"
+  },
+  "main": "electron-main.js",
+  "build": {
+    "appId": "com.jira.dashboard",
+    "productName": "Jira Dashboard",
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development",
+      "icon": "public/favicon.svg"
+    },
+    "extraResources": [
+      {
+        "from": "dist/jira-dashboard-linux",
+        "to": "jira-dashboard-linux"
+      }
+    ],
+    "files": [
+      "electron-main.js",
+      "preload.js",
+      "public/**/*"
+    ]
   }
 }
