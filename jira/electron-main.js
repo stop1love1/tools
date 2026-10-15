@@ -132,14 +132,15 @@ function ping() {
   });
 }
 
-// Packaged (AppImage/deb): the app files are read-only, so settings, the OAuth grant and the MCP token live
-// in the user data dir. In dev they stay next to server.js, shared with `npm start`.
+// Packaged (AppImage/deb): the app files are read-only, so .env, settings, the OAuth grant and the MCP token
+// live in the user data dir. In dev they stay next to server.js, shared with `npm start`.
 function serverEnv() {
   const env = { ...process.env, PORT: String(PORT) };
   delete env.ELECTRON_RUN_AS_NODE; // would leak into tools the server launches (e.g. VS Code)
   if (app.isPackaged) {
     const data = app.getPath('userData');
     env.NODE_ENV = 'production';
+    env.DASHBOARD_ENV_FILE ??= path.join(data, '.env');
     env.DASHBOARD_CONFIG_FILE ??= path.join(data, 'config.json');
     env.DASHBOARD_OAUTH_FILE ??= path.join(data, '.oauth.json');
     env.DASHBOARD_MCP_TOKEN_FILE ??= path.join(data, '.mcp-token');

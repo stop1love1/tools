@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadEnv, httpError, send, sendHtml, readJson, ISSUE_KEY_RE } = require('./lib/util');
 
-loadEnv(path.join(__dirname, '.env'));
+loadEnv(process.env.DASHBOARD_ENV_FILE || path.join(__dirname, '.env'));
 
 const config = require('./lib/config');
 const auth = require('./lib/auth');
