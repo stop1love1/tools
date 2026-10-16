@@ -174,7 +174,7 @@ function buildOverview() {
   const note =
     state.sprint &&
     !fetched &&
-    h('p', { class: 'ov-source muted small' }, sprintState.error && sprintState.key === sprintKey() ? `Could not load the whole sprint (${sprintState.error}): numbers below are from the task list only.` : h('span', null, h('span', { class: 'spin' }, icon('refresh')), ' Loading every task of this sprint…'));
+    h('p', { class: 'ov-source muted small' }, sprintState.error && sprintState.key === sprintKey() ? `Could not load the whole sprint (${sprintState.error}): numbers below are from the task list only.` : [h('span', { class: 'spin' }, icon('refresh')), 'Loading every task of this sprint…']);
 
   if (!list.length) return h('div', { class: 'overview' }, note, h('div', { class: 'empty-state' }, 'No tasks match the current filters.'));
 

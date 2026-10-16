@@ -125,7 +125,20 @@
   min-width: 0;
 }
 .ov-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
+}
+/* The icon's SVG has no size of its own: without this it fills the page. */
+.ov-source .spin {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+.ov-source .spin svg {
+  width: 100%;
+  height: 100%;
 }
 .ov-closed {
   margin-left: 8px;
