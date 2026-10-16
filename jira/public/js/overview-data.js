@@ -20,6 +20,35 @@ const OverviewData = (() => {
   // Tasks the numbers are about: no Epics (only group headers), no cancelled ones, only the chosen sprint.
   const scope = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && !isCancelled(i) && isSprintTask(i, sprintId));
 
+  // Every sprint an issue has been in (issues cached before sprintIds existed only know their current one).
+  const sprintIdsOf = (i) => i.sprintIds || (i.sprint ? [i.sprint.id] : []);
+  const isBug = (i) => /bug/i.test(i.type.name);
+
+  // Everything that was ever in the sprint, cancelled work included (the bug card counts it).
+  const members = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && sprintIdsOf(i).includes(Number(sprintId)));
+
+  // The tasks one sprint is about, from /api/sprint. A closed sprint is read as it stood when it closed: work
+  // finished later was carried over, so it counts as not done there.
+  function sprintView(issues, sprint) {
+    const list = planned(members(issues, sprint.id).filter((i) => !isCancelled(i)), sprint);
+    const closedAt = sprint.state === 'closed' && (sprint.completeDate || sprint.endDate);
+    if (!closedAt) return list;
+    return list.map((i) => (isDone(i) && doneAt(i) > new Date(closedAt) ? { ...i, status: { ...i.status, category: 'indeterminate' }, carriedOver: true } : i));
+  }
+
+  // Bugs of the sprint on their own: they carry no story points, so the SP numbers never show them.
+  function bugStats(all, list, sprint) {
+    const bugs = list.filter(isBug);
+    const start = sprint?.startDate ? new Date(sprint.startDate) : null;
+    return {
+      total: bugs.length,
+      open: bugs.filter(isOpen).length,
+      fixed: bugs.filter(isDone).length,
+      cancelled: all.filter((i) => isBug(i) && isCancelled(i)).length,
+      reported: start ? bugs.filter((i) => new Date(i.created) >= start).length : null,
+    };
+  }
+
   function pickSprint(issues, sprintId) {
     const all = issues.flatMap((i) => (i.sprint ? [i.sprint] : []));
     return sprintId ? all.find((s) => s.id === Number(sprintId)) || null : all.find((s) => s.state === 'active') || null;
@@ -108,6 +137,23 @@ const OverviewData = (() => {
     return { left: p.actual, ideal: Math.round(p.ideal * 10) / 10, behind: Math.round((p.actual - p.ideal) * 10) / 10, perDay: daysLeft > 0 ? Math.round((p.actual / daysLeft) * 10) / 10 : null };
   }
 
+  // One verdict for the sprint strip. Work without story points weighs nothing on the burndown, so "done" there
+  // only means the estimated part is done while any of it is still open.
+  function paceStatus(sprint, pace, prog) {
+    const n = prog.unestimated;
+    const rest = n ? ` · ${n} open ${n === 1 ? 'task' : 'tasks'} without SP` : '';
+    if (sprint?.state === 'closed') {
+      const left = Math.round((prog.total - prog.done) * 10) / 10;
+      const parts = [left > 0 && `${left} ${prog.unit}`, n && `${n} ${n === 1 ? 'task' : 'tasks'} without SP`].filter(Boolean);
+      return parts.length ? { tone: 'warn', text: `Closed with ${parts.join(' and ')} not done` } : { tone: 'ok', text: 'Closed, all done' };
+    }
+    if (!pace) return n ? { tone: 'warn', text: rest.slice(3) } : null;
+    if (!pace.left) return { tone: n ? 'warn' : 'ok', text: n ? `Estimated work done${rest}` : 'All planned work is done' };
+    if (pace.behind > 0) return { tone: 'warn', text: `Behind plan by ${pace.behind} ${prog.unit}${rest}` };
+    if (pace.behind < 0) return { tone: n ? 'warn' : 'ok', text: `Ahead of plan by ${-pace.behind} ${prog.unit}${rest}` };
+    return { tone: n ? 'warn' : 'ok', text: `On track${rest}` };
+  }
+
   // What needs attention, each open task in at most one group: overdue, due within 3 days, then idle for over a week.
   function lists(list, now) {
     const open = list.filter(isOpen);
@@ -119,7 +165,9 @@ const OverviewData = (() => {
       overdue,
       dueSoon,
       stale: open.filter((i) => !urgent.has(i) && idleDays(i, now) > 7).sort((a, b) => Date.parse(a.updated) - Date.parse(b.updated)),
-      unplanned: open.filter((i) => !i.storyPoints || !i.sprint),
+      // Bugs are not estimated (the bug card counts them), so they are never "not planned".
+      unplanned: open.filter((i) => !isBug(i) && (!i.storyPoints || !i.sprint)),
+      carriedOver: list.filter((i) => i.carriedOver),
     };
   }
 
@@ -133,7 +181,6 @@ const OverviewData = (() => {
   };
   const quantile = (sorted, q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : null);
   const leadDays = (i) => Math.max(0, daysBetween(new Date(i.created), doneAt(i)));
-  const isBug = (i) => /bug/i.test(i.type.name);
 
   function trend(items, period, now) {
     const P = PERIODS[period];
@@ -252,5 +299,5 @@ const OverviewData = (() => {
     return tips.sort((a, b) => order[a.level] - order[b.level]);
   }
 
-  return { scope, planned, pickSprint, kpis, byEpic, burndown, progress, pace, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
+  return { scope, planned, members, sprintView, bugStats, pickSprint, kpis, byEpic, burndown, progress, pace, paceStatus, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
 })();

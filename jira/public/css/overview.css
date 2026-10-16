@@ -116,10 +116,22 @@
   align-items: start;
   gap: 16px;
 }
+.ov-main.single {
+  grid-template-columns: minmax(0, 1fr);
+}
 .ov-side {
   display: grid;
   gap: 16px;
   min-width: 0;
+}
+.ov-source {
+  margin: 0;
+}
+.ov-closed {
+  margin-left: 8px;
+  vertical-align: 2px;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .ov-group + .ov-group {
@@ -542,5 +554,18 @@ a.ov-epic-name:hover {
 @media (max-width: 860px) {
   .ov-trends {
     grid-template-columns: 1fr;
+  }
+}
+/* The trend chart is drawn 1090 wide: shrunk to a phone its labels are unreadable, so it scrolls inside its card. */
+@media (max-width: 640px) {
+  .ov-trend-card .ov-chart {
+    overflow-x: auto;
+  }
+  .ov-trend-card .ov-chart svg {
+    min-width: 900px;
+  }
+  .ov-trend-card .ov-card-head {
+    flex-direction: column;
+    gap: 2px;
   }
 }

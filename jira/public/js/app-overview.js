@@ -21,8 +21,29 @@ function openIssueChip(key) {
   location.href = pageHref('/tasks.html', `#${encodeURIComponent(key)}`);
 }
 
+const sprintState = { key: null, data: null, error: null };
+const sprintKey = () => (state.sprint ? `${state.sprint}|${state.user || ''}` : null);
+
+async function loadSprint() {
+  const key = sprintKey();
+  if (!key) return;
+  const params = new URLSearchParams();
+  if (state.user) params.set('user', state.user);
+  try {
+    const data = await api(`/api/sprint/${state.sprint}${params.size ? '?' + params : ''}`);
+    if (key !== sprintKey()) return; // the sprint or user changed meanwhile
+    Object.assign(sprintState, { key, data, error: null });
+    state.extraSprints = data.sprint ? [data.sprint] : [];
+  } catch (e) {
+    if (key !== sprintKey()) return;
+    Object.assign(sprintState, { key, data: null, error: e.message });
+  }
+  render();
+}
+
 function load(opts) {
   loadHistory({ fresh: !!opts && !opts.silent });
+  loadSprint();
   return loadIssues(opts).then(render);
 }
 
@@ -133,41 +154,68 @@ function buildTrends(list, now) {
 function buildOverview() {
   const O = OverviewData;
   const now = new Date();
+  const fetched = state.sprint && sprintState.key === sprintKey() ? sprintState.data : null;
   // "All sprints" means all of them: no sprint strip for the active one, no burndown.
-  const sprint = state.sprint ? O.pickSprint(state.issues, state.sprint) : null;
-  const list = O.planned(O.scope(state.issues, state.sprint), sprint);
-  const sprintTasks = sprint ? O.planned(O.scope(state.issues, sprint.id), sprint) : list;
+  const sprint = state.sprint ? fetched?.sprint || O.pickSprint(state.issues, state.sprint) : null;
+  const source = fetched?.issues || state.issues;
+  const all = sprint ? O.members(source, sprint.id) : source.filter((i) => !isEpicType(i));
+  const list = sprint ? O.sprintView(source, sprint) : O.scope(source, null);
+  const closed = sprint?.state === 'closed';
   const k = O.kpis(list, now);
   const lists = O.lists(list, now);
-  const burn = O.burndown(sprintTasks, sprint, now);
+  const bugs = O.bugStats(all, list, sprint);
+  const burn = O.burndown(list, sprint, now);
   const pace = O.pace(burn);
+  const prog = O.progress(list, sprint, now);
+  const status = O.paceStatus(sprint, pace, prog);
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 
-  if (!list.length) return h('div', { class: 'empty-state' }, 'No tasks match the current filters.');
+  // Where the numbers come from while the full sprint is loading, or when it could not be loaded.
+  const note =
+    state.sprint &&
+    !fetched &&
+    h('p', { class: 'ov-source muted small' }, sprintState.error && sprintState.key === sprintKey() ? `Could not load the whole sprint (${sprintState.error}): numbers below are from the task list only.` : h('span', null, h('span', { class: 'spin' }, icon('refresh')), ' Loading every task of this sprint…'));
+
+  if (!list.length) return h('div', { class: 'overview' }, note, h('div', { class: 'empty-state' }, 'No tasks match the current filters.'));
+
+  const idle = (i) => h('span', { class: 'muted small' }, `${O.idleDays(i, now)}d idle`);
+  const doneLater = (i) => h('span', { class: 'muted small' }, i.status.category === 'done' || i.resolved ? `done ${fmtDay(O.isoDay(O.doneAt(i)))}` : 'still open');
+  // A closed sprint has nothing left to chase: what matters there is what it did not finish.
+  const groups = closed
+    ? [{ title: 'Carried over (not done when the sprint closed)', tone: 'warn', issues: lists.carriedOver, when: doneLater }]
+    : [
+        { title: 'Overdue', tone: 'danger', issues: lists.overdue, when: dueBadge },
+        { title: 'Due soon', tone: 'warn', issues: lists.dueSoon, when: dueBadge },
+        { title: 'Untouched for over 7 days', issues: lists.stale, when: idle },
+      ];
+  const attention = groups.some((g) => g.issues.length) && attentionCard(groups);
+  const epics = epicsCard(O.byEpic(list), { href: (r) => pageHref('/tasks.html', `#${encodeURIComponent(r.key)}`) });
+  const bugSub = [`${bugs.fixed} fixed`, bugs.cancelled && `${bugs.cancelled} cancelled`, bugs.reported != null && `${bugs.reported} new this sprint`].filter(Boolean).join(' · ');
 
   return h(
     'div',
     { class: 'overview' },
-    sprintCard(sprint, O.progress(sprintTasks, sprint, now), pace, sprintTasks.length),
+    note,
+    sprintCard(sprint, prog, status, list.length),
     h(
       'div',
       { class: 'ov-stats' },
-      statCard('Done', `${pct(k.done, k.total)}%`, { sub: `${k.done} / ${k.total} tasks` }),
-      statCard('Overdue', k.overdue, { tone: k.overdue ? 'danger' : '', sub: 'open, past due date' }),
-      statCard('Due in 3 days', k.dueSoon, { tone: k.dueSoon ? 'warn' : '', sub: 'today included' }),
-      statCard('Not planned', lists.unplanned.length, { sub: 'no sprint or no story points' }),
+      statCard('Done', `${pct(k.done, k.total)}%`, { sub: `${k.done} / ${k.total} tasks${k.sp.total ? ` · ${k.sp.done} / ${k.sp.total} SP` : ''}` }),
+      statCard(closed ? 'Bugs left open' : 'Open bugs', bugs.open, { tone: bugs.open ? 'warn' : '', sub: bugs.total || bugs.cancelled ? bugSub : 'no bugs' }),
+      closed
+        ? statCard('Carried over', lists.carriedOver.length, { tone: lists.carriedOver.length ? 'warn' : '', sub: 'not done when it closed' })
+        : statCard('Overdue', k.overdue, { tone: k.overdue ? 'danger' : '', sub: k.dueSoon ? `+ ${k.dueSoon} due in 3 days` : 'open, past due date' }),
+      statCard('Not estimated', lists.unplanned.length, { tone: lists.unplanned.length ? 'warn' : '', sub: 'open, no SP or sprint (bugs aside)' }),
     ),
-    buildTrends(list, now),
+    // Sprint first, then the history across sprints: nothing about this sprint sits below the trends.
     h(
       'div',
-      { class: 'ov-main' },
-      attentionCard([
-        { title: 'Overdue', tone: 'danger', issues: lists.overdue, when: dueBadge },
-        { title: 'Due soon', tone: 'warn', issues: lists.dueSoon, when: dueBadge },
-        { title: 'Untouched for over 7 days', issues: lists.stale, when: (i) => h('span', { class: 'muted small' }, `${O.idleDays(i, now)}d idle`) },
-      ]),
-      h('div', { class: 'ov-side' }, sprint && burndownCard(burn, pace), epicsCard(O.byEpic(list), { href: (r) => pageHref('/tasks.html', `#${encodeURIComponent(r.key)}`) })),
+      { class: `ov-main${attention || sprint ? '' : ' single'}` },
+      h('div', { class: 'ov-side' }, attention || epics),
+      (attention || sprint) && h('div', { class: 'ov-side' }, sprint && burndownCard(burn, pace, status), attention && epics),
     ),
+    // The tips read today's open work: a closed sprint's snapshot is not that.
+    buildTrends(closed ? O.scope(state.issues, null) : list, now),
   );
 }
 
@@ -214,7 +262,10 @@ window.onShortcutExtra = (e, typing) => {
 
 window.onUserFilterChange = () => load();
 window.onJqlChange = () => load();
-window.onSprintFilterChange = () => render();
+window.onSprintFilterChange = () => {
+  render();
+  loadSprint();
+};
 window.onShortcutR = (opts) => load(opts);
 
 async function initPage() {

@@ -195,6 +195,7 @@ function renderSprints() {
     for (const sp of sprintsOf(i)) sprints.set(sp.id, sp);
     if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
   }
+  for (const sp of state.extraSprints || []) if (!sprints.has(sp.id)) sprints.set(sp.id, sp);
   const select = $('#sprint-filter');
   state.sprintMap = sprints;
   if (sprints.size === 0) {
@@ -210,7 +211,7 @@ function renderSprints() {
   select.replaceChildren(
     h('option', { value: '', selected: !state.sprint }, 'All sprints'),
     ...sorted.map((s) => 
-      h('option', { value: s.id, selected: state.sprint === s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''} (${counts.get(s.id) || 0})`)
+      h('option', { value: s.id, selected: state.sprint === s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''}${counts.has(s.id) ? ` (${counts.get(s.id)})` : ''}`)
     ),
   );
   select.hidden = false;

@@ -24,12 +24,18 @@ function statusDto(s) {
   return s ? { id: s.id, name: s.name, category: s.statusCategory?.key || 'indeterminate' } : null;
 }
 
+function sprintsIn(f) {
+  const sprintValue = f.sprint || f[config.get().jira.sprintField];
+  return (Array.isArray(sprintValue) ? sprintValue : sprintValue ? [sprintValue] : []).filter(Boolean);
+}
+
+const sprintDto = (s) => ({ id: s.id, name: s.name, state: s.state, startDate: s.startDate || null, endDate: s.endDate || null, completeDate: s.completeDate || null });
+
 // An issue's sprint: the active one if it was carried over several, else the latest.
 function sprintOf(f) {
-  const sprintValue = f.sprint || f[config.get().jira.sprintField];
-  const sprints = Array.isArray(sprintValue) ? sprintValue : sprintValue ? [sprintValue] : [];
-  const s = sprints.find((x) => x && x.state === 'active') || sprints[sprints.length - 1] || null;
-  return s ? { id: s.id, name: s.name, state: s.state, startDate: s.startDate || null, endDate: s.endDate || null } : null;
+  const sprints = sprintsIn(f);
+  const s = sprints.find((x) => x.state === 'active') || sprints[sprints.length - 1] || null;
+  return s ? sprintDto(s) : null;
 }
 
 function issueDto(issue, docs) {
@@ -53,6 +59,8 @@ function issueDto(issue, docs) {
     // Empty for a task with no fix version.
     fixVersions: (f.fixVersions || []).map((v) => ({ id: v.id, name: v.name, released: !!v.released, releaseDate: v.releaseDate || null })),
     sprint: sprintOf(f),
+    // All of them, so a closed sprint still finds the work that was carried over from it.
+    sprintIds: sprintsIn(f).map((s) => s.id),
     storyPoints: f[storyPointsField] || null,
     parent: f.parent
       ? {
@@ -115,7 +123,28 @@ async function listHistory(jql, { fresh = false } = {}) {
 // List
 
 async function listIssues(jql) {
-  const issues = await searchAll(jql, issueFields());
+  return issueList(await searchAll(jql, issueFields()));
+}
+
+// Everything in one sprint, closed ones too: the default JQL only keeps recently updated work, so the overview of
+// an older sprint would miss most of what was done in it. JQL "sprint = N" leaves sub-tasks out (they only inherit
+// the sprint from their parent), so those are fetched by parent. `forUser` maps "assignee = currentUser()" to the viewed user.
+const SPRINT_PARENTS_MAX = 1000;
+
+async function listSprint(id, forUser) {
+  const fields = issueFields();
+  const raw = await searchAll(forUser(`assignee = currentUser() AND sprint = ${id}`), fields);
+  const seen = new Set(raw.map((i) => i.key));
+  const parents = (await searchAll(`sprint = ${id} AND issuetype not in subTaskIssueTypes()`, ['issuetype'], SPRINT_PARENTS_MAX)).map((i) => i.key);
+  for (let n = 0; n < parents.length; n += 50) {
+    const subs = await searchAll(forUser(`assignee = currentUser() AND parent in (${parents.slice(n, n + 50).join(',')})`), fields);
+    for (const s of subs) if (!seen.has(s.key) && sprintsIn(s.fields).some((x) => x.id === id)) (seen.add(s.key), raw.push(s));
+  }
+  const found = raw.flatMap((i) => sprintsIn(i.fields)).find((s) => s.id === id);
+  return { sprint: found ? sprintDto(found) : null, issues: await issueList(raw) };
+}
+
+async function issueList(issues) {
   const byKey = new Map(issues.map((i) => [i.key, i]));
 
   // Sub-tasks rarely carry their own PRD link; inherit the parent's Confluence links.
@@ -359,4 +388,4 @@ async function sprintsOf(keys) {
   return out;
 }
 
-module.exports = { listIssues, listHistory, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary, sprintsOf };
+module.exports = { listIssues, listSprint, listHistory, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary, sprintsOf };

@@ -149,6 +149,41 @@ test('planned leaves out work done before the sprint started, and keeps everythi
   assert.equal(O.planned([before, during, open], null).length, 3);
 });
 
+test('sprintView finds work through every sprint it was in, and reads a closed sprint as it stood when it closed', () => {
+  const closed = { id: 6, name: 'Sprint 6', state: 'closed', startDate: at(-20), endDate: at(-6), completeDate: at(-5) };
+  const doneIn = issue({ sprintIds: [6], category: 'done', resolved: at(-10) });
+  const doneAfter = issue({ sprintIds: [6, 7], sprint, category: 'done', resolved: at(-2) });
+  const before = issue({ sprintIds: [6], category: 'done', resolved: at(-25) });
+  const cancelled = issue({ sprintIds: [6], status: { name: 'Cancelled', category: 'done' }, resolved: at(-10) });
+  const other = issue({ sprintIds: [7], sprint });
+  const view = O.sprintView([doneIn, doneAfter, before, cancelled, other], closed);
+  assert.deepEqual(Array.from(view, (i) => i.key), [doneIn.key, doneAfter.key]);
+  assert.equal(view[1].status.category, 'indeterminate');
+  assert.equal(view[1].carriedOver, true);
+  assert.deepEqual(Array.from(O.lists(view, NOW).carriedOver, (i) => i.key), [doneAfter.key]);
+  // The active sprint keeps the work as it is now.
+  assert.equal(O.sprintView([doneAfter], sprint)[0].status.category, 'done');
+});
+
+test('bugStats counts open, fixed, cancelled and newly reported bugs; bugs are never "not planned"', () => {
+  const bug = (p) => issue({ type: { name: 'Bug' }, sprintIds: [7], sprint, created: at(-1), ...p });
+  const all = [bug({}), bug({ category: 'done', resolved: at(-1) }), bug({ status: { name: 'Cancelled', category: 'done' } }), bug({ created: at(-30) }), issue({ sprintIds: [7], sprint })];
+  const list = O.sprintView(all, sprint);
+  assert.deepEqual({ ...O.bugStats(O.members(all, 7), list, sprint) }, { total: 3, open: 2, fixed: 1, cancelled: 1, reported: 2 });
+  assert.equal(O.lists(list, NOW).unplanned.length, 1);
+});
+
+test('paceStatus says ahead/behind, and never "done" while unestimated work is open', () => {
+  const prog = (p) => ({ unit: 'SP', done: 5, total: 10, unestimated: 0, ...p });
+  assert.deepEqual({ ...O.paceStatus(sprint, { left: 5, behind: 2 }, prog()) }, { tone: 'warn', text: 'Behind plan by 2 SP' });
+  assert.deepEqual({ ...O.paceStatus(sprint, { left: 5, behind: -3.5 }, prog()) }, { tone: 'ok', text: 'Ahead of plan by 3.5 SP' });
+  assert.deepEqual({ ...O.paceStatus(sprint, { left: 0, behind: -3 }, prog({ done: 10, unestimated: 2 })) }, { tone: 'warn', text: 'Estimated work done · 2 open tasks without SP' });
+  assert.equal(O.paceStatus(sprint, { left: 0, behind: -3 }, prog({ done: 10 })).text, 'All planned work is done');
+  assert.equal(O.paceStatus({ ...sprint, state: 'closed' }, { left: 4, behind: 4 }, prog({ done: 6 })).text, 'Closed with 4 SP not done');
+  assert.equal(O.paceStatus({ ...sprint, state: 'closed' }, { left: 0 }, prog({ done: 10, unestimated: 12 })).text, 'Closed with 12 tasks without SP not done');
+  assert.equal(O.paceStatus({ ...sprint, state: 'closed' }, { left: 0 }, prog({ done: 10 })).text, 'Closed, all done');
+});
+
 test('pace compares what is left today with the ideal line', () => {
   const list = [issue({ sprint, storyPoints: 9 }), issue({ sprint, storyPoints: 9 })];
   const p = O.pace(O.burndown(list, sprint, NOW));

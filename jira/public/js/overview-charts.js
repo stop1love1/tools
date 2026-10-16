@@ -19,16 +19,21 @@ function emptyChart(text = 'Nothing to show') {
   return h('div', { class: 'ov-empty muted small' }, text);
 }
 
-// Top strip: sprint name and dates, days left, and one bar split into done / in progress / to do.
-function sprintCard(sprint, p, pace, taskCount) {
+// Top strip: sprint name and dates, days left, one bar split into done / in progress / to do, and the verdict.
+function sprintCard(sprint, p, status, taskCount) {
   const pct = (n) => (p.total ? (n / p.total) * 100 : 0);
   const dates = sprint?.startDate && sprint?.endDate ? `${fmtDay(sprint.startDate.slice(0, 10))} → ${fmtDay(sprint.endDate.slice(0, 10))} · ` : '';
   const legend = (tone, label, n) => h('span', null, h('i', { style: `background:var(--${tone}-dot)` }), `${label} ${fmtNum(n)} ${p.unit}`);
   return h(
     'section',
     { class: 'ov-card ov-sprint', 'aria-label': 'Sprint progress' },
-    h('div', null, h('h2', { class: 'ov-sprint-name' }, sprint ? sprint.name : 'All sprints'), h('div', { class: 'muted small' }, `${dates}${fmtNum(p.total)} ${p.unit} planned · ${taskCount} tasks`)),
-    p.daysLeft != null && h('div', { class: 'ov-days-left' }, h('b', null, p.daysLeft), h('span', { class: 'muted small' }, p.daysLeft === 1 ? 'day left' : 'days left')),
+    h(
+      'div',
+      null,
+      h('h2', { class: 'ov-sprint-name' }, sprint ? sprint.name : 'All sprints', sprint?.state === 'closed' && h('span', { class: 'gchip ov-closed' }, 'Closed')),
+      h('div', { class: 'muted small' }, `${dates}${fmtNum(p.total)} ${p.unit} planned · ${taskCount} tasks`),
+    ),
+    p.daysLeft != null && sprint?.state !== 'closed' && h('div', { class: 'ov-days-left' }, h('b', null, p.daysLeft), h('span', { class: 'muted small' }, p.daysLeft === 1 ? 'day left' : 'days left')),
     h(
       'div',
       { class: 'ov-bar', role: 'img', 'aria-label': `Done ${Math.round(pct(p.done))}%, in progress ${Math.round(pct(p.prog))}%, to do ${Math.round(pct(p.todo))}%` },
@@ -41,8 +46,7 @@ function sprintCard(sprint, p, pace, taskCount) {
       legend('done', 'Done', p.done),
       legend('prog', 'In progress', p.prog),
       legend('new', 'To do', p.todo),
-      p.unestimated > 0 && h('b', { class: 'warn', title: 'Open tasks without story points do not move the SP bar' }, `+${p.unestimated} open ${p.unestimated === 1 ? 'task' : 'tasks'} without SP`),
-      pace &&h('span', { class: 'ov-pace' }, pace.behind > 0 ? h('b', { class: 'warn' }, `Behind plan by ${fmtNum(pace.behind)} ${p.unit}`) : h('b', { class: 'ok' }, 'On track')),
+      status && h('span', { class: 'ov-pace' }, h('b', { class: status.tone, title: p.unestimated ? 'Open tasks without story points do not move the SP bar or the burndown' : null }, status.text)),
     ),
   );
 }
@@ -104,15 +108,15 @@ function burndownChart(b) {
   );
 }
 
-function burndownCard(b, pace) {
-  if (pace && !pace.left) return card('Burndown', `${b.unit} remaining`, [burndownChart(b), h('p', { class: 'ov-note muted small' }, h('b', { class: 'ok' }, 'All planned work is done.'))]);
+function burndownCard(b, pace, status) {
+  if (pace && (!pace.left || pace.perDay == null)) return card('Burndown', `${b.unit} remaining`, [burndownChart(b), status && h('p', { class: 'ov-note muted small' }, h('b', { class: status.tone }, status.text))]);
   const note =
     pace &&
     h(
       'p',
       { class: 'ov-note muted small' },
       `${fmtNum(pace.left)} ${b.unit} left, ideal is ${fmtNum(pace.ideal)}`,
-      pace.perDay != null && [' — ', h('b', { class: pace.behind > 0 ? 'warn' : '' }, `needs ~${fmtNum(pace.perDay)} ${b.unit}/day`), ' to finish on time.'],
+      [' — ', h('b', { class: pace.behind > 0 ? 'warn' : '' }, `needs ~${fmtNum(pace.perDay)} ${b.unit}/day`), ' to finish on time.'],
     );
   return card('Burndown', b ? `${b.unit} remaining` : null, [burndownChart(b), note]);
 }

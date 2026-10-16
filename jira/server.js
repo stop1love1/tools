@@ -120,26 +120,33 @@ async function api(req, res, url) {
   }
 
   // Viewing someone else: the same JQL with currentUser() swapped for their account id.
-  async function forUser(jql) {
+  async function forUserMapper() {
     const user = url.searchParams.get('user') || '';
     if (user === ALL_USERS || user === UNASSIGNED) {
       // Everyone / nobody: swap "assignee = currentUser()" for any assignee / no assignee, limited to the projects I work in.
       const { projects } = await listUsers();
       const scope = projects.length ? `project in (${projects.join(',')}) AND ` : '';
       const who = user === ALL_USERS ? 'assignee is not EMPTY' : 'assignee is EMPTY';
-      return jql.replace(/assignee\s*=\s*currentUser\(\)/gi, `(${scope}${who})`);
+      return (jql) => jql.replace(/assignee\s*=\s*currentUser\(\)/gi, `(${scope}${who})`);
     }
     if (user) {
       if (!/^[A-Za-z0-9:_-]{1,128}$/.test(user)) throw httpError(400, 'Invalid accountId');
-      return jql.replace(/currentUser\(\)/g, `"${user}"`);
+      return (jql) => jql.replace(/currentUser\(\)/g, `"${user}"`);
     }
-    return jql;
+    return (jql) => jql;
   }
+  const forUser = async (jql) => (await forUserMapper())(jql);
 
   if (route === 'GET /api/issues') {
     const defaultJql = config.get().jira.defaultJql;
     const jql = await forUser((url.searchParams.get('jql') || '').trim() || defaultJql);
     return send(res, 200, { jql, defaultJql, site: config.get().jira.siteUrl, issues: await issues.listIssues(jql) });
+  }
+
+  // Overview of one sprint: all of its tasks for the viewed user, whatever the JQL filter keeps.
+  const sprintRoute = url.pathname.match(/^\/api\/sprint\/(\d{1,12})$/);
+  if (sprintRoute && req.method === 'GET') {
+    return send(res, 200, await issues.listSprint(Number(sprintRoute[1]), await forUserMapper()));
   }
 
   // Overview trends: everything created or resolved in the window, plus whatever is still open (the backlog at each point).
