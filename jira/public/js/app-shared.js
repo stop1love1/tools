@@ -66,6 +66,42 @@ function toggleThemePicker() {
   $('#theme-toggle').setAttribute('aria-expanded', String(picker.classList.contains('open')));
 }
 
+// Desktop app only: "Start at login" checkbox in the ⋯ menu. When on, the app starts hidden at login and closing the
+// window leaves the server running in the background (tray icon to reopen / quit).
+function setupAutoStartOption() {
+  const api = window.electron?.autoStart;
+  if (!api) return;
+  const box = h('input', { type: 'checkbox', class: 'theme-check-box' });
+  const row = h(
+    'label',
+    {
+      class: 'theme-option',
+      role: 'menuitemcheckbox',
+      title: 'Start the dashboard in the background when you log in, and keep it running after the window is closed',
+    },
+    h('span', { class: 'theme-icon' }, icon('play')),
+    h('span', { class: 'theme-label' }, 'Launch at startup'),
+    box,
+  );
+  row.addEventListener('click', (e) => e.stopPropagation());
+  const show = (on) => {
+    box.checked = on;
+    row.setAttribute('aria-checked', String(on));
+  };
+  box.addEventListener('change', async () => {
+    const want = box.checked;
+    try {
+      show(await api.set(want));
+      toast(want ? 'Jira Dashboard will launch in the background at startup' : 'Launch at startup disabled');
+    } catch (e) {
+      show(!want);
+      toast(e.message, 'error');
+    }
+  });
+  api.get().then(show, () => {});
+  $('#login').before(row);
+}
+
 function closeThemePicker() {
   const picker = $('#theme-picker');
   if (picker) picker.classList.remove('open');
@@ -305,6 +341,7 @@ async function init() {
   $('#login').append(h('span', { class: 'theme-icon' }, icon('key')), h('span', { class: 'theme-label' }, 'Enable token auto-refresh'));
   $('#login').title = 'Sign in to Atlassian once to give the dashboard its own session, independent of Claude Code tokens';
   $('#settings-btn').append(h('span', { class: 'theme-icon' }, icon('gear')), h('span', { class: 'theme-label' }, 'Settings'));
+  setupAutoStartOption();
   if (window.PAGE === 'settings') $('#settings-btn').setAttribute('aria-current', 'page');
   else {
     $('#settings-btn').addEventListener('click', (e) => {

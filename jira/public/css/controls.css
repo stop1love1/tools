@@ -255,6 +255,17 @@ select,
 a.theme-option {
   text-decoration: none;
 }
+label.theme-option {
+  user-select: none;
+  white-space: nowrap;
+}
+.theme-option .theme-check-box {
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 .menu-label {
   padding: 6px 10px 2px;
   color: var(--muted);

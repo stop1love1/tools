@@ -2,6 +2,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electron', {
   version: process.versions.electron,
+  // Start at login in the background (electron-main.js, setAutoStart).
+  autoStart: {
+    get: () => ipcRenderer.invoke('autostart:get'),
+    set: (on) => ipcRenderer.invoke('autostart:set', on),
+  },
 });
 
 // Linux: the window buttons sit over the right end of the top bar (titleBarOverlay in electron-main.js).

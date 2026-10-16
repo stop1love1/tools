@@ -7,7 +7,7 @@
 // the launcher's icon. Launching `electron electron-main.js` (a bare file) skips package.json and names the
 // app "Electron", so we set it explicitly here as well.
 
-const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, utilityProcess } = require('electron');
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, utilityProcess } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -23,17 +23,16 @@ const SERVER_READY_TIMEOUT_MS = 30_000;
 
 let mainWindow = null;
 let serverProcess = null;
+let tray = null;
+
+// Started at login by the autostart entry (see setAutoStart): run the server only, no window.
+const START_HIDDEN = process.argv.includes('--hidden');
 
 // One instance only: a second launch (desktop icon clicked again) focuses the existing window.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  });
+  app.on('second-instance', () => showWindow());
   app.whenReady().then(init);
 }
 
@@ -51,6 +50,13 @@ ipcMain.on('titlebar-overlay', (e, { color, symbolColor, height } = {}) => {
   if (!OVERLAY || !win || !COLOR_RE.test(color) || !COLOR_RE.test(symbolColor)) return;
   win.setTitleBarOverlay({ color, symbolColor, height: Math.min(Math.max(Math.round(height) || 52, 28), 120) });
 });
+
+function showWindow() {
+  if (!mainWindow) return createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -116,6 +122,73 @@ function flushLastPage() {
     console.error('Could not save the last page:', e.message);
   }
   pendingPage = null;
+}
+
+// ---------------------------------------------------------------------------
+// Background mode: an XDG autostart entry starts the app hidden at login, and closing the window keeps the server
+// running (with a tray icon to reopen or quit) so the dashboard and its MCP server stay up without the window.
+// Electron's setLoginItemSettings does nothing on Linux, hence the .desktop file. The file is the setting itself.
+
+const AUTOSTART_FILE = path.join(process.env.XDG_CONFIG_HOME || path.join(app.getPath('home'), '.config'), 'autostart', `${APP_ID}.desktop`);
+
+const isAutoStart = () => fs.existsSync(AUTOSTART_FILE);
+
+// The command that relaunches this app. The AppImage / deb go through the after-pack.js wrapper (it adds the
+// Wayland and sandbox flags); in dev it is electron + the project folder with the flags of `npm run start:electron`.
+function launchCommand() {
+  const q = (a) => `"${a.replace(/(["`$\\])/g, '\\$1')}"`;
+  if (process.env.APPIMAGE) return q(process.env.APPIMAGE);
+  if (app.isPackaged) {
+    const wrapper = process.execPath.replace(/\.bin$/, '');
+    return q(fs.existsSync(wrapper) ? wrapper : process.execPath);
+  }
+  return [q(process.execPath), q(app.getAppPath()), '--no-sandbox', '--ozone-platform-hint=auto', '--enable-features=WaylandWindowDecorations'].join(' ');
+}
+
+function setAutoStart(on) {
+  if (!on) {
+    fs.rmSync(AUTOSTART_FILE, { force: true });
+  } else {
+    fs.mkdirSync(path.dirname(AUTOSTART_FILE), { recursive: true });
+    fs.writeFileSync(
+      AUTOSTART_FILE,
+      `[Desktop Entry]
+Type=Application
+Name=Jira Dashboard
+Comment=Run the Jira Dashboard server in the background
+Exec=${launchCommand()} --hidden
+Icon=${APP_ID}
+Terminal=false
+X-GNOME-Autostart-enabled=true
+`,
+    );
+  }
+  updateTray();
+  return isAutoStart();
+}
+
+ipcMain.handle('autostart:get', () => isAutoStart());
+ipcMain.handle('autostart:set', (_e, on) => setAutoStart(!!on));
+
+// The tray icon is there while the app may run without a window (background mode on, or started hidden).
+function updateTray() {
+  const want = isAutoStart() || START_HIDDEN;
+  if (!want) {
+    tray?.destroy();
+    tray = null;
+    return;
+  }
+  if (tray) return;
+  tray = new Tray(ICON);
+  tray.setToolTip(`Jira Dashboard — ${BASE_URL}`);
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Jira Dashboard', click: () => showWindow() },
+      { type: 'separator' },
+      { label: 'Quit', click: () => app.quit() },
+    ]),
+  );
+  tray.on('click', () => showWindow());
 }
 
 function ping() {
@@ -185,7 +258,8 @@ async function init() {
   Menu.setApplicationMenu(menu());
   try {
     await startServer();
-    createWindow();
+    updateTray();
+    if (!START_HIDDEN) createWindow();
   } catch (err) {
     console.error('Failed to initialize:', err);
     dialog.showErrorBox('Jira Dashboard', err.message);
@@ -193,7 +267,9 @@ async function init() {
   }
 }
 
+// In background mode the window can be closed while the server keeps running; quit from the tray or Ctrl+Q.
 app.on('window-all-closed', () => {
+  if (quitting || tray) return;
   if (process.platform !== 'darwin') app.quit();
 });
 
