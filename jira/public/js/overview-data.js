@@ -53,14 +53,21 @@ const OverviewData = (() => {
     return [...rows.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
   }
 
+  // Work finished before the sprint began was never part of its plan (a sub-task done last sprint still carries this
+  // one when its Story was carried over): leave it out, or the sprint is credited with the last one's work.
+  function planned(list, sprint) {
+    if (!sprint?.startDate) return list;
+    const start = startOf(new Date(sprint.startDate));
+    return list.filter((i) => !(isDone(i) && daysBetween(start, startOf(doneAt(i))) < 0));
+  }
+
   function burndown(all, sprint, now) {
     if (!sprint?.startDate || !sprint?.endDate) return null;
     const start = startOf(new Date(sprint.startDate));
     const end = startOf(new Date(sprint.endDate));
     const length = daysBetween(start, end);
     if (length < 1) return null;
-    // Work finished before the sprint began was never part of its plan: leave it out so the lines start together.
-    const list = all.filter((i) => !(isDone(i) && daysBetween(start, startOf(doneAt(i))) < 0));
+    const list = planned(all, sprint);
     const useSP = sumSP(list) > 0;
     const weight = (i) => (useSP ? sp(i) : 1);
     const total = list.reduce((sum, i) => sum + weight(i), 0);
@@ -88,6 +95,8 @@ const OverviewData = (() => {
       todo: sum('new'),
       total: list.reduce((n, i) => n + weight(i), 0),
       daysLeft: end ? Math.max(0, daysBetween(now, end)) : null,
+      // Open work that weighs nothing in SP: the bar can read 100% while these are still left.
+      unestimated: useSP ? list.filter((i) => isOpen(i) && !sp(i)).length : 0,
     };
   }
 
@@ -243,5 +252,5 @@ const OverviewData = (() => {
     return tips.sort((a, b) => order[a.level] - order[b.level]);
   }
 
-  return { scope, pickSprint, kpis, byEpic, burndown, progress, pace, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
+  return { scope, planned, pickSprint, kpis, byEpic, burndown, progress, pace, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
 })();

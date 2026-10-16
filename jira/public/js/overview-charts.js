@@ -41,7 +41,8 @@ function sprintCard(sprint, p, pace, taskCount) {
       legend('done', 'Done', p.done),
       legend('prog', 'In progress', p.prog),
       legend('new', 'To do', p.todo),
-      pace && h('span', { class: 'ov-pace' }, pace.behind > 0 ? h('b', { class: 'warn' }, `Behind plan by ${fmtNum(pace.behind)} ${p.unit}`) : h('b', { class: 'ok' }, 'On track')),
+      p.unestimated > 0 && h('b', { class: 'warn', title: 'Open tasks without story points do not move the SP bar' }, `+${p.unestimated} open ${p.unestimated === 1 ? 'task' : 'tasks'} without SP`),
+      pace &&h('span', { class: 'ov-pace' }, pace.behind > 0 ? h('b', { class: 'warn' }, `Behind plan by ${fmtNum(pace.behind)} ${p.unit}`) : h('b', { class: 'ok' }, 'On track')),
     ),
   );
 }

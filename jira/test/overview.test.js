@@ -128,9 +128,25 @@ test('lists put each open task in one group: overdue, due soon, then idle', () =
 test('progress splits the work by status category and counts the days left', () => {
   const list = [issue({ storyPoints: 3 }), issue({ category: 'indeterminate', storyPoints: 2 }), issue({ category: 'done', storyPoints: 5 })];
   const p = O.progress(list, sprint, NOW);
-  assert.deepEqual({ ...p }, { unit: 'SP', done: 5, prog: 2, todo: 3, total: 10, daysLeft: 5 });
+  assert.deepEqual({ ...p }, { unit: 'SP', done: 5, prog: 2, todo: 3, total: 10, daysLeft: 5, unestimated: 0 });
   assert.equal(O.progress([issue(), issue()], null, NOW).unit, 'tasks');
   assert.equal(O.progress([issue()], null, NOW).daysLeft, null);
+});
+
+test('progress counts the open tasks that weigh nothing in SP', () => {
+  const list = [issue({ category: 'done', storyPoints: 5 }), issue({ category: 'indeterminate' }), issue({ category: 'done' })];
+  const p = O.progress(list, sprint, NOW);
+  assert.equal(p.done, p.total);
+  assert.equal(p.unestimated, 1);
+  assert.equal(O.progress([issue(), issue()], null, NOW).unestimated, 0);
+});
+
+test('planned leaves out work done before the sprint started, and keeps everything without a sprint', () => {
+  const before = issue({ sprint, storyPoints: 3, category: 'done', resolved: at(-10) });
+  const during = issue({ sprint, storyPoints: 2, category: 'done', resolved: at(-1) });
+  const open = issue({ sprint, storyPoints: 1 });
+  assert.deepEqual(Array.from(O.planned([before, during, open], sprint), (i) => i.key), [during.key, open.key]);
+  assert.equal(O.planned([before, during, open], null).length, 3);
 });
 
 test('pace compares what is left today with the ideal line', () => {

@@ -133,10 +133,10 @@ function buildTrends(list, now) {
 function buildOverview() {
   const O = OverviewData;
   const now = new Date();
-  const list = O.scope(state.issues, state.sprint);
   // "All sprints" means all of them: no sprint strip for the active one, no burndown.
   const sprint = state.sprint ? O.pickSprint(state.issues, state.sprint) : null;
-  const sprintTasks = sprint ? O.scope(state.issues, sprint.id) : list;
+  const list = O.planned(O.scope(state.issues, state.sprint), sprint);
+  const sprintTasks = sprint ? O.planned(O.scope(state.issues, sprint.id), sprint) : list;
   const k = O.kpis(list, now);
   const lists = O.lists(list, now);
   const burn = O.burndown(sprintTasks, sprint, now);
