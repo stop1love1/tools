@@ -12,7 +12,7 @@ const vm = require('node:vm');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 
 function load(state = { issues: [], type: 'all', q: '', sprint: null }) {
-  const ctx = vm.createContext({ h: () => ({}), recentlyTransitioned: new Map(), HOLD_MS: 6000, HOLD_PENDING_MS: 30000, state, Intl, Date, URL });
+  const ctx = vm.createContext({ h: () => ({}), recentlyTransitioned: new Map(), HOLD_MS: 6000, HOLD_PENDING_MS: 30000, NO_SPRINT: -1, state, Intl, Date, URL });
   vm.runInContext(read('format.js'), ctx);
   vm.runInContext(read('progress.js'), ctx);
   return {

@@ -120,7 +120,7 @@ function renderDocs(list) {
 
   // One line saying whose tasks and which filters the lists below reflect, with a way out of the filters.
   // The user filter is left out of "Clear": it reloads the data, and it lives in the header.
-  const sprintName = state.sprint ? state.issues.flatMap(sprintsOf).find((s) => s.id === state.sprint)?.name || `Sprint ${state.sprint}` : null;
+  const sprintName = state.sprint === NO_SPRINT ? 'No sprint' : state.sprint ? state.issues.flatMap(sprintsOf).find((s) => s.id === state.sprint)?.name || `Sprint ${state.sprint}` : null;
   const active = [
     q && `Search: “${state.docsQ.trim()}”`,
     state.docsKind !== 'all' && (state.docsKind === 'pages' ? 'Confluence only' : 'Attachments only'),

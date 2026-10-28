@@ -74,7 +74,9 @@ function renderFocus() {
 function renderStats() {
   const all = countedBySprint(); // real statuses, so the pills follow a transition at once
   if (!all.length) return $('#stats').replaceChildren();
+  // A pill with nothing behind it is hidden, unless it is the filter in use (so it can still be turned off).
   const pill = (label, value, toneName, pressed, onClick) =>
+    (value || pressed) &&
     h(
       'button',
       { class: `pill ${toneName ? 'tone-' + toneName : ''} ${toneName === 'hot' && value ? 'hot' : ''}`, 'aria-pressed': String(pressed), onClick },
@@ -82,7 +84,7 @@ function renderStats() {
       label,
       h('b', null, value),
     );
-  $('#stats').replaceChildren(
+  const pills = [
     pill('All', all.length, null, !state.status && !state.urgentOnly, () => {
       state.status = null;
       state.urgentOnly = false;
@@ -97,7 +99,8 @@ function renderStats() {
     ...statusList(all).map((s) =>
       pill(s.name, all.filter((i) => i.status.name === s.name).length, tone(s), state.status === s.name, () => toggleStatus(s.name)),
     ),
-  );
+  ];
+  $('#stats').replaceChildren(...pills.filter(Boolean));
 }
 
 function keyLink(i) {

@@ -13,6 +13,9 @@ function renderPresets() {
 
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
+// state.sprint for the tasks in no sprint (Jira sprint ids are positive).
+const NO_SPRINT = -1;
+
 const initParams = new URLSearchParams(location.search);
 
 if (window.PAGE !== 'settings' && initParams.get('view') === 'settings') {
@@ -63,7 +66,8 @@ const issuesQuery = () => JSON.stringify([state.jql, state.user]);
 const ISSUES_CACHE = 'jd:issues';
 function saveIssues() {
   try {
-    const { issues, defaultJql, usedJql, fetchedAt, loadedFor } = state;
+    const { defaultJql, usedJql, fetchedAt, loadedFor } = state;
+    const issues = state.issues.filter((i) => !i.onlySprint);
     localStorage.setItem(ISSUES_CACHE, JSON.stringify({ issues, defaultJql, usedJql, fetchedAt, loadedFor }));
   } catch {
   }
@@ -119,6 +123,27 @@ async function loadIssues({ silent = false } = {}) {
     else (state.error = e.message), (state.errorLogin = e.login);
   } finally {
     state.loading = false;
+  }
+}
+
+// The default JQL keeps only recent work, so a chosen sprint misses its tasks finished more than two weeks ago.
+// Add them from /api/sprint, tagged `onlySprint` so they show under that sprint only (progress.js isSprintTask).
+// A custom JQL is left as it is: its filter is what was asked for.
+async function loadSprintTasks() {
+  const id = state.sprint;
+  const query = issuesQuery();
+  if (!id || id === NO_SPRINT || state.jql || state.loadedFor !== query || state.issues.some((i) => i.onlySprint === id)) return;
+  const params = new URLSearchParams();
+  if (state.user) params.set('user', state.user);
+  try {
+    const data = await api(`/api/sprint/${id}${params.size ? '?' + params : ''}`);
+    if (id !== state.sprint || query !== state.loadedFor) return; // the sprint, user or filter changed meanwhile
+    if (data.sprint) state.extraSprints = [data.sprint];
+    const have = new Set(state.issues.map((i) => i.key));
+    const extra = data.issues.filter((i) => !have.has(i.key)).map((i) => ({ ...i, onlySprint: id }));
+    state.issues = [...state.issues.filter((i) => !i.onlySprint), ...extra];
+  } catch (e) {
+    toast(`Failed to load the sprint's older tasks: ${e.message}`, 'error');
   }
 }
 

@@ -13,7 +13,7 @@ const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f
 
 function load() {
   const state = { issues: [], type: 'all', q: '', sprint: null };
-  const ctx = vm.createContext({ h: () => ({}), recentlyTransitioned: new Map(), HOLD_MS: 6000, HOLD_PENDING_MS: 30000, state, Intl, Date, URL });
+  const ctx = vm.createContext({ h: () => ({}), recentlyTransitioned: new Map(), HOLD_MS: 6000, HOLD_PENDING_MS: 30000, NO_SPRINT: -1, state, Intl, Date, URL });
   for (const f of ['format.js', 'progress.js', 'overview-data.js']) vm.runInContext(read(f), ctx);
   return vm.runInContext('OverviewData', ctx);
 }
@@ -48,15 +48,21 @@ const issue = (patch = {}) => {
 };
 const sprint = { id: 7, name: 'Sprint 7', state: 'active', startDate: at(-4), endDate: at(5) };
 
-test('scope drops Epics and cancelled tasks, and keeps only the chosen sprint', () => {
+test('scope drops Epics, keeps cancelled tasks (Jira counts them as done) and only the chosen sprint', () => {
   const list = [
     issue({ sprint }),
     issue({ type: { name: 'Epic' }, sprint }),
     issue({ category: 'done', status: { name: 'Cancelled', category: 'done' }, sprint }),
     issue({ sprint: { ...sprint, id: 8 } }),
   ];
-  assert.equal(O.scope(list, null).length, 2);
-  assert.equal(O.scope(list, 7).length, 1);
+  assert.equal(O.scope(list, null).length, 3);
+  assert.equal(O.scope(list, 7).length, 2);
+});
+
+test('scope with NO_SPRINT keeps only the tasks that were never in a sprint', () => {
+  const none = issue();
+  const list = [none, issue({ sprint }), issue({ sprintIds: [6] })];
+  assert.deepEqual(Array.from(O.scope(list, -1), (i) => i.key), [none.key]);
 });
 
 test('kpis count overdue, due soon, story points and what finished this week', () => {
@@ -100,10 +106,11 @@ test('burndown starts at the full total and ends at the planned scope; actual st
   assert.equal(b.points[b.today + 1].actual, null);
 });
 
-test('burndown leaves out work that was already done before the sprint started', () => {
+test('burndown counts work done before the sprint started in its total, burned from day 0', () => {
   const list = [issue({ sprint, storyPoints: 5 }), issue({ sprint, storyPoints: 3, category: 'done', resolved: at(-10) })];
   const b = O.burndown(list, sprint, NOW);
-  assert.equal(b.total, 5);
+  assert.equal(b.total, 8);
+  assert.equal(b.points[0].ideal, 5);
   assert.equal(b.points[0].actual, 5);
 });
 
@@ -141,23 +148,17 @@ test('progress counts the open tasks that weigh nothing in SP', () => {
   assert.equal(O.progress([issue(), issue()], null, NOW).unestimated, 0);
 });
 
-test('planned leaves out work done before the sprint started, and keeps everything without a sprint', () => {
-  const before = issue({ sprint, storyPoints: 3, category: 'done', resolved: at(-10) });
-  const during = issue({ sprint, storyPoints: 2, category: 'done', resolved: at(-1) });
-  const open = issue({ sprint, storyPoints: 1 });
-  assert.deepEqual(Array.from(O.planned([before, during, open], sprint), (i) => i.key), [during.key, open.key]);
-  assert.equal(O.planned([before, during, open], null).length, 3);
-});
-
 test('sprintView finds work through every sprint it was in, and reads a closed sprint as it stood when it closed', () => {
   const closed = { id: 6, name: 'Sprint 6', state: 'closed', startDate: at(-20), endDate: at(-6), completeDate: at(-5) };
   const doneIn = issue({ sprintIds: [6], category: 'done', resolved: at(-10) });
   const doneAfter = issue({ sprintIds: [6, 7], sprint, category: 'done', resolved: at(-2) });
+  // Done before the sprint began but still in it on Jira: counted, as the Jira sprint board does.
   const before = issue({ sprintIds: [6], category: 'done', resolved: at(-25) });
   const cancelled = issue({ sprintIds: [6], status: { name: 'Cancelled', category: 'done' }, resolved: at(-10) });
   const other = issue({ sprintIds: [7], sprint });
   const view = O.sprintView([doneIn, doneAfter, before, cancelled, other], closed);
-  assert.deepEqual(Array.from(view, (i) => i.key), [doneIn.key, doneAfter.key]);
+  // Cancelled work stays too: the Jira sprint board counts it in its Done column.
+  assert.deepEqual(Array.from(view, (i) => i.key), [doneIn.key, doneAfter.key, before.key, cancelled.key]);
   assert.equal(view[1].status.category, 'indeterminate');
   assert.equal(view[1].carriedOver, true);
   assert.deepEqual(Array.from(O.lists(view, NOW).carriedOver, (i) => i.key), [doneAfter.key]);

@@ -22,7 +22,7 @@ function openIssueChip(key) {
 }
 
 const sprintState = { key: null, data: null, error: null };
-const sprintKey = () => (state.sprint ? `${state.sprint}|${state.user || ''}` : null);
+const sprintKey = () => (state.sprint && state.sprint !== NO_SPRINT ? `${state.sprint}|${state.user || ''}` : null);
 
 async function loadSprint() {
   const key = sprintKey();
@@ -154,12 +154,14 @@ function buildTrends(list, now) {
 function buildOverview() {
   const O = OverviewData;
   const now = new Date();
-  const fetched = state.sprint && sprintState.key === sprintKey() ? sprintState.data : null;
-  // "All sprints" means all of them: no sprint strip for the active one, no burndown.
-  const sprint = state.sprint ? fetched?.sprint || O.pickSprint(state.issues, state.sprint) : null;
+  const fetched = sprintKey() && sprintState.key === sprintKey() ? sprintState.data : null;
+  // "All sprints" means all of them: no sprint strip for the active one, no burndown. "No sprint" is read the same way,
+  // over the tasks in none.
+  const noSprint = state.sprint === NO_SPRINT ? NO_SPRINT : null;
+  const sprint = state.sprint && !noSprint ? fetched?.sprint || O.pickSprint(state.issues, state.sprint) : null;
   const source = fetched?.issues || state.issues;
-  const all = sprint ? O.members(source, sprint.id) : source.filter((i) => !isEpicType(i));
-  const list = sprint ? O.sprintView(source, sprint) : O.scope(source, null);
+  const all = sprint ? O.members(source, sprint.id) : source.filter((i) => !isEpicType(i) && isSprintTask(i, noSprint));
+  const list = sprint ? O.sprintView(source, sprint) : O.scope(source, noSprint);
   const closed = sprint?.state === 'closed';
   const k = O.kpis(list, now);
   const lists = O.lists(list, now);
@@ -172,7 +174,7 @@ function buildOverview() {
 
   // Where the numbers come from while the full sprint is loading, or when it could not be loaded.
   const note =
-    state.sprint &&
+    sprintKey() &&
     !fetched &&
     h('p', { class: 'ov-source muted small' }, sprintState.error && sprintState.key === sprintKey() ? `Could not load the whole sprint (${sprintState.error}): numbers below are from the task list only.` : [h('span', { class: 'spin' }, icon('refresh')), 'Loading every task of this sprint…']);
 

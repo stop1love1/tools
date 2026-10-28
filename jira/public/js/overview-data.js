@@ -12,13 +12,16 @@ const OverviewData = (() => {
   const sp = (i) => i.storyPoints || 0;
   const sumSP = (list) => list.reduce((sum, i) => sum + sp(i), 0);
   const isOpen = (i) => i.status.category !== 'done';
+  // Delivered work (bug fixes, trends) leaves cancelled tasks out; the sprint numbers count them as closed, as the
+  // Done column of the Jira sprint board does.
   const isDone = (i) => i.status.category === 'done' && !isCancelled(i);
+  const isClosed = (i) => i.status.category === 'done';
   const doneAt = (i) => new Date(i.resolved || i.updated);
   const dueIn = (i, now) => (i.due ? daysBetween(now, new Date(i.due + 'T00:00:00')) : null);
   const idleDays = (i, now) => daysBetween(new Date(i.updated), now);
 
-  // Tasks the numbers are about: no Epics (only group headers), no cancelled ones, only the chosen sprint.
-  const scope = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && !isCancelled(i) && isSprintTask(i, sprintId));
+  // Tasks the numbers are about: no Epics (only group headers), only the chosen sprint.
+  const scope = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && isSprintTask(i, sprintId));
 
   // Every sprint an issue has been in (issues cached before sprintIds existed only know their current one).
   const sprintIdsOf = (i) => i.sprintIds || (i.sprint ? [i.sprint.id] : []);
@@ -27,18 +30,19 @@ const OverviewData = (() => {
   // Everything that was ever in the sprint, cancelled work included (the bug card counts it).
   const members = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && sprintIdsOf(i).includes(Number(sprintId)));
 
-  // The tasks one sprint is about, from /api/sprint. A closed sprint is read as it stood when it closed: work
-  // finished later was carried over, so it counts as not done there.
+  // The tasks one sprint is about, from /api/sprint: everything Jira has in it, as its sprint board counts them (work
+  // done before the sprint began and cancelled work included). A closed sprint is read as it stood when it closed:
+  // work finished later was carried over, so it counts as not done there.
   function sprintView(issues, sprint) {
-    const list = planned(members(issues, sprint.id).filter((i) => !isCancelled(i)), sprint);
+    const list = members(issues, sprint.id);
     const closedAt = sprint.state === 'closed' && (sprint.completeDate || sprint.endDate);
     if (!closedAt) return list;
-    return list.map((i) => (isDone(i) && doneAt(i) > new Date(closedAt) ? { ...i, status: { ...i.status, category: 'indeterminate' }, carriedOver: true } : i));
+    return list.map((i) => (isClosed(i) && doneAt(i) > new Date(closedAt) ? { ...i, status: { ...i.status, category: 'indeterminate' }, carriedOver: true } : i));
   }
 
   // Bugs of the sprint on their own: they carry no story points, so the SP numbers never show them.
   function bugStats(all, list, sprint) {
-    const bugs = list.filter(isBug);
+    const bugs = list.filter((i) => isBug(i) && !isCancelled(i)); // cancelled ones have their own count
     const start = sprint?.startDate ? new Date(sprint.startDate) : null;
     return {
       total: bugs.length,
@@ -56,7 +60,7 @@ const OverviewData = (() => {
 
   function kpis(list, now) {
     const open = list.filter(isOpen);
-    const done = list.filter(isDone);
+    const done = list.filter(isClosed);
     const due = open.filter((i) => dueIn(i, now) !== null);
     return {
       total: list.length,
@@ -76,18 +80,10 @@ const OverviewData = (() => {
       const r = rows.get(i.epic.key) || { key: i.epic.key, name: i.epic.summary, total: 0, done: 0, spTotal: 0, spDone: 0 };
       r.total++;
       r.spTotal += sp(i);
-      if (isDone(i)) (r.done++, (r.spDone += sp(i)));
+      if (isClosed(i)) (r.done++, (r.spDone += sp(i)));
       rows.set(i.epic.key, r);
     }
     return [...rows.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
-  }
-
-  // Work finished before the sprint began was never part of its plan (a sub-task done last sprint still carries this
-  // one when its Story was carried over): leave it out, or the sprint is credited with the last one's work.
-  function planned(list, sprint) {
-    if (!sprint?.startDate) return list;
-    const start = startOf(new Date(sprint.startDate));
-    return list.filter((i) => !(isDone(i) && daysBetween(start, startOf(doneAt(i))) < 0));
   }
 
   function burndown(all, sprint, now) {
@@ -96,17 +92,19 @@ const OverviewData = (() => {
     const end = startOf(new Date(sprint.endDate));
     const length = daysBetween(start, end);
     if (length < 1) return null;
-    const list = planned(all, sprint);
-    const useSP = sumSP(list) > 0;
+    const useSP = sumSP(all) > 0;
     const weight = (i) => (useSP ? sp(i) : 1);
-    const total = list.reduce((sum, i) => sum + weight(i), 0);
-    const done = list.filter(isDone);
+    const total = all.reduce((sum, i) => sum + weight(i), 0);
+    const done = all.filter(isClosed);
+    const burnedBy = (day) => done.filter((i) => daysBetween(startOf(doneAt(i)), day) >= 0).reduce((sum, i) => sum + weight(i), 0);
+    // Same total as the numbers above it; work already done when the sprint began (carried in with its parent) is
+    // burned from day 0, so the ideal line starts from what was left then.
+    const atStart = total - burnedBy(start);
     const today = Math.min(daysBetween(start, now), length);
     const points = [];
     for (let d = 0; d <= length; d++) {
       const day = addDays(start, d);
-      const burned = done.filter((i) => daysBetween(startOf(doneAt(i)), day) >= 0).reduce((sum, i) => sum + weight(i), 0);
-      points.push({ date: isoDay(day), ideal: total * (1 - d / length), actual: d <= today ? Math.max(0, total - burned) : null });
+      points.push({ date: isoDay(day), ideal: atStart * (1 - d / length), actual: d <= today ? Math.max(0, total - burnedBy(day)) : null });
     }
     return { unit: useSP ? 'SP' : 'tasks', total, length, today, points };
   }
@@ -115,7 +113,7 @@ const OverviewData = (() => {
   function progress(list, sprint, now) {
     const useSP = sumSP(list) > 0;
     const weight = (i) => (useSP ? sp(i) : 1);
-    const sum = (cat) => list.filter((i) => i.status.category === cat && (cat !== 'done' || isDone(i))).reduce((n, i) => n + weight(i), 0);
+    const sum = (cat) => list.filter((i) => i.status.category === cat).reduce((n, i) => n + weight(i), 0);
     const end = sprint?.endDate ? startOf(new Date(sprint.endDate)) : null;
     return {
       unit: useSP ? 'SP' : 'tasks',
@@ -299,5 +297,5 @@ const OverviewData = (() => {
     return tips.sort((a, b) => order[a.level] - order[b.level]);
   }
 
-  return { scope, planned, members, sprintView, bugStats, pickSprint, kpis, byEpic, burndown, progress, pace, paceStatus, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
+  return { scope, members, sprintView, bugStats, pickSprint, kpis, byEpic, burndown, progress, pace, paceStatus, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, isClosed, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
 })();

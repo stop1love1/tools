@@ -17,7 +17,7 @@ function load(opts = {}) {
   $('#refresh').classList.add('spin');
   $('#refresh').disabled = true;
   if (!opts.silent) render();
-  return loadIssues(opts).finally(() => {
+  return loadIssues(opts).then(loadSprintTasks).finally(() => {
     $('#refresh').classList.remove('spin');
     $('#refresh').disabled = false;
     render();
@@ -82,7 +82,10 @@ window.onUserFilterChange = () => {
   state.urgentOnly = false;
   load();
 };
-window.onSprintFilterChange = () => render();
+window.onSprintFilterChange = () => {
+  render();
+  loadSprintTasks().then(render);
+};
 
 window.onShortcutR = (opts) => load(opts);
 window.onShortcutExtra = (e, typing) => {

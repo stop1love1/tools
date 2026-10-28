@@ -227,13 +227,15 @@ async function loadUsers() {
 function renderSprints() {
   const sprints = new Map();
   const counts = new Map();
-  for (const i of state.issues) {
-    for (const sp of sprintsOf(i)) sprints.set(sp.id, sp);
-    if (i.sprint) counts.set(i.sprint.id, (counts.get(i.sprint.id) || 0) + 1);
-  }
+  for (const i of state.issues) for (const sp of sprintsOf(i)) sprints.set(sp.id, sp);
   for (const sp of state.extraSprints || []) if (!sprints.has(sp.id)) sprints.set(sp.id, sp);
   const select = $('#sprint-filter');
   state.sprintMap = sprints;
+  // The same tasks the list shows under each sprint (isSprintTask needs sprintMap for the start dates).
+  for (const sp of sprints.values()) {
+    const n = state.issues.filter((i) => !/epic/i.test(i.type?.name || '') && isSprintTask(i, sp.id)).length;
+    if (n) counts.set(sp.id, n);
+  }
   if (sprints.size === 0) {
     select.hidden = true;
     renderSprintLeft();
@@ -244,8 +246,10 @@ function renderSprints() {
     if (a.state !== 'active' && b.state === 'active') return 1;
     return b.name.localeCompare(a.name);
   });
+  const noSprint = state.issues.filter((i) => !/epic/i.test(i.type?.name || '') && isSprintTask(i, NO_SPRINT)).length;
   select.replaceChildren(
     h('option', { value: '', selected: !state.sprint }, 'All sprints'),
+    h('option', { value: String(NO_SPRINT), selected: state.sprint === NO_SPRINT }, `No sprint (${noSprint})`),
     ...sorted.map((s) => 
       h('option', { value: s.id, selected: state.sprint === s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''}${counts.has(s.id) ? ` (${counts.get(s.id)})` : ''}`)
     ),

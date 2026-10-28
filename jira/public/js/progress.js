@@ -31,10 +31,18 @@ function countedBySprint() {
 
 // An issue's own sprint plus, for an Epic (never in a sprint itself), the sprints its children are in.
 const sprintsOf = (i) => [i.sprint, ...(i.childSprints || [])].filter(Boolean);
-const inSprint = (i, id) => !id || sprintsOf(i).some((s) => s.id === Number(id));
-// A task of the sprint: its own sprint only. An Epic that is there only through its children is no task of it
-// (no row, no count); the list still shows it as the header of those children (list.js renderList).
-const isSprintTask = (i, id) => !id || i.sprint?.id === Number(id);
+const inSprint = (i, id) => !id || (Number(id) === NO_SPRINT ? !sprintsOf(i).length : sprintsOf(i).some((s) => s.id === Number(id)));
+// A task of the sprint: any sprint Jira has it in, as the Jira sprint board counts it (i.sprint is only the latest,
+// so work carried over would vanish from the sprint it started in). NO_SPRINT keeps the tasks in none. An Epic that
+// is there only through its children is no task of it (no row, no count); the list still shows it as the header of
+// those children (list.js renderList). Tasks added for one sprint only (loadSprintTasks) show under that sprint and
+// nowhere else.
+function isSprintTask(i, id) {
+  if (i.onlySprint && i.onlySprint !== Number(id)) return false;
+  if (!id) return true;
+  const ids = i.sprintIds || (i.sprint ? [i.sprint.id] : []);
+  return Number(id) === NO_SPRINT ? !ids.length : ids.includes(Number(id));
+}
 
 // A row whose status just changed (heldMove) stays under the filter it was in, so it does not vanish at once.
 function filtered() {
@@ -52,11 +60,12 @@ function renderProgress() {
   const base = countedBySprint(); // real statuses: progress must move the moment a task does (the list alone holds the row)
   if (state.error || !state.fetchedAt || !base.length) return el.replaceChildren();
   const sumSP = (list) => list.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+  // Cancelled work counts as done, as in the Done column of the Jira sprint board (and the Overview numbers).
   const cancelled = base.filter(isCancelled);
-  const done = base.filter((i) => i.status.category === 'done' && !isCancelled(i));
-  const counted = base.length - cancelled.length;
+  const done = base.filter((i) => i.status.category === 'done');
+  const counted = base.length;
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
-  const countedSP = sumSP(base) - sumSP(cancelled);
+  const countedSP = sumSP(base);
   const doneSP = sumSP(done);
 
   // Cancelled-like statuses last, so the done segments sit together.
@@ -77,7 +86,7 @@ function renderProgress() {
     h('div', { class: 'track', role: 'group', 'aria-label': 'Tasks by status' }, segs),
     h(
       'span',
-      { class: 'progress-sum', title: cancelled.length ? `${cancelled.length} cancelled task(s) not counted` : null },
+      { class: 'progress-sum', title: cancelled.length ? `Done includes ${cancelled.length} cancelled task(s), as on Jira` : null },
       h('b', null, `${done.length}/${counted}`),
       ' done ',
       h('span', { class: 'pct' }, `${pct(done.length, counted)}%`),

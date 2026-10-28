@@ -15,7 +15,9 @@ const STATUS_ORDER = { ready: 0, held: 1, open: 2 };
 function cleanupSection() {
   const issueByKey = new Map(state.issues.map((i) => [i.key, i]));
   const sprintOfTicket = (t) => gitState.branchSprints[t] ?? issueByKey.get(t)?.sprint ?? null;
-  const inSprint = (b, id = state.sprint) => b.tickets.some((t) => sprintOfTicket(t)?.id === id);
+  // NO_SPRINT: branches whose tickets are all in no sprint.
+  const inSprint = (b, id = state.sprint) =>
+    id === NO_SPRINT ? b.tickets.length > 0 && b.tickets.every((t) => !sprintOfTicket(t)) : b.tickets.some((t) => sprintOfTicket(t)?.id === id);
   const candidates = (repo) => (gitState.branches[repo]?.branches || []).filter((b) => !isMainBranch(b.name));
 
   const sprints = new Map();
@@ -23,6 +25,12 @@ function cleanupSection() {
   for (const s of Object.values(gitState.branchSprints)) if (s) sprints.set(s.id, s);
   const perRepo = (id) => gitRepos().map((r) => [r, candidates(r).filter((b) => inSprint(b, id)).length]);
   const sprintList = [...sprints.values()].sort((a, b) => (b.state === 'active') - (a.state === 'active') || b.name.localeCompare(a.name));
+  const option = (id, name) => {
+    const counts = perRepo(id);
+    const total = counts.reduce((n, [, c]) => n + c, 0);
+    const text = total ? counts.map(([r, c]) => `${repoLabel(r)} ${c}`).join(' · ') : 'no branches';
+    return h('option', { value: String(id), selected: state.sprint === id, disabled: !total && state.sprint !== id }, `${name} — ${text}`);
+  };
 
   const sprintSelect =
     sprintList.length > 0 &&
@@ -38,16 +46,12 @@ function cleanupSection() {
         },
       },
       h('option', { value: '' }, 'All sprints'),
-      sprintList.map((s) => {
-        const counts = perRepo(s.id);
-        const total = counts.reduce((n, [, c]) => n + c, 0);
-        const text = total ? counts.map(([r, c]) => `${repoLabel(r)} ${c}`).join(' · ') : 'no branches';
-        return h('option', { value: s.id, selected: state.sprint === s.id, disabled: !total && state.sprint !== s.id }, `${s.name} (${s.state}) — ${text}`);
-      }),
+      option(NO_SPRINT, 'No sprint'),
+      sprintList.map((s) => option(s.id, `${s.name} (${s.state})`)),
     );
 
   const cards = gitRepos().map((repo) => cleanupCard(repo, candidates(repo), inSprint));
-  const sprint = sprints.get(state.sprint);
+  const sprint = state.sprint === NO_SPRINT ? { name: 'No sprint' } : sprints.get(state.sprint);
 
   return h(
     'section',
