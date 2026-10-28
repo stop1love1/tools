@@ -17,7 +17,7 @@ function load(opts = {}) {
   $('#refresh').classList.add('spin');
   $('#refresh').disabled = true;
   if (!opts.silent) render();
-  return loadIssues(opts).then(loadSprintTasks).finally(() => {
+  return loadIssues(opts).then(() => loadSprintTasks({ fresh: opts.fresh })).finally(() => {
     $('#refresh').classList.remove('spin');
     $('#refresh').disabled = false;
     render();
@@ -87,7 +87,8 @@ window.onSprintFilterChange = () => {
   loadSprintTasks().then(render);
 };
 
-window.onShortcutR = (opts) => load(opts);
+// No opts: the refresh button or "r", which also skips the server's sprint cache.
+window.onShortcutR = (opts) => load(opts || { fresh: true });
 window.onShortcutExtra = (e, typing) => {
   if (!typing && /^[1-9]$/.test(e.key)) {
     const p = presets()[Number(e.key) - 1];

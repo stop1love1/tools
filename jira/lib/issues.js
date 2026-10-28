@@ -31,10 +31,11 @@ function sprintsIn(f) {
 
 const sprintDto = (s) => ({ id: s.id, name: s.name, state: s.state, startDate: s.startDate || null, endDate: s.endDate || null, completeDate: s.completeDate || null });
 
-// An issue's sprint: the active one if it was carried over several, else the latest.
+// An issue's sprint: the last one it was moved to, by start date (Jira lists them in no set order); a future sprint
+// (not started yet) is later than any. Same rule as the client's homeSprintId (public/js/progress.js).
 function sprintOf(f) {
-  const sprints = sprintsIn(f);
-  const s = sprints.find((x) => x.state === 'active') || sprints[sprints.length - 1] || null;
+  const start = (s) => (s.startDate ? Date.parse(s.startDate) : Infinity);
+  const s = sprintsIn(f).reduce((a, b) => (!a || start(b) >= start(a) ? b : a), null);
   return s ? sprintDto(s) : null;
 }
 
@@ -133,7 +134,27 @@ async function listIssues(jql) {
 // the sprint from their parent), so those are fetched by parent. `forUser` maps "assignee = currentUser()" to the viewed user.
 const SPRINT_PARENTS_MAX = 1000;
 
-async function listSprint(id, forUser) {
+// One sprint costs a dozen searches, and the pages ask for every sprint they list on each load and auto-refresh:
+// keep the answer a while (a closed sprint barely changes) and share a call in flight. Longer than the 5-minute
+// auto-refresh, or each one would miss; the open and recent work comes fresh from the task list anyway. A transition
+// or a refresh by hand (`fresh`) skips it.
+const SPRINT_TTL = { active: 15 * 60_000, closed: 60 * 60_000 };
+const sprintCache = new Map(); // `${id}|${viewed user}` → { at, ttl, promise }
+
+function listSprint(id, forUser, { fresh = false } = {}) {
+  const key = `${id}|${forUser('assignee = currentUser()')}`;
+  const hit = sprintCache.get(key);
+  if (!fresh && hit && Date.now() - hit.at < hit.ttl) return hit.promise;
+  const entry = { at: Date.now(), ttl: SPRINT_TTL.active, promise: fetchSprint(id, forUser) };
+  sprintCache.set(key, entry);
+  entry.promise.then(
+    (data) => data.sprint?.state === 'closed' && (entry.ttl = SPRINT_TTL.closed),
+    () => sprintCache.get(key) === entry && sprintCache.delete(key),
+  );
+  return entry.promise;
+}
+
+async function fetchSprint(id, forUser) {
   const fields = issueFields();
   const raw = await searchAll(forUser(`assignee = currentUser() AND sprint = ${id}`), fields);
   const seen = new Set(raw.map((i) => i.key));
@@ -318,6 +339,7 @@ async function listTransitions(key) {
 
 async function doTransition(key, id) {
   await callTool('transitionJiraIssue', { issueIdOrKey: key, transition: { id: String(id) } });
+  sprintCache.clear(); // the sprint numbers must follow the move at once
   const issue = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['status'] });
   return { status: statusDto(issue.fields.status) };
 }

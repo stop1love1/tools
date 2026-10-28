@@ -5,13 +5,28 @@
 // Jira's bell feed has no public/MCP API, so this rebuilds it: other people's
 // changes and comments on issues I'm assigned to, reported or watch.
 
+const fs = require('node:fs');
+const path = require('node:path');
 const config = require('./config');
 const { callTool, searchAll, userInfo } = require('./mcp');
-const { mapPool } = require('./util');
+const { mapPool, safeJson } = require('./util');
 
 let cache = { at: 0, data: null };
 // key → { updated, accountId, events }: what the last getJiraIssue of an issue produced, reused while its `updated` is unchanged.
-const perIssue = new Map();
+// Kept on disk too: Jira's search can't return changelogs, so a cold start would otherwise pay one getJiraIssue for
+// each of the recent issues again. Next to .mcp-token (beside the binary when packaged).
+const PER_ISSUE_FILE = process.env.DASHBOARD_NOTIFY_CACHE_FILE || path.join(__dirname.includes('/snapshot/') ? process.cwd() : path.join(__dirname, '..'), '.notifications-cache.json');
+const perIssue = new Map(Object.entries((fs.existsSync(PER_ISSUE_FILE) && safeJson(fs.readFileSync(PER_ISSUE_FILE, 'utf8'))) || {}));
+
+function savePerIssue() {
+  try {
+    const tmp = PER_ISSUE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(perIssue)), { mode: 0o600 });
+    fs.renameSync(tmp, PER_ISSUE_FILE);
+  } catch {
+    // Only a cache: the next cold start fetches again.
+  }
+}
 
 // Changelog items expose `toString`/`fromString` as data; guard against the prototype method.
 const str = (v) => (typeof v === 'string' && v ? v : null);
@@ -72,6 +87,7 @@ async function listNotifications() {
   const me = await userInfo();
   const recent = (await searchAll(jql, ['summary', 'updated'])).slice(0, 25);
   const since = Date.now() - days * 86_400_000;
+  let changed = false;
   await mapPool(recent, 4, async ({ key, fields }) => {
     // Unchanged since the last refresh (same `updated`): keep its events instead of paying a getJiraIssue for them.
     const updated = fields?.updated || null;
@@ -105,10 +121,12 @@ async function listNotifications() {
       });
     }
     perIssue.set(key, { updated, accountId: me.account_id, events });
+    changed = true;
   });
   // Merge the per-issue events (fresh or reused) of the issues in this window; forget issues that dropped out of it.
   const keep = new Set(recent.map((r) => r.key));
-  for (const k of [...perIssue.keys()]) if (!keep.has(k)) perIssue.delete(k);
+  for (const k of [...perIssue.keys()]) if (!keep.has(k)) (perIssue.delete(k), (changed = true));
+  if (changed) savePerIssue();
   const events = recent.flatMap(({ key }) => perIssue.get(key)?.events || []).filter((e) => Date.parse(e.at) >= since);
   events.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   cache = { at: Date.now(), data: { days, events: events.slice(0, 150) } };

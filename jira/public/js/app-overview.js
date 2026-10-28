@@ -24,11 +24,12 @@ function openIssueChip(key) {
 const sprintState = { key: null, data: null, error: null };
 const sprintKey = () => (state.sprint && state.sprint !== NO_SPRINT ? `${state.sprint}|${state.user || ''}` : null);
 
-async function loadSprint() {
+async function loadSprint({ fresh = false } = {}) {
   const key = sprintKey();
   if (!key) return;
   const params = new URLSearchParams();
   if (state.user) params.set('user', state.user);
+  if (fresh) params.set('fresh', '1');
   try {
     const data = await api(`/api/sprint/${state.sprint}${params.size ? '?' + params : ''}`);
     if (key !== sprintKey()) return; // the sprint or user changed meanwhile
@@ -43,12 +44,14 @@ async function loadSprint() {
 
 function load(opts) {
   loadHistory({ fresh: !!opts && !opts.silent });
-  loadSprint();
-  return loadIssues(opts).then(render).then(allSprintTasks);
+  const fresh = !!opts?.fresh;
+  loadSprint({ fresh });
+  return loadIssues(opts).then(render).then(() => allSprintTasks({ fresh }));
 }
 
-// "All sprints" counts every task of the sprints in the list, as the Tasks page does (a chosen sprint has /api/sprint).
-const allSprintTasks = () => !state.sprint && loadSprintTasks().then(render);
+// "All sprints" counts every task of the sprints in the list, as the Tasks page does. A chosen sprint has /api/sprint
+// already (loadSprint); the call is still made so the sprint filter's counts settle (the server shares the request).
+const allSprintTasks = (opts) => loadSprintTasks(opts).then(render);
 
 async function loadHistory({ fresh = false } = {}) {
   const key = `${trendState.period}|${state.user || ''}`;
@@ -163,7 +166,7 @@ function buildOverview() {
   const noSprint = state.sprint === NO_SPRINT ? NO_SPRINT : null;
   const sprint = state.sprint && !noSprint ? fetched?.sprint || O.pickSprint(state.issues, state.sprint) : null;
   const source = fetched?.issues || state.issues;
-  const all = sprint ? O.members(source, sprint.id) : source.filter((i) => !isEpicType(i) && isSprintTask(i, noSprint));
+  const all = sprint ? O.members(source, sprint.id) : countable(source).filter((i) => isSprintTask(i, noSprint));
   const list = sprint ? O.sprintView(source, sprint) : O.scope(source, noSprint);
   const closed = sprint?.state === 'closed';
   const k = O.kpis(list, now);
@@ -176,10 +179,15 @@ function buildOverview() {
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 
   // Where the numbers come from while the full sprint is loading, or when it could not be loaded.
-  const note =
-    sprintKey() &&
+  const note = state.sprintTasksLoading && !sprintKey()
+    ? h('p', { class: 'ov-source muted small' }, [h('span', { class: 'spin' }, icon('refresh')), "Loading every task of the sprints…"])
+    : sprintKey() &&
     !fetched &&
     h('p', { class: 'ov-source muted small' }, sprintState.error && sprintState.key === sprintKey() ? `Could not load the whole sprint (${sprintState.error}): numbers below are from the task list only.` : [h('span', { class: 'spin' }, icon('refresh')), 'Loading every task of this sprint…']);
+
+  // Partial numbers would read as final: show them once every task is in (or the sprint failed to load).
+  const failed = sprintState.error && sprintState.key === sprintKey();
+  if (sprintKey() ? !fetched && !failed : state.sprintTasksLoading) return h('div', { class: 'overview' }, note);
 
   if (!list.length) return h('div', { class: 'overview' }, note, h('div', { class: 'empty-state' }, 'No tasks match the current filters.'));
 
@@ -272,7 +280,8 @@ window.onSprintFilterChange = () => {
   loadSprint();
   allSprintTasks();
 };
-window.onShortcutR = (opts) => load(opts);
+// No opts: the refresh button or "r", which also skips the server's sprint cache.
+window.onShortcutR = (opts) => load(opts || { fresh: true });
 
 async function initPage() {
   const cached = !!state.fetchedAt;

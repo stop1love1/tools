@@ -17,6 +17,8 @@ dist/
 .oauth.json
 .oauth.json.tmp
 .mcp-token
+.notifications-cache.json
+.notifications-cache.json.tmp
 jira/config.json
 jira/config.json.tmp
 jira/release/

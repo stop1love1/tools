@@ -59,6 +59,14 @@ test('scope drops Epics, keeps cancelled tasks (Jira counts them as done) and on
   assert.equal(O.scope(list, 7).length, 2);
 });
 
+test('a Story whose subtasks are in the list is not counted, only its subtasks are', () => {
+  const story = issue({ key: 'S-1', type: { name: 'Story' }, sprint });
+  const sub = issue({ type: { name: 'Subtask', subtask: true }, parent: { key: 'S-1' }, sprint });
+  const alone = issue({ type: { name: 'Story' }, sprint });
+  assert.deepEqual(Array.from(O.scope([story, sub, alone], 7), (i) => i.key), [sub.key, alone.key]);
+  assert.deepEqual(Array.from(O.members([story, sub, alone], 7), (i) => i.key), [sub.key, alone.key]);
+});
+
 test('scope with NO_SPRINT keeps only the tasks that were never in a sprint', () => {
   const none = issue();
   const list = [none, issue({ sprint }), issue({ sprintIds: [6] })];

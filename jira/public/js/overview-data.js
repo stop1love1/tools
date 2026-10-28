@@ -1,7 +1,7 @@
 'use strict';
 
 // Overview numbers: pure functions of the loaded issues (no DOM), so test/overview.test.js can run them in a vm.
-// Needs format.js (tone, statusList, urgency, fmtDay) and progress.js (isCancelled, isEpicType, isSprintTask).
+// Needs format.js (tone, statusList, urgency, fmtDay) and progress.js (isCancelled, isEpicType, countable, isSprintTask).
 
 const OverviewData = (() => {
   const DAY = 86400000;
@@ -20,14 +20,14 @@ const OverviewData = (() => {
   const dueIn = (i, now) => (i.due ? daysBetween(now, new Date(i.due + 'T00:00:00')) : null);
   const idleDays = (i, now) => daysBetween(new Date(i.updated), now);
 
-  // Tasks the numbers are about: no Epics (only group headers), only the chosen sprint.
-  const scope = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && isSprintTask(i, sprintId));
+  // Tasks the numbers are about: the countable ones (no Epics, no Story whose subtasks are there), only the chosen sprint.
+  const scope = (issues, sprintId) => countable(issues).filter((i) => isSprintTask(i, sprintId));
 
   const isBug = (i) => /bug/i.test(i.type.name);
 
   // Everything the sprint counts (each task in one sprint only, progress.js homeSprintId), cancelled work included
   // (the bug card counts it).
-  const members = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && isSprintTask(i, sprintId));
+  const members = (issues, sprintId) => countable(issues).filter((i) => isSprintTask(i, sprintId));
 
   // The tasks one sprint is about, from /api/sprint: the ones that count for it (members), cancelled work included.
   // A closed sprint is read as it stood when it closed: work finished later without a sprint after it counts as not

@@ -740,6 +740,13 @@ label.gcommit {
 .row.child.deep {
   padding-left: 46px;
 }
+/* A task without subtasks among Stories that have them: skip the fold icon's width (16px + 6px gap) so the badges line up. */
+.row.loose {
+  padding-left: 32px;
+}
+.row.child.loose {
+  padding-left: 48px;
+}
 .epic-none {
   border-top: 1px solid var(--border);
 }
@@ -749,6 +756,9 @@ label.gcommit {
   }
   .row.child.deep {
     padding-left: 34px;
+  }
+  .row.child.loose {
+    padding-left: 42px;
   }
 }
 .et-keys {

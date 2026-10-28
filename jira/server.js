@@ -146,7 +146,7 @@ async function api(req, res, url) {
   // Overview of one sprint: all of its tasks for the viewed user, whatever the JQL filter keeps.
   const sprintRoute = url.pathname.match(/^\/api\/sprint\/(\d{1,12})$/);
   if (sprintRoute && req.method === 'GET') {
-    return send(res, 200, await issues.listSprint(Number(sprintRoute[1]), await forUserMapper()));
+    return send(res, 200, await issues.listSprint(Number(sprintRoute[1]), await forUserMapper(), { fresh: url.searchParams.has('fresh') }));
   }
 
   // Overview trends: everything created or resolved in the window, plus whatever is still open (the backlog at each point).

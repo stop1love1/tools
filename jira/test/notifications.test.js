@@ -5,6 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const { mkTemp, rmTemp } = require('./_helpers');
@@ -49,7 +50,9 @@ const jiraIssue = (key, commentId) => ({
   changelog: { histories: [] },
 });
 
-function harness(updatedOf) {
+// keepDisk: leave the cache file of the previous harness, as a server restart would.
+function harness(updatedOf, { keepDisk = false } = {}) {
+  if (!keepDisk) fs.rmSync(process.env.DASHBOARD_NOTIFY_CACHE_FILE, { force: true });
   const fetched = [];
   const mod = setupWith({
     searchAll: async () => ['VLEARN-1', 'VLEARN-2'].map((key) => ({ key, fields: { summary: key, updated: updatedOf(key) } })),
@@ -101,4 +104,13 @@ test('the 60 second cache still answers without any call', async () => {
   const before = fetched.length;
   await mod.listNotifications();
   assert.equal(fetched.length, before);
+});
+
+test('a restart reuses the events kept on disk instead of fetching every issue again', async () => {
+  const updated = () => '2026-10-14T01:00:00.000+0000';
+  const first = await harness(updated).mod.listNotifications();
+  const { mod, fetched } = harness(updated, { keepDisk: true });
+  const again = await mod.listNotifications();
+  assert.deepEqual(fetched, []);
+  assert.deepEqual(again.events.map((e) => e.id).sort(), first.events.map((e) => e.id).sort());
 });

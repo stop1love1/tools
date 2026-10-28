@@ -22,11 +22,20 @@ function scopedBySprint() {
 }
 
 const isEpicType = (i) => /epic/i.test(i.type?.name || '');
+const isSubtask = (i) => !!i.type?.subtask || /sub-?task/i.test(i.type?.name || '');
 
-// What the status pills and the progress strip total: scopedBySprint() without Epics. An Epic is only ever a group
-// header in the list (never a row), and "All sprints" lets it through isSprintTask, so counting it made N exceed the rows shown.
+// The tasks the numbers count, out of `list`: no Epics, and no Story whose own subtasks are in `all` (the whole list
+// loaded). Both are only group headers in the list (list.js renderList); a Story's subtasks are its work, so counting
+// the Story as well would count that work twice.
+function countable(list, all = list) {
+  const parents = new Set(all.filter((i) => isSubtask(i) && i.parent).map((i) => i.parent.key));
+  return list.filter((i) => !isEpicType(i) && !parents.has(i.key));
+}
+
+// What the status pills and the progress strip total: the countable tasks of scopedBySprint(). "All sprints" lets
+// Epics through isSprintTask, so counting them made N exceed the rows shown.
 function countedBySprint() {
-  return scopedBySprint().filter((i) => !isEpicType(i));
+  return countable(scopedBySprint(), state.issues);
 }
 
 // An issue's own sprint plus, for an Epic (never in a sprint itself), the sprints its children are in.
@@ -97,10 +106,15 @@ function renderProgress() {
     h(
       'span',
       { class: 'progress-sum', title: cancelled.length ? `Done includes ${cancelled.length} cancelled task(s), as on Jira` : null },
-      h('b', null, `${done.length}/${counted}`),
-      ' done ',
-      h('span', { class: 'pct' }, `${pct(done.length, counted)}%`),
-      countedSP > 0 && [h('span', { class: 'sep' }, '·'), h('b', null, `${doneSP}/${countedSP}`), ' SP ', h('span', { class: 'pct' }, `${pct(doneSP, countedSP)}%`)],
+      // Not final while the sprints' older tasks load: say so instead of showing partial totals.
+      state.sprintTasksLoading
+        ? h('span', { class: 'muted', title: "The sprints' older tasks are still loading" }, h('span', { class: 'spin' }, icon('refresh')), ' Loading sprint tasks…')
+        : [
+            h('b', null, `${done.length}/${counted}`),
+            ' done ',
+            h('span', { class: 'pct' }, `${pct(done.length, counted)}%`),
+            countedSP > 0 && [h('span', { class: 'sep' }, '·'), h('b', null, `${doneSP}/${countedSP}`), ' SP ', h('span', { class: 'pct' }, `${pct(doneSP, countedSP)}%`)],
+          ],
     ),
   );
 }

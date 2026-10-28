@@ -55,6 +55,8 @@ const state = {
   docsKind: ['pages', 'attachments'].includes(initParams.get('docsKind')) ? initParams.get('docsKind') : 'all',
   docsSort: ['name', 'date', 'size', 'task', 'links'].includes(initParams.get('docsSort')) ? initParams.get('docsSort') : 'date',
   docsOrder: initParams.get('docsOrder') === 'asc' ? 'asc' : 'desc',
+  // The pages that add each sprint's older tasks (loadSprintTasks) start without them: their numbers wait.
+  sprintTasksLoading: window.PAGE === 'list' || window.PAGE === 'overview',
 };
 const cache = { transitions: new Map(), details: new Map() };
 const recentlyTransitioned = new Map();
@@ -108,8 +110,12 @@ async function loadIssues({ silent = false } = {}) {
     if (state.jql) params.set('jql', state.jql);
     if (state.user) params.set('user', state.user);
     const data = await api('/api/issues' + (params.size ? '?' + params : ''));
-    state.issues = data.issues;
-    state.sprintTasksFor = null; // the sprint tasks added to the last list went with it
+    // A reload of the same list keeps the sprint tasks added to it until loadSprintTasks brings them anew, so the
+    // numbers don't drop and come back on every auto-refresh; it fetches them all again (`shown`: no "…" meanwhile).
+    const same = state.loadedFor === query && state.sprintTasksFor?.query === query;
+    const have = new Set(data.issues.map((i) => i.key));
+    state.issues = [...data.issues, ...(same ? state.issues.filter((i) => i.fromSprint && !have.has(i.key)) : [])];
+    state.sprintTasksFor = same ? { query, ids: new Set(), shown: new Set([...state.sprintTasksFor.ids, ...state.sprintTasksFor.shown]) } : null;
     state.defaultJql = data.defaultJql;
     state.usedJql = data.jql;
     state.error = null;
@@ -142,20 +148,29 @@ function sprintScope() {
 // from /api/sprint, tagged `fromSprint` (not cached): for the chosen sprint, or for every sprint in sprintScope()
 // under "All sprints", so that one counts every task of them too. A custom JQL is left as it is: its filter is what
 // was asked for.
-async function loadSprintTasks() {
+// `fresh` (a refresh asked for by hand) skips the server's sprint cache. Until the sprints of the list are in,
+// `sprintTasksLoading` says the numbers are not final (the pages show "…" instead): from the start on the pages that
+// call this, since the list they first render is the cached one without them.
+let sprintTasksInFlight = 0;
+async function loadSprintTasks({ fresh = false } = {}) {
+  const settle = () => sprintTasksInFlight || (state.sprintTasksLoading = false);
   const query = issuesQuery();
-  if (state.jql || state.loadedFor !== query || state.sprint === NO_SPRINT) return;
-  if (state.sprintTasksFor?.query !== query) state.sprintTasksFor = { query, ids: new Set() };
-  const done = state.sprintTasksFor.ids;
+  if (state.jql || state.loadedFor !== query || state.sprint === NO_SPRINT) return settle();
+  if (state.sprintTasksFor?.query !== query) state.sprintTasksFor = { query, ids: new Set(), shown: new Set() };
+  const { ids: done, shown } = state.sprintTasksFor;
   const scope = sprintScope();
   // Tasks added for a sprint chosen before that this scope no longer has.
   state.issues = state.issues.filter((i) => !i.fromSprint || scope.has(homeSprintId(i)));
   const ids = state.sprint ? [state.sprint] : [...scope];
   const todo = ids.filter((id) => !done.has(id));
-  if (!todo.length) return;
+  if (!todo.length) return settle();
   for (const id of todo) done.add(id);
   const params = new URLSearchParams();
   if (state.user) params.set('user', state.user);
+  if (fresh) params.set('fresh', '1');
+  if (todo.some((id) => !shown.has(id))) state.sprintTasksLoading = true;
+  sprintTasksInFlight++;
+  window.render?.();
   const results = await Promise.all(
     todo.map((id) =>
       api(`/api/sprint/${id}${params.size ? '?' + params : ''}`).catch((e) => {
@@ -165,16 +180,22 @@ async function loadSprintTasks() {
       }),
     ),
   );
+  sprintTasksInFlight--;
+  settle();
   if (state.sprintTasksFor?.ids !== done) return; // the user or filter changed meanwhile
   const known = new Map((state.extraSprints || []).map((s) => [s.id, s]));
-  const have = new Set(state.issues.map((i) => i.key));
-  const extra = [];
+  const base = state.issues.filter((i) => !i.fromSprint);
+  const have = new Set(base.map((i) => i.key));
+  const extra = new Map();
   for (const data of results.filter(Boolean)) {
     if (data.sprint) known.set(data.sprint.id, data.sprint);
-    for (const i of data.issues) if (!have.has(i.key) && scope.has(homeSprintId(i))) (have.add(i.key), extra.push({ ...i, fromSprint: true }));
+    for (const i of data.issues) if (!have.has(i.key) && scope.has(homeSprintId(i))) extra.set(i.key, { ...i, fromSprint: true });
   }
+  // The sprints just fetched replace what was kept of them (a task taken out of a sprint goes); the others stay.
+  const refetched = new Set(todo.filter((id, n) => results[n]));
+  const kept = state.issues.filter((i) => i.fromSprint && !extra.has(i.key) && !(i.sprintIds || []).some((id) => refetched.has(id)));
   state.extraSprints = [...known.values()];
-  state.issues = [...state.issues, ...extra];
+  state.issues = [...base, ...kept, ...extra.values()];
 }
 
 function getTransitions(key) {

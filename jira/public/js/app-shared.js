@@ -233,9 +233,10 @@ function renderSprints() {
   const sprints = new Map([...sprintScope()].filter((id) => known.has(id)).map((id) => [id, known.get(id)]));
   const counts = new Map();
   const select = $('#sprint-filter');
-  // The same tasks the list shows under each sprint.
+  // The same tasks the pills count under each sprint.
+  const counted = countable(state.issues);
   for (const sp of sprints.values()) {
-    const n = state.issues.filter((i) => !/epic/i.test(i.type?.name || '') && isSprintTask(i, sp.id)).length;
+    const n = counted.filter((i) => isSprintTask(i, sp.id)).length;
     if (n) counts.set(sp.id, n);
   }
   if (sprints.size === 0) {
@@ -248,12 +249,13 @@ function renderSprints() {
     if (a.state !== 'active' && b.state === 'active') return 1;
     return b.name.localeCompare(a.name);
   });
-  const noSprint = state.issues.filter((i) => !/epic/i.test(i.type?.name || '') && isSprintTask(i, NO_SPRINT)).length;
+  const noSprint = counted.filter((i) => isSprintTask(i, NO_SPRINT)).length;
+  const n = (v) => (state.sprintTasksLoading ? '…' : v); // not final while the sprints' older tasks load
   select.replaceChildren(
     h('option', { value: '', selected: !state.sprint }, 'All sprints'),
-    h('option', { value: String(NO_SPRINT), selected: state.sprint === NO_SPRINT }, `No sprint (${noSprint})`),
+    h('option', { value: String(NO_SPRINT), selected: state.sprint === NO_SPRINT }, `No sprint (${n(noSprint)})`),
     ...sorted.map((s) => 
-      h('option', { value: s.id, selected: state.sprint === s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''}${counts.has(s.id) ? ` (${counts.get(s.id)})` : ''}`)
+      h('option', { value: s.id, selected: state.sprint === s.id }, `${s.name}${s.state === 'active' ? ' 🟢' : ''}${counts.has(s.id) || state.sprintTasksLoading ? ` (${n(counts.get(s.id))})` : ''}`)
     ),
   );
   select.hidden = false;

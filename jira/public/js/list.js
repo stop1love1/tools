@@ -6,15 +6,15 @@
 // Counts here must ignore state.type itself (it's the option list for that filter) but still
 // respect the sprint filter, so "All types (N)" matches the sprint currently selected.
 function renderTypes() {
-  // No Epics: they are only group headers, never rows, and the "All" pill leaves them out too.
-  const bySprint = state.issues.filter((i) => !isEpicType(i) && isSprintTask(i, state.sprint));
+  // The tasks the "All" pill counts (no Epics, no Story whose subtasks are listed: they are only group headers).
+  const bySprint = countable(state.issues.filter((i) => isSprintTask(i, state.sprint)), state.issues);
   const counts = new Map();
   for (const i of bySprint) counts.set(i.type.name, (counts.get(i.type.name) || 0) + 1);
   if (state.type !== 'all' && !counts.has(state.type)) state.type = 'all';
   const select = $('#type-filter');
   select.replaceChildren(
-    h('option', { value: 'all' }, `All types (${bySprint.length})`),
-    ...[...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => h('option', { value: name }, `${name} (${n})`)),
+    h('option', { value: 'all' }, `All types (${state.sprintTasksLoading ? '…' : bySprint.length})`),
+    ...[...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => h('option', { value: name }, `${name} (${state.sprintTasksLoading ? '…' : n})`)),
   );
   select.value = state.type;
   select.hidden = counts.size < 2;
@@ -75,7 +75,9 @@ function renderFocus() {
 function renderStats() {
   const all = countedBySprint(); // real statuses, so the pills follow a transition at once
   if (!all.length) return $('#stats').replaceChildren();
-  // A pill with nothing behind it is hidden, unless it is the filter in use (so it can still be turned off).
+  // A pill with nothing behind it is hidden, unless it is the filter in use (so it can still be turned off). While the
+  // sprints' older tasks load, the numbers are not final: "…" instead of them.
+  const wait = state.sprintTasksLoading;
   const pill = (label, value, toneName, pressed, onClick) =>
     (value || pressed) &&
     h(
@@ -83,7 +85,7 @@ function renderStats() {
       { class: `pill ${toneName ? 'tone-' + toneName : ''} ${toneName === 'hot' && value ? 'hot' : ''}`, 'aria-pressed': String(pressed), onClick },
       toneName && h('span', { class: 'dot' }),
       label,
-      h('b', null, value),
+      h('b', null, wait ? '…' : value),
     );
   const pills = [
     pill('All', all.length, null, !state.status && !state.urgentOnly, () => {
@@ -193,7 +195,8 @@ function renderList(list) {
     return { groups: [...groups.values()].sort(byGroupUrgency), loose };
   };
 
-  const row = (i, child, deep) => {
+  // loose: a task with no group row of its own, next to Stories that have one (it lines up with their badge).
+  const row = (i, child, deep, loose) => {
     const u = urgency(i);
     const isDone = i.status.category === 'done';
     const moved = heldMove(i.key);
@@ -203,7 +206,7 @@ function renderList(list) {
     return h(
       'div',
       {
-        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}${moved ? ' moved' : ''}${flash ? ' moved-flash' : ''}`,
+        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${loose ? ' loose' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}${moved ? ' moved' : ''}${flash ? ' moved-flash' : ''}`,
         'data-key': i.key,
         onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
       },
@@ -325,7 +328,7 @@ function renderList(list) {
       out.append(groupRow(g.parent, g.items, nested));
       if (!isClosed(g.parent, g.items)) out.append(...g.items.map((i) => row(i, true, nested)));
     }
-    out.append(...loose.map((i) => row(i, nested, false)));
+    out.append(...loose.map((i) => row(i, nested, false, groups.length > 0 || nested)));
   };
 
   const epics = [...buckets.entries()].filter(([k]) => k).map(([, b]) => b).sort(byGroupUrgency);
@@ -351,7 +354,8 @@ function epicRow(epic, items, isClosed) {
     LS.set('groupFold', [...state.closedGroups]);
     render();
   };
-  const counted = items.filter((i) => !isCancelled(i));
+  // The same tasks and rule as the pills: no Story whose subtasks are listed, cancelled work counted as done.
+  const counted = countable(items, state.issues);
   const done = counted.filter((i) => i.status.category === 'done').length;
   return h(
     'div',
@@ -375,8 +379,9 @@ function epicRow(epic, items, isClosed) {
       'div',
       { class: 'c-sum' },
       h('span', { class: 'group-title', title: epic.summary }, epic.summary || 'Epic'),
-      h('span', { class: 'mini-prog', title: `${done} of ${counted.length} done` }, h('i', { style: `width:${counted.length ? Math.round((done / counted.length) * 100) : 0}%` })),
-      h('span', { class: 'muted small nowrap' }, `${done}/${counted.length}`),
+      // Not final while the sprints' older tasks load (an empty bar and "…", like the pills).
+      h('span', { class: 'mini-prog', title: state.sprintTasksLoading ? 'Loading…' : `${done} of ${counted.length} done` }, h('i', { style: `width:${counted.length && !state.sprintTasksLoading ? Math.round((done / counted.length) * 100) : 0}%` })),
+      h('span', { class: 'muted small nowrap' }, state.sprintTasksLoading ? '…' : `${done}/${counted.length}`),
     ),
     h('div', { class: 'c-status' }, statusButton(mine || epic)),
     h('div', { class: 'c-prio' }),

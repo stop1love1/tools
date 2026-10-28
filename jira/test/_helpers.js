@@ -11,6 +11,7 @@ function freshEnv(tmp) {
   process.env.DASHBOARD_CONFIG_FILE = path.join(tmp, 'config.json');
   process.env.DASHBOARD_OAUTH_FILE = path.join(tmp, '.oauth.json');
   process.env.DASHBOARD_MCP_TOKEN_FILE = path.join(tmp, '.mcp-token');
+  process.env.DASHBOARD_NOTIFY_CACHE_FILE = path.join(tmp, '.notifications-cache.json');
   process.env.CLAUDE_CREDENTIALS_FILE = path.join(tmp, 'credentials.json');
 }
 
