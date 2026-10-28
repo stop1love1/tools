@@ -148,22 +148,27 @@ test('progress counts the open tasks that weigh nothing in SP', () => {
   assert.equal(O.progress([issue(), issue()], null, NOW).unestimated, 0);
 });
 
-test('sprintView finds work through every sprint it was in, and reads a closed sprint as it stood when it closed', () => {
+test('each task counts for one sprint: the one it was finished in, or its latest while open', () => {
   const closed = { id: 6, name: 'Sprint 6', state: 'closed', startDate: at(-20), endDate: at(-6), completeDate: at(-5) };
-  const doneIn = issue({ sprintIds: [6], category: 'done', resolved: at(-10) });
-  const doneAfter = issue({ sprintIds: [6, 7], sprint, category: 'done', resolved: at(-2) });
-  // Done before the sprint began but still in it on Jira: counted, as the Jira sprint board does.
-  const before = issue({ sprintIds: [6], category: 'done', resolved: at(-25) });
-  const cancelled = issue({ sprintIds: [6], status: { name: 'Cancelled', category: 'done' }, resolved: at(-10) });
-  const other = issue({ sprintIds: [7], sprint });
-  const view = O.sprintView([doneIn, doneAfter, before, cancelled, other], closed);
-  // Cancelled work stays too: the Jira sprint board counts it in its Done column.
-  assert.deepEqual(Array.from(view, (i) => i.key), [doneIn.key, doneAfter.key, before.key, cancelled.key]);
-  assert.equal(view[1].status.category, 'indeterminate');
-  assert.equal(view[1].carriedOver, true);
-  assert.deepEqual(Array.from(O.lists(view, NOW).carriedOver, (i) => i.key), [doneAfter.key]);
-  // The active sprint keeps the work as it is now.
-  assert.equal(O.sprintView([doneAfter], sprint)[0].status.category, 'done');
+  const both = { sprintIds: [6, 7], sprints: [closed, sprint] };
+  const doneIn = issue({ sprintIds: [6], sprints: [closed], category: 'done', resolved: at(-10) });
+  // Carried into 7 with its Story although done in 6: counts for 6 only.
+  const carriedDone = issue({ ...both, sprint, category: 'done', resolved: at(-10) });
+  const doneLater = issue({ ...both, sprint, category: 'done', resolved: at(-2) });
+  const openCarried = issue({ ...both, sprint });
+  // Done before its only sprint began: still that sprint's.
+  const before = issue({ sprintIds: [6], sprints: [closed], category: 'done', resolved: at(-25) });
+  const cancelled = issue({ sprintIds: [6], sprints: [closed], status: { name: 'Cancelled', category: 'done' }, resolved: at(-10) });
+  // Finished after the sprint closed with no sprint after it: read as not done when it closed.
+  const late = issue({ sprintIds: [6], sprints: [closed], category: 'done', resolved: at(-2) });
+  const all = [doneIn, carriedDone, doneLater, openCarried, before, cancelled, late];
+  const view = O.sprintView(all, closed);
+  assert.deepEqual(Array.from(view, (i) => i.key), [doneIn.key, carriedDone.key, before.key, cancelled.key, late.key]);
+  assert.equal(view[4].carriedOver, true);
+  assert.deepEqual(Array.from(O.lists(view, NOW).carriedOver, (i) => i.key), [late.key]);
+  assert.deepEqual(Array.from(O.sprintView(all, sprint), (i) => i.key), [doneLater.key, openCarried.key]);
+  // The sprints add up to the whole.
+  assert.equal(O.sprintView(all, closed).length + O.sprintView(all, sprint).length, all.length);
 });
 
 test('bugStats counts open, fixed, cancelled and newly reported bugs; bugs are never "not planned"', () => {

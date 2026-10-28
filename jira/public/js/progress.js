@@ -32,16 +32,29 @@ function countedBySprint() {
 // An issue's own sprint plus, for an Epic (never in a sprint itself), the sprints its children are in.
 const sprintsOf = (i) => [i.sprint, ...(i.childSprints || [])].filter(Boolean);
 const inSprint = (i, id) => !id || (Number(id) === NO_SPRINT ? !sprintsOf(i).length : sprintsOf(i).some((s) => s.id === Number(id)));
-// A task of the sprint: any sprint Jira has it in, as the Jira sprint board counts it (i.sprint is only the latest,
-// so work carried over would vanish from the sprint it started in). NO_SPRINT keeps the tasks in none. An Epic that
-// is there only through its children is no task of it (no row, no count); the list still shows it as the header of
-// those children (list.js renderList). Tasks added for one sprint only (loadSprintTasks) show under that sprint and
-// nowhere else.
-function isSprintTask(i, id) {
-  if (i.onlySprint && i.onlySprint !== Number(id)) return false;
-  if (!id) return true;
+// The one sprint a task counts for, so the sprints add up to "All sprints": Jira keeps a task in every sprint it was
+// carried through (a sub-task done last sprint goes along with its Story). A done task counts for the sprint it was
+// finished in (the last one started by then), an open one for its latest. null: in no sprint.
+function homeSprintId(i) {
   const ids = i.sprintIds || (i.sprint ? [i.sprint.id] : []);
-  return Number(id) === NO_SPRINT ? !ids.length : ids.includes(Number(id));
+  if (!ids.length) return null;
+  if (i.status.category !== 'done') return i.sprint?.id ?? ids[ids.length - 1];
+  // Issues from an older server carry only their latest sprint: take the dates of the others from the sprints known.
+  const known = i.sprints || ids.map((id) => (i.sprint?.id === id ? i.sprint : state.sprintMap?.get(id))).filter(Boolean);
+  const dated = known.filter((s) => s.startDate).sort((a, b) => Date.parse(a.startDate) - Date.parse(b.startDate));
+  if (!dated.length) return i.sprint?.id ?? ids[ids.length - 1];
+  const at = Date.parse(i.resolved || i.updated);
+  const started = dated.filter((s) => Date.parse(s.startDate) <= at);
+  return (started.length ? started[started.length - 1] : dated[0]).id;
+}
+
+// A task of the sprint: the one it counts for (homeSprintId). NO_SPRINT keeps the tasks in none. An Epic that is there
+// only through its children is no task of it (no row, no count); the list still shows it as the header of those
+// children (list.js renderList).
+function isSprintTask(i, id) {
+  if (!id) return true;
+  const home = homeSprintId(i);
+  return Number(id) === NO_SPRINT ? home === null : home === Number(id);
 }
 
 // A row whose status just changed (heldMove) stays under the filter it was in, so it does not vanish at once.

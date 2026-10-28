@@ -59,8 +59,10 @@ function issueDto(issue, docs) {
     // Empty for a task with no fix version.
     fixVersions: (f.fixVersions || []).map((v) => ({ id: v.id, name: v.name, released: !!v.released, releaseDate: v.releaseDate || null })),
     sprint: sprintOf(f),
-    // All of them, so a closed sprint still finds the work that was carried over from it.
+    // All of them, so a closed sprint still finds the work that was carried over from it, and with their dates, so
+    // the client can tell which one the task was finished in.
     sprintIds: sprintsIn(f).map((s) => s.id),
+    sprints: sprintsIn(f).map(sprintDto),
     storyPoints: f[storyPointsField] || null,
     parent: f.parent
       ? {

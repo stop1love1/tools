@@ -225,13 +225,15 @@ async function loadUsers() {
 }
 
 function renderSprints() {
-  const sprints = new Map();
+  // Every sprint known, for their dates (homeSprintId); the filter offers only those in sprintScope().
+  const known = new Map();
+  for (const i of state.issues) for (const sp of [...(i.sprints || []), ...sprintsOf(i)]) known.set(sp.id, sp);
+  for (const sp of state.extraSprints || []) if (!known.has(sp.id)) known.set(sp.id, sp);
+  state.sprintMap = known;
+  const sprints = new Map([...sprintScope()].filter((id) => known.has(id)).map((id) => [id, known.get(id)]));
   const counts = new Map();
-  for (const i of state.issues) for (const sp of sprintsOf(i)) sprints.set(sp.id, sp);
-  for (const sp of state.extraSprints || []) if (!sprints.has(sp.id)) sprints.set(sp.id, sp);
   const select = $('#sprint-filter');
-  state.sprintMap = sprints;
-  // The same tasks the list shows under each sprint (isSprintTask needs sprintMap for the start dates).
+  // The same tasks the list shows under each sprint.
   for (const sp of sprints.values()) {
     const n = state.issues.filter((i) => !/epic/i.test(i.type?.name || '') && isSprintTask(i, sp.id)).length;
     if (n) counts.set(sp.id, n);

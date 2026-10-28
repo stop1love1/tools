@@ -67,7 +67,7 @@ const ISSUES_CACHE = 'jd:issues';
 function saveIssues() {
   try {
     const { defaultJql, usedJql, fetchedAt, loadedFor } = state;
-    const issues = state.issues.filter((i) => !i.onlySprint);
+    const issues = state.issues.filter((i) => !i.fromSprint);
     localStorage.setItem(ISSUES_CACHE, JSON.stringify({ issues, defaultJql, usedJql, fetchedAt, loadedFor }));
   } catch {
   }
@@ -109,6 +109,7 @@ async function loadIssues({ silent = false } = {}) {
     if (state.user) params.set('user', state.user);
     const data = await api('/api/issues' + (params.size ? '?' + params : ''));
     state.issues = data.issues;
+    state.sprintTasksFor = null; // the sprint tasks added to the last list went with it
     state.defaultJql = data.defaultJql;
     state.usedJql = data.jql;
     state.error = null;
@@ -126,25 +127,54 @@ async function loadIssues({ silent = false } = {}) {
   }
 }
 
-// The default JQL keeps only recent work, so a chosen sprint misses its tasks finished more than two weeks ago.
-// Add them from /api/sprint, tagged `onlySprint` so they show under that sprint only (progress.js isSprintTask).
-// A custom JQL is left as it is: its filter is what was asked for.
+// The sprints the sprint filter offers and "All sprints" covers: those of the tasks the JQL keeps, plus the chosen
+// one. A task only counts for one sprint (progress.js homeSprintId), so a sprint task joins the list only when it
+// counts for one of these: an older sprint reached through work carried from it would show just the part that came
+// along, and the sprints would no longer add up to "All sprints".
+function sprintScope() {
+  const base = state.issues.filter((i) => !i.fromSprint);
+  const ids = new Set([...base.flatMap(sprintsOf).map((s) => s.id), ...base.map(homeSprintId).filter((id) => id !== null)]);
+  if (state.sprint && state.sprint !== NO_SPRINT) ids.add(state.sprint);
+  return ids;
+}
+
+// The default JQL keeps only recent work, so a sprint misses its tasks finished more than two weeks ago. Add them
+// from /api/sprint, tagged `fromSprint` (not cached): for the chosen sprint, or for every sprint in sprintScope()
+// under "All sprints", so that one counts every task of them too. A custom JQL is left as it is: its filter is what
+// was asked for.
 async function loadSprintTasks() {
-  const id = state.sprint;
   const query = issuesQuery();
-  if (!id || id === NO_SPRINT || state.jql || state.loadedFor !== query || state.issues.some((i) => i.onlySprint === id)) return;
+  if (state.jql || state.loadedFor !== query || state.sprint === NO_SPRINT) return;
+  if (state.sprintTasksFor?.query !== query) state.sprintTasksFor = { query, ids: new Set() };
+  const done = state.sprintTasksFor.ids;
+  const scope = sprintScope();
+  // Tasks added for a sprint chosen before that this scope no longer has.
+  state.issues = state.issues.filter((i) => !i.fromSprint || scope.has(homeSprintId(i)));
+  const ids = state.sprint ? [state.sprint] : [...scope];
+  const todo = ids.filter((id) => !done.has(id));
+  if (!todo.length) return;
+  for (const id of todo) done.add(id);
   const params = new URLSearchParams();
   if (state.user) params.set('user', state.user);
-  try {
-    const data = await api(`/api/sprint/${id}${params.size ? '?' + params : ''}`);
-    if (id !== state.sprint || query !== state.loadedFor) return; // the sprint, user or filter changed meanwhile
-    if (data.sprint) state.extraSprints = [data.sprint];
-    const have = new Set(state.issues.map((i) => i.key));
-    const extra = data.issues.filter((i) => !have.has(i.key)).map((i) => ({ ...i, onlySprint: id }));
-    state.issues = [...state.issues.filter((i) => !i.onlySprint), ...extra];
-  } catch (e) {
-    toast(`Failed to load the sprint's older tasks: ${e.message}`, 'error');
+  const results = await Promise.all(
+    todo.map((id) =>
+      api(`/api/sprint/${id}${params.size ? '?' + params : ''}`).catch((e) => {
+        done.delete(id);
+        toast(`Failed to load the sprint's older tasks: ${e.message}`, 'error');
+        return null;
+      }),
+    ),
+  );
+  if (state.sprintTasksFor?.ids !== done) return; // the user or filter changed meanwhile
+  const known = new Map((state.extraSprints || []).map((s) => [s.id, s]));
+  const have = new Set(state.issues.map((i) => i.key));
+  const extra = [];
+  for (const data of results.filter(Boolean)) {
+    if (data.sprint) known.set(data.sprint.id, data.sprint);
+    for (const i of data.issues) if (!have.has(i.key) && scope.has(homeSprintId(i))) (have.add(i.key), extra.push({ ...i, fromSprint: true }));
   }
+  state.extraSprints = [...known.values()];
+  state.issues = [...state.issues, ...extra];
 }
 
 function getTransitions(key) {

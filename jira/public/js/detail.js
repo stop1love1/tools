@@ -150,7 +150,24 @@ function renderDetail(issue, d) {
           'ul',
           { class: 'link-list' },
           issue.attachments.map((a) =>
-            h('li', null, icon('clip'), h('a', { href: a.url, target: '_blank', rel: 'noopener', title: a.filename }, a.filename), h('span', { class: 'tag muted small' }, fmtSize(a.size))),
+            h(
+              'li',
+              null,
+              icon('clip'),
+              h(
+                'a',
+                {
+                  href: a.url,
+                  target: '_blank',
+                  rel: 'noopener',
+                  title: a.filename,
+                  // Images open in the lightbox; a modified click still opens a tab.
+                  onClick: (e) => /^image\//.test(a.mimeType || '') && !(e.metaKey || e.ctrlKey || e.shiftKey) && (e.preventDefault(), openLightbox(a.url, a.filename)),
+                },
+                a.filename,
+              ),
+              h('span', { class: 'tag muted small' }, fmtSize(a.size)),
+            ),
           ),
         ),
       ),
@@ -258,9 +275,53 @@ function htmlFrame(html, site) {
   </style></head><body>${html}</body></html>`;
   frame.addEventListener('load', () => {
     const doc = frame.contentDocument;
-    if (doc) frame.style.height = doc.documentElement.scrollHeight + 2 + 'px';
+    if (!doc) return;
+    frame.style.height = doc.documentElement.scrollHeight + 2 + 'px';
+    // Images open in the lightbox instead of following the link Jira wraps them in.
+    doc.addEventListener('click', (e) => {
+      const img = e.target.closest?.('img');
+      if (!img || img.width < 24) return; // emoji and icons stay inline
+      e.preventDefault();
+      // Jira embeds a small thumbnail of an attachment: show the original through the attachment proxy instead.
+      const id = (img.currentSrc || img.src).match(/\/attachment\/(?:thumbnail|content)\/(\d+)/)?.[1];
+      const name = img.getAttribute('data-attachment-name') || img.alt || 'image';
+      openLightbox(id ? `/api/attachments/${id}/${encodeURIComponent(name)}` : img.currentSrc || img.src, name);
+    });
+    for (const img of doc.querySelectorAll('img')) img.style.cursor = 'zoom-in';
   });
   return frame;
+}
+
+// One image over the page: fitted to the window at first, click it for its full size (scroll to pan), Esc or a click
+// outside closes it.
+function openLightbox(src, alt) {
+  const img = h('img', { src, alt: alt || '', class: 'lightbox-img' });
+  const box = h(
+    'div',
+    { class: 'lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': alt || 'Image' },
+    h(
+      'div',
+      { class: 'lightbox-bar' },
+      h('a', { href: src, target: '_blank', rel: 'noopener', class: 'btn sm' }, icon('ext'), 'Open original'),
+      h('button', { class: 'btn sm', title: 'Close (Esc)', onClick: () => close() }, icon('x')),
+    ),
+    h('div', { class: 'lightbox-stage' }, img),
+  );
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation(); // keep the drawer open under it
+    close();
+  };
+  function close() {
+    document.removeEventListener('keydown', onKey, true);
+    box.remove();
+  }
+  box.addEventListener('click', (e) => {
+    if (e.target === img) box.classList.toggle('full');
+    else if (!e.target.closest('.lightbox-bar')) close();
+  });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(box);
 }
 
 function closeDrawer() {

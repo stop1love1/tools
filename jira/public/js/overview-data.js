@@ -23,16 +23,15 @@ const OverviewData = (() => {
   // Tasks the numbers are about: no Epics (only group headers), only the chosen sprint.
   const scope = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && isSprintTask(i, sprintId));
 
-  // Every sprint an issue has been in (issues cached before sprintIds existed only know their current one).
-  const sprintIdsOf = (i) => i.sprintIds || (i.sprint ? [i.sprint.id] : []);
   const isBug = (i) => /bug/i.test(i.type.name);
 
-  // Everything that was ever in the sprint, cancelled work included (the bug card counts it).
-  const members = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && sprintIdsOf(i).includes(Number(sprintId)));
+  // Everything the sprint counts (each task in one sprint only, progress.js homeSprintId), cancelled work included
+  // (the bug card counts it).
+  const members = (issues, sprintId) => issues.filter((i) => !isEpicType(i) && isSprintTask(i, sprintId));
 
-  // The tasks one sprint is about, from /api/sprint: everything Jira has in it, as its sprint board counts them (work
-  // done before the sprint began and cancelled work included). A closed sprint is read as it stood when it closed:
-  // work finished later was carried over, so it counts as not done there.
+  // The tasks one sprint is about, from /api/sprint: the ones that count for it (members), cancelled work included.
+  // A closed sprint is read as it stood when it closed: work finished later without a sprint after it counts as not
+  // done there.
   function sprintView(issues, sprint) {
     const list = members(issues, sprint.id);
     const closedAt = sprint.state === 'closed' && (sprint.completeDate || sprint.endDate);

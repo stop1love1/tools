@@ -6,7 +6,8 @@
 // Counts here must ignore state.type itself (it's the option list for that filter) but still
 // respect the sprint filter, so "All types (N)" matches the sprint currently selected.
 function renderTypes() {
-  const bySprint = state.issues.filter((i) => isSprintTask(i, state.sprint));
+  // No Epics: they are only group headers, never rows, and the "All" pill leaves them out too.
+  const bySprint = state.issues.filter((i) => !isEpicType(i) && isSprintTask(i, state.sprint));
   const counts = new Map();
   for (const i of bySprint) counts.set(i.type.name, (counts.get(i.type.name) || 0) + 1);
   if (state.type !== 'all' && !counts.has(state.type)) state.type = 'all';

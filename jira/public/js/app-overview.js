@@ -44,8 +44,11 @@ async function loadSprint() {
 function load(opts) {
   loadHistory({ fresh: !!opts && !opts.silent });
   loadSprint();
-  return loadIssues(opts).then(render);
+  return loadIssues(opts).then(render).then(allSprintTasks);
 }
+
+// "All sprints" counts every task of the sprints in the list, as the Tasks page does (a chosen sprint has /api/sprint).
+const allSprintTasks = () => !state.sprint && loadSprintTasks().then(render);
 
 async function loadHistory({ fresh = false } = {}) {
   const key = `${trendState.period}|${state.user || ''}`;
@@ -267,6 +270,7 @@ window.onJqlChange = () => load();
 window.onSprintFilterChange = () => {
   render();
   loadSprint();
+  allSprintTasks();
 };
 window.onShortcutR = (opts) => load(opts);
 
