@@ -125,50 +125,83 @@ async function listHistory(jql, { fresh = false } = {}) {
 // ---------------------------------------------------------------------------
 // List
 
-async function listIssues(jql) {
-  return issueList(await searchAll(jql, issueFields()));
+// `prefetchSprints` (the viewed user's mapper): the pages will then ask for every task of the list's sprints (state.js
+// loadSprintTasks, the same ids as its sprintScope()). Start that search as soon as the list's own search is back,
+// with the sprints' dates in hand, so it runs alongside the rest of this one (listSprints shares it when asked).
+async function listIssues(jql, { prefetchSprints } = {}) {
+  const raw = await searchAll(jql, issueFields());
+  if (prefetchSprints) {
+    const sprints = new Map(raw.map((i) => sprintOf(i.fields)).filter(Boolean).map((s) => [s.id, s]));
+    if (sprints.size) listSprints([...sprints.keys()], prefetchSprints, { known: [...sprints.values()] }).catch(() => {});
+  }
+  return issueList(raw);
 }
 
-// Everything in one sprint, closed ones too: the default JQL only keeps recently updated work, so the overview of
-// an older sprint would miss most of what was done in it. JQL "sprint = N" leaves sub-tasks out (they only inherit
-// the sprint from their parent), so those are fetched by parent. `forUser` maps "assignee = currentUser()" to the viewed user.
-const SPRINT_PARENTS_MAX = 1000;
+// Everything in some sprints, closed ones too: the default JQL only keeps recently updated work, so the overview of
+// an older sprint would miss most of what was done in it. `forUser` maps "assignee = currentUser()" to the viewed user.
+const SPRINT_SUBTASKS_MAX = 2000;
+// Sub-tasks are searched by `updated` from this long before the earliest of the sprints started (see fetchSprints).
+const SUBTASK_MARGIN_DAYS = 30;
+const SUBTASK_FALLBACK_DAYS = 120; // when no sprint date is known
 
-// One sprint costs a dozen searches, and the pages ask for every sprint they list on each load and auto-refresh:
-// keep the answer a while (a closed sprint barely changes) and share a call in flight. Longer than the 5-minute
-// auto-refresh, or each one would miss; the open and recent work comes fresh from the task list anyway. A transition
-// or a refresh by hand (`fresh`) skips it.
+// The sprints are asked for on each load and auto-refresh: keep the answer a while (a closed sprint barely changes)
+// and share a call in flight. Longer than the 5-minute auto-refresh, or each one would miss; the open and recent work
+// comes fresh from the task list anyway. A transition or a refresh by hand (`fresh`) skips it.
 const SPRINT_TTL = { active: 15 * 60_000, closed: 60 * 60_000 };
-const sprintCache = new Map(); // `${id}|${viewed user}` → { at, ttl, promise }
+const sprintCache = new Map(); // `${ids}|${viewed user}` → { at, ttl, promise }
 
-function listSprint(id, forUser, { fresh = false } = {}) {
-  const key = `${id}|${forUser('assignee = currentUser()')}`;
+// `known`: sprint objects with their dates, when the caller has them (the sub-task search then needn't wait for them).
+function listSprints(ids, forUser, { fresh = false, known = [] } = {}) {
+  ids = [...new Set(ids)].sort((a, b) => a - b);
+  const key = `${ids.join(',')}|${forUser('assignee = currentUser()')}`;
   const hit = sprintCache.get(key);
   if (!fresh && hit && Date.now() - hit.at < hit.ttl) return hit.promise;
-  const entry = { at: Date.now(), ttl: SPRINT_TTL.active, promise: fetchSprint(id, forUser) };
+  const entry = { at: Date.now(), ttl: SPRINT_TTL.active, promise: fetchSprints(ids, forUser, known) };
   sprintCache.set(key, entry);
   entry.promise.then(
-    (data) => data.sprint?.state === 'closed' && (entry.ttl = SPRINT_TTL.closed),
+    (data) => data.sprints.length && data.sprints.every((s) => s.state === 'closed') && (entry.ttl = SPRINT_TTL.closed),
     () => sprintCache.get(key) === entry && sprintCache.delete(key),
   );
   return entry.promise;
 }
 
-async function fetchSprint(id, forUser) {
+// One sprint, for the Overview of it.
+async function listSprint(id, forUser, opts) {
+  const { sprints, issues } = await listSprints([id], forUser, opts);
+  return { sprint: sprints[0] || null, issues };
+}
+
+// Two searches for any number of sprints. JQL "sprint in" leaves sub-tasks out (they carry their parent's sprints but
+// are not indexed by them), so the viewed user's sub-tasks are searched on their own and kept when in the sprints.
+// Being put in a sprint (when planned, or carried over with the parent) updates a sub-task, so the ones in these
+// sprints were all updated since a little before the earliest of them started.
+async function fetchSprints(ids, forUser, known = []) {
   const fields = issueFields();
-  const raw = await searchAll(forUser(`assignee = currentUser() AND sprint = ${id}`), fields);
-  const seen = new Set(raw.map((i) => i.key));
-  const parents = (await searchAll(`sprint = ${id} AND issuetype not in subTaskIssueTypes()`, ['issuetype'], SPRINT_PARENTS_MAX)).map((i) => i.key);
-  for (let n = 0; n < parents.length; n += 50) {
-    const subs = await searchAll(forUser(`assignee = currentUser() AND parent in (${parents.slice(n, n + 50).join(',')})`), fields);
-    for (const s of subs) if (!seen.has(s.key) && sprintsIn(s.fields).some((x) => x.id === id)) (seen.add(s.key), raw.push(s));
-  }
-  const found = raw.flatMap((i) => sprintsIn(i.fields)).find((s) => s.id === id);
-  return { sprint: found ? sprintDto(found) : null, issues: await issueList(raw) };
+  const inSprints = (i) => sprintsIn(i.fields).some((s) => ids.includes(s.id));
+  const searchSubs = (sprints) => {
+    const starts = sprints.filter((s) => ids.includes(s.id)).map((s) => Date.parse(s.startDate)).filter(Number.isFinite);
+    const since = starts.length ? Math.min(...starts) - SUBTASK_MARGIN_DAYS * 86_400_000 : Date.now() - SUBTASK_FALLBACK_DAYS * 86_400_000;
+    const day = new Date(since).toISOString().slice(0, 10);
+    return searchAll(forUser(`assignee = currentUser() AND issuetype in subTaskIssueTypes() AND updated >= "${day}"`), fields, SPRINT_SUBTASKS_MAX);
+  };
+  // With every sprint's date known, both searches run at once; else the sub-tasks wait for the dates the first brings.
+  const dated = ids.every((id) => known.some((s) => s.id === id && s.startDate));
+  const topSearch = searchAll(forUser(`assignee = currentUser() AND sprint in (${ids.join(',')})`), fields, SPRINT_SUBTASKS_MAX);
+  const subsSearch = dated ? searchSubs(known) : null;
+  subsSearch?.catch(() => {}); // awaited below; if the first search fails it never is, and must not go unhandled
+  const top = await topSearch;
+  const found = new Map(top.flatMap((i) => sprintsIn(i.fields)).filter((s) => ids.includes(s.id)).map((s) => [s.id, s]));
+  const subs = await (subsSearch || searchSubs([...found.values()]));
+  const raw = new Map(top.map((i) => [i.key, i]));
+  for (const s of subs) if (!raw.has(s.key) && inSprints(s)) raw.set(s.key, s);
+  for (const i of raw.values()) for (const s of sprintsIn(i.fields)) if (ids.includes(s.id) && !found.has(s.id)) found.set(s.id, s);
+  return { sprints: ids.map((id) => found.get(id)).filter(Boolean).map(sprintDto), issues: await issueList([...raw.values()]) };
 }
 
 async function issueList(issues) {
   const byKey = new Map(issues.map((i) => [i.key, i]));
+  // Independent of the parents' lookup below: run alongside it.
+  const childSprintsSearch = childSprintsOf(issues);
 
   // Sub-tasks rarely carry their own PRD link; inherit the parent's Confluence links.
   const parentKeys = [...new Set(issues.map((i) => i.fields.parent?.key).filter((k) => k && !byKey.has(k)))];
@@ -206,7 +239,7 @@ async function issueList(issues) {
   const allLinks = [...ownLinks.values(), ...parentLinks.values()].flat();
   await resolvePages(allLinks.map((l) => l.pageId));
 
-  const childSprints = await childSprintsOf(issues);
+  const childSprints = await childSprintsSearch;
 
   return issues.map((issue) => {
     const pk = issue.fields.parent?.key;
@@ -412,4 +445,4 @@ async function sprintsOf(keys) {
   return out;
 }
 
-module.exports = { listIssues, listSprint, listHistory, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary, sprintsOf };
+module.exports = { listIssues, listSprint, listSprints, listHistory, issueDetail, listTransitions, doTransition, resolveEpic, ticketSummary, sprintsOf };

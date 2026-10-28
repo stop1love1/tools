@@ -99,7 +99,7 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   // The page is read fresh from disk but routes load at startup: a missing route means the server needs a restart.
   if (res.status === 404 && data.error === 'Not found') data.error = `${path.split('?')[0]} not found — the dashboard server is older than this page: restart it (npm start).`;
-  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { login: !!data.login, fields: data.fields });
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status, login: !!data.login, fields: data.fields });
   return data;
 }
 

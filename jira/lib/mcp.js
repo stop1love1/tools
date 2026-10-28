@@ -26,15 +26,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const cloudId = () => new URL(config.get().jira.siteUrl).host;
 
 // Concurrency gate. A finishing call hands its slot straight to the next waiter, so the cap is never exceeded.
+// Background calls (the notification feed's one per issue) take at most MAX_BACKGROUND slots and only when no other
+// call waits, so what a page needs for its numbers never queues behind them.
+const MAX_BACKGROUND = 2;
 let active = 0;
+let activeBackground = 0;
 const waiting = [];
-async function limited(fn) {
-  if (active >= MAX_CONCURRENT) await new Promise((resolve) => waiting.push(resolve));
-  else active++;
+const waitingBackground = [];
+async function limited(fn, background = false) {
+  if (background ? active >= MAX_CONCURRENT || activeBackground >= MAX_BACKGROUND || waiting.length : active >= MAX_CONCURRENT) {
+    await new Promise((resolve) => (background ? waitingBackground : waiting).push(resolve));
+  } else active++;
+  if (background) activeBackground++;
   try {
     return await fn();
   } finally {
-    const next = waiting.shift();
+    if (background) activeBackground--;
+    const next = waiting.shift() || (activeBackground < MAX_BACKGROUND && waitingBackground.shift());
     if (next) next();
     else active--;
   }
@@ -169,8 +177,8 @@ async function run(name, args) {
   }
 }
 
-// Every Jira / Confluence call goes through here, at most MAX_CONCURRENT at a time.
-const callTool = (name, args) => limited(() => run(name, args));
+// Every Jira / Confluence call goes through here, at most MAX_CONCURRENT at a time (`background`: see limited()).
+const callTool = (name, args, { background = false } = {}) => limited(() => run(name, args), background);
 
 // Tool errors wrap Jira's error JSON inside a message string, e.g.
 // "Failed to search issues: Bad Request. {"errorMessages":[...]}".

@@ -145,8 +145,8 @@ function sprintScope() {
 }
 
 // The default JQL keeps only recent work, so a sprint misses its tasks finished more than two weeks ago. Add them
-// from /api/sprint, tagged `fromSprint` (not cached): for the chosen sprint, or for every sprint in sprintScope()
-// under "All sprints", so that one counts every task of them too. A custom JQL is left as it is: its filter is what
+// from /api/sprints, tagged `fromSprint` (not cached), for every sprint in sprintScope(), so each sprint and "All
+// sprints" count every task of them. A custom JQL is left as it is: its filter is what
 // was asked for.
 // `fresh` (a refresh asked for by hand) skips the server's sprint cache. Until the sprints of the list are in,
 // `sprintTasksLoading` says the numbers are not final (the pages show "…" instead): from the start on the pages that
@@ -161,7 +161,8 @@ async function loadSprintTasks({ fresh = false } = {}) {
   const scope = sprintScope();
   // Tasks added for a sprint chosen before that this scope no longer has.
   state.issues = state.issues.filter((i) => !i.fromSprint || scope.has(homeSprintId(i)));
-  const ids = state.sprint ? [state.sprint] : [...scope];
+  // Every sprint of the scope, even with one chosen: the sprint filter shows the count of each.
+  const ids = [...scope];
   const todo = ids.filter((id) => !done.has(id));
   if (!todo.length) return settle();
   for (const id of todo) done.add(id);
@@ -171,28 +172,33 @@ async function loadSprintTasks({ fresh = false } = {}) {
   if (todo.some((id) => !shown.has(id))) state.sprintTasksLoading = true;
   sprintTasksInFlight++;
   window.render?.();
-  const results = await Promise.all(
-    todo.map((id) =>
-      api(`/api/sprint/${id}${params.size ? '?' + params : ''}`).catch((e) => {
-        done.delete(id);
-        toast(`Failed to load the sprint's older tasks: ${e.message}`, 'error');
-        return null;
-      }),
-    ),
-  );
+  // All of them in one request: the server searches them together. A server started before /api/sprints existed
+  // answers 404: ask it one sprint at a time instead, rather than showing the sprints without their older tasks.
+  const one = async (id) => api(`/api/sprint/${id}${params.size ? '?' + params : ''}`);
+  const perSprint = async () => {
+    const all = await Promise.all(todo.map(one));
+    return { sprints: all.map((d) => d.sprint).filter(Boolean), issues: all.flatMap((d) => d.issues) };
+  };
+  const together = new URLSearchParams(params);
+  together.set('ids', todo.join(','));
+  const data = await api(`/api/sprints?${together}`)
+    .catch((e) => (e.status === 404 ? perSprint() : Promise.reject(e)))
+    .catch((e) => {
+      for (const id of todo) done.delete(id);
+      toast(`Failed to load the sprints' older tasks: ${e.message}`, 'error');
+      return null;
+    });
   sprintTasksInFlight--;
   settle();
-  if (state.sprintTasksFor?.ids !== done) return; // the user or filter changed meanwhile
+  if (!data || state.sprintTasksFor?.ids !== done) return; // failed, or the user or filter changed meanwhile
   const known = new Map((state.extraSprints || []).map((s) => [s.id, s]));
+  for (const s of data.sprints) known.set(s.id, s);
   const base = state.issues.filter((i) => !i.fromSprint);
   const have = new Set(base.map((i) => i.key));
   const extra = new Map();
-  for (const data of results.filter(Boolean)) {
-    if (data.sprint) known.set(data.sprint.id, data.sprint);
-    for (const i of data.issues) if (!have.has(i.key) && scope.has(homeSprintId(i))) extra.set(i.key, { ...i, fromSprint: true });
-  }
+  for (const i of data.issues) if (!have.has(i.key) && scope.has(homeSprintId(i))) extra.set(i.key, { ...i, fromSprint: true });
   // The sprints just fetched replace what was kept of them (a task taken out of a sprint goes); the others stay.
-  const refetched = new Set(todo.filter((id, n) => results[n]));
+  const refetched = new Set(todo);
   const kept = state.issues.filter((i) => i.fromSprint && !extra.has(i.key) && !(i.sprintIds || []).some((id) => refetched.has(id)));
   state.extraSprints = [...known.values()];
   state.issues = [...base, ...kept, ...extra.values()];

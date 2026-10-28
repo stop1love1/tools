@@ -95,7 +95,7 @@ async function listNotifications() {
     if (hit && updated && hit.updated === updated && hit.accountId === me.account_id) return;
     let j;
     try {
-      j = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['summary', 'issuetype', 'comment'], expand: 'changelog', responseContentFormat: 'adf' });
+      j = await callTool('getJiraIssue', { issueIdOrKey: key, fields: ['summary', 'issuetype', 'comment'], expand: 'changelog', responseContentFormat: 'adf' }, { background: true });
     } catch {
       return;
     }

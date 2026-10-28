@@ -139,14 +139,25 @@ async function api(req, res, url) {
 
   if (route === 'GET /api/issues') {
     const defaultJql = config.get().jira.defaultJql;
-    const jql = await forUser((url.searchParams.get('jql') || '').trim() || defaultJql);
-    return send(res, 200, { jql, defaultJql, site: config.get().jira.siteUrl, issues: await issues.listIssues(jql) });
+    const custom = (url.searchParams.get('jql') || '').trim();
+    const mapper = await forUserMapper();
+    const jql = mapper(custom || defaultJql);
+    // The default list's sprints are fetched ahead for the pages (a custom JQL gets none: state.js loadSprintTasks).
+    const list = await issues.listIssues(jql, { prefetchSprints: custom ? null : mapper });
+    return send(res, 200, { jql, defaultJql, site: config.get().jira.siteUrl, issues: list });
   }
 
   // Overview of one sprint: all of its tasks for the viewed user, whatever the JQL filter keeps.
   const sprintRoute = url.pathname.match(/^\/api\/sprint\/(\d{1,12})$/);
   if (sprintRoute && req.method === 'GET') {
     return send(res, 200, await issues.listSprint(Number(sprintRoute[1]), await forUserMapper(), { fresh: url.searchParams.has('fresh') }));
+  }
+
+  // Every task of several sprints in one go (the task list adds them to what its JQL keeps).
+  if (route === 'GET /api/sprints') {
+    const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).map(Number);
+    if (!ids.length || ids.length > 20 || !ids.every((id) => Number.isInteger(id) && id > 0)) return send(res, 400, { error: 'ids must be 1–20 sprint ids' });
+    return send(res, 200, await issues.listSprints(ids, await forUserMapper(), { fresh: url.searchParams.has('fresh') }));
   }
 
   // Overview trends: everything created or resolved in the window, plus whatever is still open (the backlog at each point).
