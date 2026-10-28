@@ -32,20 +32,17 @@ function countedBySprint() {
 // An issue's own sprint plus, for an Epic (never in a sprint itself), the sprints its children are in.
 const sprintsOf = (i) => [i.sprint, ...(i.childSprints || [])].filter(Boolean);
 const inSprint = (i, id) => !id || (Number(id) === NO_SPRINT ? !sprintsOf(i).length : sprintsOf(i).some((s) => s.id === Number(id)));
-// The one sprint a task counts for, so the sprints add up to "All sprints": Jira keeps a task in every sprint it was
-// carried through (a sub-task done last sprint goes along with its Story). A done task counts for the sprint it was
-// finished in (the last one started by then), an open one for its latest. null: in no sprint.
+// The one sprint a task counts for, so the sprints add up to "All sprints": the last one it was moved to (Jira keeps
+// it in every sprint it was carried through, and a done sub-task goes along with its Story): the latest started, a
+// future sprint (no start date yet) being later than any. null: in no sprint.
 function homeSprintId(i) {
   const ids = i.sprintIds || (i.sprint ? [i.sprint.id] : []);
   if (!ids.length) return null;
-  if (i.status.category !== 'done') return i.sprint?.id ?? ids[ids.length - 1];
-  // Issues from an older server carry only their latest sprint: take the dates of the others from the sprints known.
+  // Issues from an older server carry only their latest sprint: take the others from the sprints known.
   const known = i.sprints || ids.map((id) => (i.sprint?.id === id ? i.sprint : state.sprintMap?.get(id))).filter(Boolean);
-  const dated = known.filter((s) => s.startDate).sort((a, b) => Date.parse(a.startDate) - Date.parse(b.startDate));
-  if (!dated.length) return i.sprint?.id ?? ids[ids.length - 1];
-  const at = Date.parse(i.resolved || i.updated);
-  const started = dated.filter((s) => Date.parse(s.startDate) <= at);
-  return (started.length ? started[started.length - 1] : dated[0]).id;
+  if (known.length < ids.length) return i.sprint?.id ?? ids[ids.length - 1];
+  const start = (s) => (s.startDate ? Date.parse(s.startDate) : Infinity);
+  return known.reduce((a, b) => (start(b) >= start(a) ? b : a)).id;
 }
 
 // A task of the sprint: the one it counts for (homeSprintId). NO_SPRINT keeps the tasks in none. An Epic that is there

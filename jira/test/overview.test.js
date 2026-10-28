@@ -148,27 +148,26 @@ test('progress counts the open tasks that weigh nothing in SP', () => {
   assert.equal(O.progress([issue(), issue()], null, NOW).unestimated, 0);
 });
 
-test('each task counts for one sprint: the one it was finished in, or its latest while open', () => {
+test('each task counts for one sprint: the last one it was moved to', () => {
   const closed = { id: 6, name: 'Sprint 6', state: 'closed', startDate: at(-20), endDate: at(-6), completeDate: at(-5) };
-  const both = { sprintIds: [6, 7], sprints: [closed, sprint] };
+  const future = { id: 8, name: 'Sprint 8', state: 'future' };
   const doneIn = issue({ sprintIds: [6], sprints: [closed], category: 'done', resolved: at(-10) });
-  // Carried into 7 with its Story although done in 6: counts for 6 only.
-  const carriedDone = issue({ ...both, sprint, category: 'done', resolved: at(-10) });
-  const doneLater = issue({ ...both, sprint, category: 'done', resolved: at(-2) });
-  const openCarried = issue({ ...both, sprint });
-  // Done before its only sprint began: still that sprint's.
-  const before = issue({ sprintIds: [6], sprints: [closed], category: 'done', resolved: at(-25) });
+  // Done in 6 but moved to 7 with its Story: counts for 7 only (Jira lists the sprints in any order).
+  const moved = issue({ sprintIds: [7, 6], sprints: [sprint, closed], sprint, category: 'done', resolved: at(-10) });
+  const openMoved = issue({ sprintIds: [6, 7], sprints: [closed, sprint], sprint });
+  const toFuture = issue({ sprintIds: [7, 8], sprints: [sprint, future], sprint });
   const cancelled = issue({ sprintIds: [6], sprints: [closed], status: { name: 'Cancelled', category: 'done' }, resolved: at(-10) });
-  // Finished after the sprint closed with no sprint after it: read as not done when it closed.
+  // Finished after its only sprint closed: read as not done when it closed.
   const late = issue({ sprintIds: [6], sprints: [closed], category: 'done', resolved: at(-2) });
-  const all = [doneIn, carriedDone, doneLater, openCarried, before, cancelled, late];
+  const all = [doneIn, moved, openMoved, toFuture, cancelled, late];
   const view = O.sprintView(all, closed);
-  assert.deepEqual(Array.from(view, (i) => i.key), [doneIn.key, carriedDone.key, before.key, cancelled.key, late.key]);
-  assert.equal(view[4].carriedOver, true);
+  assert.deepEqual(Array.from(view, (i) => i.key), [doneIn.key, cancelled.key, late.key]);
+  assert.equal(view[2].carriedOver, true);
   assert.deepEqual(Array.from(O.lists(view, NOW).carriedOver, (i) => i.key), [late.key]);
-  assert.deepEqual(Array.from(O.sprintView(all, sprint), (i) => i.key), [doneLater.key, openCarried.key]);
+  assert.deepEqual(Array.from(O.sprintView(all, sprint), (i) => i.key), [moved.key, openMoved.key]);
+  assert.deepEqual(Array.from(O.members(all, 8), (i) => i.key), [toFuture.key]);
   // The sprints add up to the whole.
-  assert.equal(O.sprintView(all, closed).length + O.sprintView(all, sprint).length, all.length);
+  assert.equal(O.members(all, 6).length + O.members(all, 7).length + O.members(all, 8).length, all.length);
 });
 
 test('bugStats counts open, fixed, cancelled and newly reported bugs; bugs are never "not planned"', () => {

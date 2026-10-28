@@ -129,8 +129,8 @@ async function loadIssues({ silent = false } = {}) {
 
 // The sprints the sprint filter offers and "All sprints" covers: those of the tasks the JQL keeps, plus the chosen
 // one. A task only counts for one sprint (progress.js homeSprintId), so a sprint task joins the list only when it
-// counts for one of these: an older sprint reached through work carried from it would show just the part that came
-// along, and the sprints would no longer add up to "All sprints".
+// counts for one of these: a sprint outside them would show just the tasks that happened to be loaded, and the
+// sprints would no longer add up to "All sprints".
 function sprintScope() {
   const base = state.issues.filter((i) => !i.fromSprint);
   const ids = new Set([...base.flatMap(sprintsOf).map((s) => s.id), ...base.map(homeSprintId).filter((id) => id !== null)]);
