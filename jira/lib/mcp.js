@@ -12,6 +12,7 @@ const MAX_CONCURRENT = 6; // calls in flight at once: a burst (notifications, ep
 const MAX_TRANSIENT_RETRIES = 2;
 // Only these can be repeated after a 5xx without risking a double write (transitions, edits).
 const READ_ONLY_TOOL = /^(get|search|atlassianUserInfo)/;
+const AUTH_FAILED = /Authentication failed|"code"\s*:\s*401\b/i;
 
 let session = null; // { token, id, version }
 let opening = null; // { token, promise }: the session being opened, shared by concurrent callers
@@ -169,8 +170,20 @@ async function run(name, args) {
     const text = (reply.result?.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
     const data = safeJson(text);
     if (reply.result?.isError || data?.error === true) {
-      logError(`[mcp] <- ${name} tool error: ${data?.message ?? text}`);
-      throw httpError(400, toolErrorMessage(data?.message ?? text));
+      const message = data?.message ?? text;
+      logError(`[mcp] <- ${name} tool error: ${message}`);
+      // Jira rejecting the token comes back as a tool error ("Authentication failed: {"code":401,...}"), not HTTP 401:
+      // handle it the same way (refresh our own token once, else ask to sign in).
+      if (AUTH_FAILED.test(message)) {
+        if (cred.source === 'own' && !refreshed) {
+          refreshed = true;
+          log('[mcp] tool reported an authentication failure, refreshing the token and retrying once');
+          cred = await getCredential({ forceRefresh: true });
+          continue;
+        }
+        throw httpError(401, `Atlassian rejected the token. ${LOGIN_HINT}`);
+      }
+      throw httpError(400, toolErrorMessage(message));
     }
     log(`[mcp] <- ${name} ok (${Date.now() - started}ms)`);
     return data ?? text;
