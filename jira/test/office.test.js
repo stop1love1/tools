@@ -143,8 +143,8 @@ test('groupTeam: one entry per assignee, in the busiest active sprint, me first'
     { me: 'zed', meName: 'Zed', qa: ['BOB'] },
   );
   assert.equal(out.sprint.id, 1);
-  assert.deepEqual(out.members.map((m) => [m.accountId, m.me, m.role, m.tasks.length]), [['zed', true, 'dev', 0], ['ann', false, 'dev', 1], ['bob', false, 'qa', 2]]);
-  assert.deepEqual(out.members[1].tasks[0], { key: 'A-1', summary: 'A-1', type: 'Task', status: { name: 'In Progress', category: 'indeterminate' }, priority: 'Medium', due: null, updated: null, storyPoints: 2 });
+  assert.deepEqual(out.members.map((m) => [m.accountId, m.me, m.role, m.tasks.length]), [['zed', true, 'dev', 0], ['ann', false, 'dev', 2], ['bob', false, 'qa', 2]]);
+  assert.deepEqual(out.members[1].tasks[0], { key: 'A-1', summary: 'A-1', type: 'Task', subtask: false, parent: null, status: { name: 'In Progress', category: 'indeterminate' }, priority: 'Medium', due: null, updated: null, storyPoints: 2, epic: null });
 });
 
 test('groupTeam: an asked-for sprint wins over the busiest one', () => {
@@ -235,4 +235,15 @@ test('gitlabRepoEvents: pushes, MRs with their reviewer, merges, and pipeline fa
   ]);
   assert.equal(ev[2].uat, true);
   assert.deepEqual(ev.slice(3).map((e) => e.status), ['failed', 'success']); // the first, routine success is left out
+});
+
+test('groupTeam: each task\'s Epic, from its parent or (sub-tasks) its parent\'s parent', () => {
+  const { groupTeam } = require('../lib/team');
+  const epic = { key: 'E-1', fields: { summary: 'Payments', issuetype: { name: 'Epic' } } };
+  const story = { key: 'A-1', fields: { issuetype: { name: 'Story' } } };
+  const out = groupTeam(
+    [raw('A-1', 'ann', [S1], { parent: epic }), raw('A-2', 'ann', [S1], { issuetype: { name: 'Sub-task' }, parent: story }), raw('A-3', 'ann', [S1], { issuetype: { name: 'Sub-task' }, parent: { key: 'B-9', fields: { issuetype: { name: 'Story' } } } })],
+    { me: 'ann', parents: new Map([['B-9', { parent: epic }]]) },
+  );
+  assert.deepEqual(out.members[0].tasks.map((t) => t.epic?.key ?? null), ['E-1', 'E-1', 'E-1']);
 });

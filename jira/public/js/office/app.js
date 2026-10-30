@@ -46,28 +46,67 @@ function showTip(c, x, y) {
 // ---- Drawer: a person or a room ----
 const drawer = $('#drawer');
 let roomOpen = null;
-const taskItem = (t, who) => `<li class="${t.pr === 'highest' && isOpen(t) ? 'hot' : ''}">
-  <div class="row1"><span class="tiprow">${typeChip(t)}${taskLink(t)}${prioChip(t)}</span><span class="st" data-st="${t.st}">${esc(t.statusName)}</span></div>
-  <p>${esc(t.s)}</p>
-  <div class="row2">${who ? `<span>${who}</span>` : ''}<span>${t.sp} SP</span><span class="${isLate(t) ? 'late' : ''}">${dueText(t)}</span>${t.st === 'prog' && t.idle >= 3 ? `<span>${t.idle}d without an update</span>` : ''}</div>
-</li>`;
+// A person's tasks as a tree, one line each: Epic → Story / Task → Sub-task. A sub-task whose parent isn't theirs sits
+// under the Epic with its parent's key. Epics with work left come first; the filter (Open / All / Done) hides the rest,
+// keeping a Story that still has matching sub-tasks.
+const typeKind = (t) => (t.epicType ? 'epic' : t.sub ? 'sub' : t.type === 'bug' ? 'bug' : /story/i.test(t.typeName) ? 'story' : 'task');
+const typeIcon = (t) => `<i class="ti" data-t="${typeKind(t)}" title="${esc(t.typeName)}"></i>`;
+const taskRow = (t, { sub = false, note = '', who = null, faded = false } = {}) => `<li class="tr${sub ? ' sub' : ''}${t.st === 'done' || faded ? ' done' : ''}${t.pr === 'highest' && isOpen(t) ? ' hot' : ''}" title="${esc(`${t.k} · ${t.s} · ${t.statusName}${t.sp ? ` · ${t.sp} SP` : ''} · ${dueText(t)}`)}">
+  ${typeIcon(t)}${taskLink(t)}<span class="ts">${note ? `<small>↳ ${esc(note)}</small> ` : ''}${esc(t.s)}</span>${isLate(t) ? '<span class="late">late</span>' : ''}${who ? avatarHTML(who, 'pav xs') : ''}<span class="st" data-st="${t.st}">${esc(t.statusName)}</span></li>`;
+let treeFilter = tryStore('jd:officeTree') || 'open';
+function taskTree(tasks, filter = 'all') {
+  const show = (t) => filter === 'all' || (filter === 'open' ? isOpen(t) : !isOpen(t));
+  const groups = new Map(), keys = new Set(tasks.map((t) => t.k));
+  for (const t of tasks) {
+    const k = t.epicType ? t.k : t.epic?.key || '';
+    const g = groups.get(k) || { key: k, name: t.epicType ? t.s : t.epic?.summary || 'No Epic', epic: null, items: [] };
+    if (t.epicType) g.epic = t; else g.items.push(t);
+    groups.set(k, g);
+  }
+  const list = [...groups.values()].map((g) => {
+    const counted = countable(g.items), done = counted.filter((t) => t.st === 'done'), sum = (l) => l.reduce((s, t) => s + t.sp, 0);
+    return { ...g, done: done.length, total: counted.length, open: counted.length - done.length, spDone: sum(done), spTotal: sum(counted) };
+  }).sort((a, b) => !a.key - !b.key || (b.open > 0) - (a.open > 0) || b.open - a.open || a.name.localeCompare(b.name));
+  return list.map((g) => {
+    const kids = new Map();
+    for (const t of g.items) if (t.sub && t.parent && keys.has(t.parent)) (kids.get(t.parent) || kids.set(t.parent, []).get(t.parent)).push(t);
+    const rows = sortTasks(g.items.filter((t) => !(t.sub && t.parent && keys.has(t.parent)))).map((t) => {
+      const sub = sortTasks(kids.get(t.k) || []).filter(show);
+      if (!show(t) && !sub.length) return '';
+      return taskRow(t, { note: t.sub && t.parent ? t.parent : '', faded: !show(t) }) + sub.map((x) => taskRow(x, { sub: true })).join('');
+    }).join('');
+    if (!rows && !(g.epic && show(g.epic))) return '';
+    const pct = g.total ? Math.round((g.done / g.total) * 100) : 0;
+    return `<details class="eg" open><summary>${g.key ? '<i class="ti" data-t="epic"></i>' : '<i class="ti" data-t="none"></i>'}<span class="en" title="${esc(g.key ? `${g.key} · ${g.name}` : g.name)}">${esc(g.name)}</span>
+      <span class="em">${g.spTotal ? `${g.spDone}/${g.spTotal} SP · ` : ''}<b>${g.done}/${g.total}</b></span><span class="ebar"><span style="width:${pct}%"></span></span></summary>
+      <ul class="tt">${g.epic && show(g.epic) ? taskRow(g.epic) : ''}${rows}</ul></details>`;
+  }).join('');
+}
 function openDrawer(c) { roomOpen = null; teamOpen = false; selected = c; $('#drawer-kind').textContent = 'Person'; renderDrawer(); drawer.classList.add('open'); }
 function closeDrawer() { selected = null; roomOpen = null; teamOpen = false; drawer.classList.remove('open'); }
 function renderDrawer() {
   if (!selected) return;
-  const c = selected, u = c.u, sp = spOf(u), open = u.tasks.filter(isOpen).length, late = u.tasks.filter(isLate).length;
+  const c = selected, u = c.u, counted = countable(u.tasks), sum = (l) => l.reduce((s, t) => s + t.sp, 0);
+  const sp = { done: sum(counted.filter((t) => t.st === 'done')), total: sum(counted) }, open = counted.filter(isOpen).length, late = counted.filter(isLate).length;
+  const n = { open, all: counted.length, done: counted.length - open }; // counted as the stats are
+  const pct = sp.total ? Math.round((sp.done / sp.total) * 100) : 0;
   $('#drawer-body').innerHTML = `
-    <div class="who">${avatarHTML(c, 'ava')}<div><h2>${esc(fullName(u))}</h2><span class="tiprow">${stateChip(c)}<span class="k">${ROLES[u.role]} · ${whereText(c)}</span></span></div></div>
-    <div class="stats"><div><b>${sp.done}/${sp.total}</b><span>SP done</span></div><div><b>${open}</b><span>open</span></div><div><b class="${late ? 'late' : ''}">${late}</b><span>overdue</span></div></div>
-    <div class="spbar"><span style="width:${sp.total ? (sp.done / sp.total) * 100 : 0}%"></span></div>
-    <ul class="tasks">${sortTasks(u.tasks).map((t) => taskItem(t)).join('') || '<li class="k">No tasks in this sprint.</li>'}</ul>
-    <div class="dact"><button class="btn" id="look">Look</button></div>`;
+    <div class="phead">
+      <div class="who">${avatarHTML(c, 'ava')}<div><h2>${esc(fullName(u))}</h2><span class="tiprow">${stateChip(c)}<span class="k">${ROLES[u.role]} · ${whereText(c)}</span></span></div>
+        <button class="obtn ibtn" id="look" title="Show in the office" aria-label="Show in the office"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1.5V4M12 20v2.5M1.5 12H4M20 12h2.5"/></svg></button></div>
+      <div class="pstats">
+        <div class="psp"><span><b>${sp.done}</b>/${sp.total} SP</span><span class="k">${pct}%</span><span class="spbar"><span style="width:${pct}%"></span></span></div>
+        <div><b>${open}</b><span>open</span></div><div><b class="${late ? 'late' : ''}">${late}</b><span>overdue</span></div>
+      </div>
+      <div class="seg" role="tablist">${['open', 'all', 'done'].map((f) => `<button role="tab" data-f="${f}" aria-selected="${treeFilter === f}">${f[0].toUpperCase() + f.slice(1)} <small>${n[f]}</small></button>`).join('')}</div>
+    </div>
+    <div class="tree">${taskTree(u.tasks, treeFilter) || `<p class="k empty">${u.tasks.length ? `Nothing ${treeFilter === 'done' ? 'done' : 'open'}.` : 'No tasks in this sprint.'}</p>`}</div>`;
   $('#look').addEventListener('click', () => focusChar(c, false));
+  $('#drawer-body .seg').addEventListener('click', (e) => { const b = e.target.closest('[data-f]'); if (!b) return; treeFilter = b.dataset.f; tryStore('jd:officeTree', treeFilter); renderDrawer(); });
 }
 $('#close').addEventListener('click', closeDrawer);
 
 // ---- Rooms: live screens, a card over each room, the room drawer ----
-const ROOM_ORDER = ['urgent', 'dev', 'review', 'todo', 'qa', 'done'];
 function roomData(z) {
   const all = chars.flatMap((c) => c.u.tasks.map((t) => ({ ...t, c })));
   const people = chars.filter((c) => c.group.visible && c.zone === z);
@@ -101,7 +140,7 @@ function refreshRooms() {
     board: boardFilter(all),
   });
   if (roomOpen) renderRoomDrawer();
-  if (rv.room) { buildDetails(); renderRoomHead(); }
+  if (rv.room) buildDetails();
 }
 // Hovering a door sign lights the room's floor; clicking it looks into the room.
 let signHover = null;
@@ -116,7 +155,7 @@ function renderRoomDrawer() {
   $('#drawer-body').innerHTML = `
     <div class="who"><span class="ava room-ava" data-z="${z}"></span><div><h2>${ZONES[z].name}</h2><span class="k">${d.line}</span></div></div>
     <div><h3 class="eyebrow">Here now · ${d.people.length}</h3><div class="people">${d.people.map((c) => `<button data-id="${esc(c.u.id)}">${avatarHTML(c, 'pav sm')}${esc(short(c.u))}</button>`).join('') || '<span class="k">Nobody</span>'}</div></div>
-    <ul class="tasks">${sortTasks(d.tasks).map((t) => taskItem(t, `${esc(short(t.c.u))} · ${ROLES[t.c.u.role]}`)).join('') || '<li class="k">No tasks here.</li>'}</ul>`;
+    <ul class="tt flat">${sortTasks(d.tasks).map((t) => taskRow(t, { who: t.c })).join('') || '<li class="k">No tasks here.</li>'}</ul>`;
   $('#drawer-body .people').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) focusChar(byId(b.dataset.id), true); });
 }
 
@@ -258,7 +297,7 @@ let focusRoom = null;
 // Opening shot per room: face the thing worth reading (screen, board), otherwise the whole room.
 const ROOM_SHOT = {
   urgent: { az: 0.3, center: [-14, -8.6], dist: 15, el: 0.5 }, // war-room screen on the back wall
-  review: { az: 0.35, center: [16, -8], dist: 15, el: 0.6 }, // table + burndown TV
+  review: { az: 0.2, center: [16, -9.5], dist: 12, el: 0.42 }, // the screen above the head of the table
   todo: { az: Math.PI / 2, center: [-19.5, 7], dist: 11, el: 0.48 }, // kanban board on the left wall, above people's heads
   qa: { az: 1.1, center: [-1, 7.5], dist: 20, el: 0.55 }, // bug screen and device wall
 };
@@ -273,31 +312,19 @@ function viewRoom(z) {
   focusRoom = z; rv.room = z; viewCam = pcam; clipToRoom(z);
   setFollow(false); camGoal = null; tip.hidden = true;
   if (stage.clientWidth > 760) openRoom(z); else closeDrawer(); // on phones the room gets the screen; the list is one tap away
-  setRoomMode(true); buildDetails(); markFocus();
+  setRoomMode(true); buildDetails(); markFocus(); renderScreenNav();
 }
 function exitRoom() {
   if (!rv.room) return;
   focusRoom = null; rv.room = null; viewCam = cam; clipToRoom(null);
   if (roomOpen) closeDrawer();
-  setRoomMode(false); buildDetails(); markFocus();
+  setRoomMode(false); buildDetails(); markFocus(); renderScreenNav();
   camGoal = v(0, 0); setZoom(fitZoom());
 }
 function setRoomMode(on) {
   hoverSign(null);
   $('.app').classList.toggle('room-mode', on);
-  $('#roomhead').hidden = !on;
-  if (on) renderRoomHead();
 }
-function renderRoomHead() {
-  const z = rv.room; if (!z) return;
-  $('#roomhead').dataset.z = z;
-  $('#rh-name').textContent = ZONES[z].name;
-  $('#rh-line').textContent = roomData(z).line + (z === 'dev' && ciState ? ` · build ${ciState === 'failed' ? 'red' : 'green'}` : '');
-}
-const stepRoom = (d) => viewRoom(ROOM_ORDER[(ROOM_ORDER.indexOf(rv.room) + d + ROOM_ORDER.length) % ROOM_ORDER.length]);
-$('#room-exit').addEventListener('click', exitRoom);
-$('#room-prev').addEventListener('click', () => stepRoom(-1));
-$('#room-next').addEventListener('click', () => stepRoom(1));
 function markFocus() {
   // In a room, hide people outside it, and the name tag of anyone sitting behind a desk badge.
   for (const c of chars) c.tag.classList.toggle('far', !!rv.room && (zoneAt(c.pos.x, c.pos.z) !== rv.room || (!!c.seat && !!c.seat.desk && c.sitting)));
@@ -354,7 +381,29 @@ function replan(teleport = false) {
   for (const c of chars) retarget(c, teleport);
   refreshRooms(); updateLines();
 }
-function updateLines() { drawMeetScreen(meetLine(), sprint, chars); }
+function updateLines() { drawMeetScreen(meetLine(), sprint, chars, byId(screenView)); renderScreenNav(); }
+
+// ---- Meeting room screen pages: the sprint, then one per person (their Epics), in the Team panel's order ----
+let screenView = null, screenPinnedAt = 0; // accountId or null (the sprint page); when someone last picked a page
+const screenPages = () => [null, ...ordered().map((c) => c.u.id)];
+function setScreenView(id, manual = false) {
+  screenView = id && byId(id) ? id : null;
+  if (manual) screenPinnedAt = Date.now();
+  updateLines();
+}
+const stepScreen = (d) => { const p = screenPages(), i = Math.max(0, p.indexOf(screenView)); setScreenView(p[(i + d + p.length) % p.length], true); };
+// Shown while looking into the meeting room: ‹ page ›.
+function renderScreenNav() {
+  const nav = $('#screen-nav'), on = rv.room === 'review';
+  nav.hidden = !on; if (!on) return;
+  const sel = $('#screen-who');
+  const opts = `<option value="">Sprint</option>` + ordered().map((c) => `<option value="${esc(c.u.id)}"${c.u.id === screenView ? ' selected' : ''}>${esc(baseName(c.u.name))}</option>`).join('');
+  if (sel.dataset.sig !== opts) { sel.innerHTML = opts; sel.dataset.sig = opts; }
+  sel.value = screenView || '';
+}
+$('#screen-prev').addEventListener('click', () => stepScreen(-1));
+$('#screen-next').addEventListener('click', () => stepScreen(1));
+$('#screen-who').addEventListener('change', (e) => setScreenView(e.target.value || null, true));
 function tickSchedule(force = false) {
   const s = scheduleAt(nowTime(), schedule, sprint);
   if (DEMO && s.kind === 'off') Object.assign(s, { kind: 'work', name: 'Working' }); // the demo is always open
@@ -371,6 +420,7 @@ function setMeeting(on) {
   chars.forEach(cancelErrands);
   meetDome.material.color.set(on ? '#2f9e5b' : '#e0352b'); meetDome.material.emissive.set(on ? '#0c3d1f' : '#7a0d08');
   pressedAt = performance.now();
+  if (!on) setScreenView(null);
   replan();
   if (on) { setFollow(false); camGoal = v(TABLE.x, TABLE.z); view.zoomT = Math.max(view.zoomT, 1.4); }
 }
@@ -387,6 +437,7 @@ setInterval(() => {
   if (!here.length) return;
   const c = here[turn++ % here.length], t = currentTask(c.u);
   say(c, t ? `${t.k} · ${trunc(t.s, 40)} (${t.statusName})` : 'All done, nothing open');
+  if (Date.now() - screenPinnedAt > 120_000) setScreenView(c.u.id); // the screen shows whoever is speaking
 }, 4500);
 
 // ---- Data: /api/team-sprint, polled; differences between two loads play as scenes ----
@@ -482,6 +533,13 @@ function overMeetButton(x, y) {
   ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, viewCam);
   return ray.intersectObject(meetButton, true).length > 0 && !(rv.room && rv.room !== 'review');
 }
+// The meeting room screen: from the office it looks into the room; in there it turns the page.
+function overMeetScreen(x, y) {
+  if (!meetScreen.m.parent.visible || (rv.room && rv.room !== 'review')) return false;
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, viewCam);
+  return ray.intersectObject(meetScreen.m, false).length > 0;
+}
 function signAt(x, y) {
   if (rv.room) return null;
   const r = canvas.getBoundingClientRect();
@@ -519,6 +577,7 @@ function endPointer(e) {
     const sign = signAt(e.clientX, e.clientY);
     if (sign) viewRoom(sign);
     else if (overMeetButton(e.clientX, e.clientY)) setMeeting(!meeting);
+    else if (overMeetScreen(e.clientX, e.clientY)) { if (rv.room === 'review') stepScreen(1); else viewRoom('review'); }
     else if (h.char) openDrawer(h.char);
     else if (rv.room && !inRoom) exitRoom(); // clicking outside the room leaves it
   }
@@ -623,7 +682,7 @@ function frame(now) {
     hoverChar(h);
     const sign = mouse && !drag ? signAt(mouse.x, mouse.y) : null;
     if (!rv.room) hoverSign(sign);
-    canvas.classList.toggle('over', !!h || !!sign || (!!mouse && !drag && overMeetButton(mouse.x, mouse.y)));
+    canvas.classList.toggle('over', !!h || !!sign || (!!mouse && !drag && (overMeetButton(mouse.x, mouse.y) || overMeetScreen(mouse.x, mouse.y))));
     showTip(h, mouse?.lx, mouse?.ly);
   }
 }

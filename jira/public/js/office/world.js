@@ -97,8 +97,8 @@ function plant(x, z, big = false) {
 function screenAt(w, h, cw, ch, x, y, z, rotY, parent) {
   const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
   const t = new THREE.CanvasTexture(cv); t.anisotropy = 4;
-  plane(w, h, new THREE.MeshBasicMaterial({ map: t }), x, y, z, rotY, parent);
-  return { g: cv.getContext('2d'), t };
+  const m = plane(w, h, new THREE.MeshBasicMaterial({ map: t }), x, y, z, rotY, parent);
+  return { g: cv.getContext('2d'), t, m };
 }
 
 // Floors
@@ -132,7 +132,7 @@ function windowAt(wall, along) {
   if (nz) { B(2.6, 1.7, 0.12, M.white, along, 0.95, nz * 12.98, { parent: g, cast: false }); plane(2.3, 1.4, M.pane, along, 1.8, nz * 12.91, nz < 0 ? 0 : Math.PI, g); }
   else { B(0.12, 1.7, 2.6, M.white, nx * 20.98, 0.95, along, { parent: g, cast: false }); plane(2.3, 1.4, M.pane, nx * 20.91, 1.8, along, nx < 0 ? Math.PI / 2 : -Math.PI / 2, g); }
 }
-[-18.5, -9.5, -4, 9, 19.3].forEach((x) => windowAt(wBack, x));
+[-18.5, -9.5, -4, 9, 19.7].forEach((x) => windowAt(wBack, x));
 [-14, -2, 6, 18].forEach((x) => windowAt(wFront, x));
 [-8, 0.5, 6].forEach((z) => windowAt(wRight, z));
 B(0.5, 2.4, 3, M.books, -20.75, 0, -9, { parent: wLeft.g, solid: true });
@@ -218,11 +218,15 @@ const meetDome = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 12, 0, Math.P
   base.position.y = 0.06; base.castShadow = true; meetDome.position.y = 0.12; meetDome.castShadow = true;
   meetButton.add(base, meetDome);
 }
-B(3.4, 1.9, 0.1, M.metal, 16, 0.8, -12.9, { parent: wBack.g });
-const meetScreen = screenAt(3.2, 1.7, 512, 272, 16, 1.75, -12.84, 0, wBack.g);
-// The meeting room screen: the meeting now or next, and how far the sprint is against its time.
-function drawMeetScreen(title, sprint, people) {
-  const g = meetScreen.g, all = people.flatMap((c) => c.u.tasks), sp = (l) => l.reduce((s, t) => s + t.sp, 0);
+B(4.4, 2.4, 0.1, M.metal, 16, 0.55, -12.9, { parent: wBack.g });
+const meetScreen = screenAt(4.2, 2.2, 1024, 544, 16, 1.75, -12.84, 0, wBack.g);
+// The meeting room screen. The sprint page: the meeting now or next, and how far the sprint is against its time.
+// A person's page (`who`): their Epics in this sprint, done / total tasks each, as on the Overview.
+function drawMeetScreen(title, sprint, people, who = null) {
+  const g = meetScreen.g;
+  g.setTransform(2, 0, 0, 2, 0, 0); // drawn at 512×272, sharper
+  if (who) return drawPersonScreen(g, who);
+  const all = people.flatMap((c) => c.u.tasks), sp = (l) => l.reduce((s, t) => s + t.sp, 0);
   const total = sp(all), done = sp(all.filter((t) => t.st === 'done'));
   g.fillStyle = '#16202b'; g.fillRect(0, 0, 512, 272);
   g.fillStyle = '#8b5cf6'; g.fillRect(0, 0, 512, 6);
@@ -244,6 +248,30 @@ function drawMeetScreen(title, sprint, people) {
   }
   meetScreen.t.needsUpdate = true;
 }
+// A person's page, drawn like the Overview's Epics card: their Epics, done / total, the first six and "+ N more".
+function drawPersonScreen(g, c) {
+  const tasks = countable(c.u.tasks), rows = byEpic(tasks), done = tasks.filter((t) => t.st === 'done');
+  const sp = (l) => l.reduce((s, t) => s + t.sp, 0);
+  g.fillStyle = '#161b22'; g.fillRect(0, 0, 512, 272);
+  g.fillStyle = c.color; g.fillRect(0, 0, 512, 5);
+  g.fillStyle = '#e6edf3'; g.font = `700 17px ${FONT}`; g.fillText(trunc(baseName(c.u.name), 24), 18, 32);
+  const nameW = g.measureText(trunc(baseName(c.u.name), 24)).width;
+  g.fillStyle = '#8b949e'; g.font = `600 14px ${FONT}`; g.fillText(`· Epics · ${done.length}/${tasks.length} done · ${sp(done)}/${sp(tasks)} SP`, 26 + nameW, 32);
+  g.textAlign = 'right'; g.font = `500 13px ${FONT}`; g.fillText('done / total', 494, 32); g.textAlign = 'left';
+  if (!rows.length) { g.fillStyle = '#8b949e'; g.font = `500 15px ${FONT}`; g.fillText(tasks.length ? 'No tasks under an Epic' : 'No tasks in this sprint', 18, 76); }
+  rows.slice(0, 6).forEach((r, i) => {
+    const y = 64 + i * 32, f = r.total ? r.done / r.total : 0;
+    g.fillStyle = '#e6edf3'; g.font = `500 14.5px ${FONT}`; g.fillText(trunc(r.name || r.key, 40), 18, y);
+    g.textAlign = 'right'; g.fillStyle = '#c9d1d9'; g.font = `600 13px ${FONT}`; g.fillText(`${r.done} / ${r.total}`, 494, y);
+    const w = g.measureText(`${r.done} / ${r.total}`).width; // story points beside the count, as the Overview's tooltip has them
+    g.fillStyle = '#8b949e'; g.font = `500 12px ${FONT}`; g.fillText(r.spTotal ? `${r.spDone}/${r.spTotal} SP` : 'no SP', 494 - w - 12, y); g.textAlign = 'left';
+    g.fillStyle = '#21262d'; roundRect(g, 18, y + 7, 476, 6, 3); g.fillStyle = '#2fbf5f'; if (f) roundRect(g, 18, y + 7, Math.max(6, 476 * f), 6, 3);
+    g.fillStyle = '#21262d'; g.fillRect(18, y + 20, 476, 1);
+  });
+  if (rows.length > 6) { g.fillStyle = '#8b949e'; g.font = `500 12.5px ${FONT}`; g.fillText(`+ ${rows.length - 6} more`, 18, 264); }
+  meetScreen.t.needsUpdate = true;
+}
+function roundRect(g, x, y, w, h, r) { g.beginPath(); g.roundRect(x, y, w, h, r); g.fill(); }
 plant(20.2, -2.8); plant(11.8, -12.2);
 
 // Planning board (To Do): real task cards, drawn in updateRooms().

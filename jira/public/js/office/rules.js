@@ -58,6 +58,11 @@ function toTask(t, now = new Date()) {
     due: t.due ? Math.round((dayStart(new Date(`${t.due}T00:00:00`)) - dayStart(now)) / DAY) : null,
     idle: t.updated ? Math.max(0, Math.floor((now - new Date(t.updated)) / DAY)) : 0,
     at: t.updated ? Date.parse(t.updated) : 0,
+    epic: t.epic || null,
+    typeName: t.type || 'Task',
+    sub: !!t.subtask || /sub-?task/i.test(t.type || ''),
+    parent: t.parent || null,
+    epicType: /epic/i.test(t.type || ''),
     pr: /highest|blocker|critical/i.test(p) ? 'highest' : /high|major/i.test(p) ? 'high' : /low|minor|trivial/i.test(p) ? 'low' : 'medium',
     type: /bug/i.test(t.type || '') ? 'bug' : 'task',
   };
@@ -116,6 +121,21 @@ function scheduleAt(now, S = {}, sprint = null) {
 const isIdle = (u) => u.tasks.some((t) => t.st === 'prog' && t.idle >= 3);
 const spOf = (u) => ({ done: u.tasks.filter((t) => t.st === 'done').reduce((s, t) => s + t.sp, 0), total: u.tasks.reduce((s, t) => s + t.sp, 0) });
 const RANK = { review: 1, prog: 2, todo: 3, done: 4 };
+// The tasks a person's numbers count, as the Overview does (countable in progress.js): no Epics, and no Story whose
+// own sub-tasks are in the list (its sub-tasks are its work; counting both would count it twice).
+const countable = (tasks) => { const parents = new Set(tasks.filter((t) => t.sub && t.parent).map((t) => t.parent)); return tasks.filter((t) => !t.epicType && !parents.has(t.k)); };
+// Done / total per Epic, most tasks first (byEpic in overview-data.js).
+function byEpic(tasks) {
+  const rows = new Map();
+  for (const t of tasks) {
+    if (!t.epic) continue;
+    const r = rows.get(t.epic.key) || { key: t.epic.key, name: t.epic.summary, total: 0, done: 0, spTotal: 0, spDone: 0 };
+    r.total++; r.spTotal += t.sp;
+    if (t.st === 'done') { r.done++; r.spDone += t.sp; }
+    rows.set(t.epic.key, r);
+  }
+  return [...rows.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
+}
 const sortTasks = (tasks) => [...tasks].sort((a, b) => (b.pr === 'highest' && isOpen(b)) - (a.pr === 'highest' && isOpen(a)) || RANK[a.st] - RANK[b.st] || isLate(b) - isLate(a));
 const currentTask = (u) => sortTasks(u.tasks).find(isOpen) || null;
 const fullName = (u) => (u.me ? `${u.name} (you)` : u.name);

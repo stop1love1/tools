@@ -12,12 +12,8 @@
       <main id="stage">
         <div id="details"></div>
         <p id="toast" role="status" hidden></p>
+        <div id="screen-nav" hidden><button class="obtn" id="screen-prev" aria-label="Previous page">‹</button><select id="screen-who" aria-label="Show on the screen"></select><button class="obtn" id="screen-next" aria-label="Next page">›</button></div>
         <div id="replay" hidden><span>Replaying today · <b id="replay-time"></b></span><button class="obtn" id="replay-skip">Skip</button></div>
-        <div id="roomhead" hidden>
-          <button class="obtn primary" id="room-exit" title="Back to the whole office (Esc)">← Office</button>
-          <div class="rh-title"><b id="rh-name"></b><small id="rh-line"></small></div>
-          <div class="rh-nav"><button class="obtn" id="room-prev" aria-label="Previous room">‹</button><button class="obtn" id="room-next" aria-label="Next room">›</button></div>
-        </div>
         <div id="tags"></div>
         <div id="tip" hidden></div>
         <p id="empty" hidden>No active sprint found for your projects. Pick a sprint in the filter above.</p>

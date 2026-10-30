@@ -8,14 +8,16 @@ const OFFICE_DEMO = (() => {
   const day = (d) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
   const ago = (d) => new Date(Date.now() - d * 86_400_000).toISOString();
   let n = 500;
+  const EPICS = [{ key: 'DEMO-100', summary: 'Course catalogue' }, { key: 'DEMO-101', summary: 'Grading & reports' }, { key: 'DEMO-102', summary: 'Payments' }];
   const T = (summary, status, extra = {}) => {
     const category = status === 'To Do' ? 'new' : status === 'Done' ? 'done' : 'indeterminate';
-    return { key: `DEMO-${++n}`, summary, type: 'Task', status: { name: status, category }, priority: 'Medium', due: day(5), updated: ago(1), storyPoints: 3, ...extra };
+    return { key: `DEMO-${++n}`, summary, type: 'Task', status: { name: status, category }, priority: 'Medium', due: day(5), updated: ago(1), storyPoints: 3, epic: n % 4 ? EPICS[n % 3] : null, ...extra };
   };
   const data = {
     sprint: { id: 1, name: 'Demo Sprint 12', state: 'active', startDate: day(-8), endDate: day(6) },
     members: [
-      { accountId: 'me', name: 'Demo User', me: true, role: 'dev', tasks: [T('Grade essay answers', 'In Progress'), T('Fix student list paging', 'In Review', { type: 'Bug' }), T('Weekly timetable', 'Done')] },
+      { accountId: 'me', name: 'Demo User', me: true, role: 'dev', tasks: [T('Grade essay answers', 'In Progress', { epic: EPICS[1] }), T('Fix student list paging', 'In Review', { type: 'Bug' }), T('Weekly timetable', 'Done'),
+        T('Essay rubric form', 'Done', { type: 'Sub-task', subtask: true, parent: 'DEMO-501', epic: EPICS[1], storyPoints: 2 }), T('Essay scoring API', 'In Progress', { type: 'Sub-task', subtask: true, parent: 'DEMO-501', epic: EPICS[1], storyPoints: 3 })] },
       { accountId: 'd1', name: 'Minh Anh', role: 'dev', tasks: [T('Course detail page', 'In Progress', { storyPoints: 5 }), T('Course level filter', 'Done')] },
       { accountId: 'd2', name: 'Quoc Bao', role: 'dev', tasks: [T('Attendance sync', 'In Progress', { due: day(-2), storyPoints: 8 }), T('New homework notification', 'To Do')] },
       { accountId: 'q1', name: 'Thu Ha', role: 'qa', tasks: [T('Test progress report export', 'In Testing'), T('Test math rendering', 'Done')] },
