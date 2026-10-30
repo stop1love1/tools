@@ -1,0 +1,12 @@
+/* office.html: the 3D office (office-scene.html) fills the window under the top bar; --office-top is the bar's height. */
+main:has(> .office-frame) {
+  padding: 10px var(--gutter) 0;
+}
+.office-frame {
+  display: block;
+  width: 100%;
+  height: calc(100vh - var(--office-top, 56px) - 20px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}

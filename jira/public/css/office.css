@@ -1,0 +1,172 @@
+/* 3D office (office.html, shown in the Overview's "3D office" view). Colours come from base.css, so the page follows
+   the dashboard's theme; the scene background is its own. Layout: slim bar; Team panel (left) + stage (right);
+   toolbar floats at the bottom of the stage, the drawer on its right edge. Phones: panel and drawer become sheets. */
+:root {
+  --fg: var(--text);
+  --line: var(--border);
+  --raised: var(--surface-2);
+  --todo: var(--new-dot);
+  --prog: var(--prog-dot);
+  --review: var(--review-dot);
+  --done: var(--done-dot);
+  --overdue: var(--danger);
+  --scene-bg: #d8e1dd;
+  --font-display: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+:root.dark { --scene-bg: #0b1220; }
+@media (prefers-color-scheme: dark) { :root:not(.light) { --scene-bg: #0b1220; } }
+
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+button, input { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[data-z="urgent"] { --c: var(--overdue); } [data-z="desk"], [data-st="prog"], [data-z="dev"], [data-z="qa"] { --c: var(--prog); }
+[data-z="review"], [data-st="review"] { --c: var(--review); } [data-z="todo"], [data-st="todo"] { --c: var(--todo); }
+[data-z="done"], [data-st="done"] { --c: var(--done); } [data-z="all"] { --c: var(--fg); }
+
+.obtn, .btn { border: 1px solid var(--line); background: var(--surface); padding: 5px 12px; border-radius: 8px; cursor: pointer; font-weight: 500; }
+.obtn:hover, .btn:hover { border-color: var(--muted); }
+.obtn.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.eyebrow, 
+.app { flex: 1; min-height: 0; display: grid; position: relative; }
+.pav, .ava { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: #fff; font: 600 12px var(--font-display); flex: none; text-shadow: 0 1px 1px rgb(0 0 0 / .25); }
+.pav.sm { width: 24px; height: 24px; border-radius: 6px; font-size: 10px; }
+.ava { width: 48px; height: 48px; border-radius: 12px; font: 700 17px var(--font-display); }
+.room-ava { background: var(--c); }
+
+#stage { position: relative; min-height: 0; overflow: hidden; background: var(--scene-bg); }
+#stage canvas { position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; }
+#stage canvas.dragging { cursor: grabbing; } #stage canvas.over { cursor: pointer; }
+#tags, #rooms, #details { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+#tags, #details { z-index: 1; }
+#tags.off { display: none; }
+#tip, #prompt, #help, .toolbar, #drawer, #info { z-index: 2; }
+#info { position: absolute; top: 10px; left: 10px; margin: 0; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-size: 12px; box-shadow: 0 2px 8px rgb(0 0 0 / .12); max-width: calc(100% - 20px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#info #sprint { color: var(--fg); font-weight: 600; }
+/* The label over the red meeting button (above the name tags); it presses the button too. */
+#meet { position: absolute; left: 0; top: 0; z-index: 2; padding: 3px 10px; border-radius: 999px; border: 0; background: #d63b30; color: #fff; font: 600 11.5px/1.3 var(--font-display); cursor: pointer; box-shadow: 0 2px 8px rgb(0 0 0 / .25); will-change: transform; white-space: nowrap; }
+#meet[aria-pressed="true"] { background: #2f9e5b; }
+#empty { position: absolute; z-index: 2; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+
+.tag {
+  position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; padding: 2px 8px 2px 6px; border-radius: 6px;
+  background: var(--surface); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 1px 4px rgb(0 0 0 / .12);
+  font: 600 11px/1.35 var(--font-display); white-space: nowrap; will-change: transform; transition: opacity .2s;
+}
+.tag i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.tag small { color: var(--muted); font-weight: 500; font-size: 10px; }
+.tag .late { color: var(--overdue); font-weight: 600; font-size: 10px; }
+.tag .idle { color: var(--muted); font-weight: 500; font-size: 10px; font-style: italic; }
+.tag .flash { color: var(--done); font-size: 10px; animation: flash 2.4s ease-out forwards; }
+@keyframes flash { 0%, 70% { opacity: 1 } 100% { opacity: 0 } }
+.tag.me { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.tag.urgent { border-color: var(--overdue); }
+.tag.hi { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.tag.hi small { color: inherit; opacity: .7; }
+.tag.dim { opacity: .25; }
+.tag.far { display: none; }
+.say {
+  position: absolute; left: 0; top: 0; max-width: 200px; padding: 5px 9px; border-radius: 10px; background: var(--fg); color: var(--bg);
+  font: 500 12px/1.3 var(--font-display); box-shadow: 0 4px 12px rgb(0 0 0 / .2); animation: pop .18s ease-out; white-space: normal; width: max-content;
+}
+.say::after { content: ""; position: absolute; left: 50%; bottom: -5px; margin-left: -5px; border: 5px solid transparent; border-bottom: 0; border-top-color: var(--fg); }
+.say.bug { background: var(--overdue); color: #fff; } .say.bug::after { border-top-color: var(--overdue); }
+.say.ok { background: var(--done); color: #fff; } .say.ok::after { border-top-color: var(--done); }
+@keyframes pop { from { transform: scale(.85); opacity: 0 } }
+
+.room {
+  position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; display: flex; gap: 8px; align-items: flex-start; text-align: left;
+  padding: 6px 10px 7px 8px; border-radius: 8px; border: 1px solid var(--line); border-top: 3px solid var(--c);
+  background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 4px 14px rgb(0 0 0 / .14);
+  font: 700 12.5px/1.25 var(--font-display); white-space: nowrap; will-change: transform;
+}
+.room:hover { background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / .2); }
+.room i { width: 8px; height: 8px; border-radius: 2px; background: var(--c); margin-top: 4px; }
+.room small { display: block; font: 500 11px var(--font-display); color: var(--muted); }
+
+/* Room view: its own header sits top left, in place of the sprint label; the room cards and overview-only tools hide. */
+.app.room-mode .office-only, .app.room-mode #rooms, .app.room-mode #info { display: none; }
+#roomhead {
+  position: absolute; z-index: 3; top: 10px; left: 10px; display: flex; align-items: center; gap: 12px;
+  padding: 6px 8px 6px 6px; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 12px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / .16); max-width: calc(100% - 20px);
+}
+#room-exit { white-space: nowrap; }
+.rh-title { display: flex; flex-direction: column; min-width: 0; }
+.rh-title b { font: 700 16px/1.2 var(--font-display); }
+.rh-title small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rh-nav { display: flex; gap: 4px; }
+.rh-nav .obtn { padding: 4px 10px; font-size: 16px; line-height: 1; }
+/* Desk badge in a room: a small pill; hover opens the task details, click opens the person. */
+.detail {
+  position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; display: flex; flex-direction: column; gap: 3px; padding: 3px 9px;
+  border-radius: 8px; background: var(--surface); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 2px 8px rgb(0 0 0 / .14);
+  font: 600 11.5px/1.35 var(--font-display); white-space: nowrap; will-change: transform;
+}
+.detail .pill { display: flex; align-items: center; gap: 6px; }
+.detail i { width: 7px; height: 7px; border-radius: 50%; }
+.detail code { font: 500 10.5px var(--font-mono); color: var(--muted); }
+.detail .alert { width: 7px; height: 7px; border-radius: 50%; background: var(--overdue); }
+.detail .more { display: none; flex-direction: column; gap: 2px; font-weight: 500; white-space: normal; width: 210px; padding-bottom: 4px; }
+.detail:hover { z-index: 5; box-shadow: 0 8px 22px rgb(0 0 0 / .22); }
+.detail:hover .more { display: flex; }
+.detail em { font-style: normal; color: var(--muted); font-size: 10.5px; }
+.detail .warn { color: var(--warn); font-weight: 600; } .detail .late { color: var(--overdue); }
+
+#tip { position: absolute; left: 0; top: 0; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow-lg); width: 240px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+#tip b { font: 700 14px var(--font-display); }
+.k { font: 500 11px var(--font-mono); color: var(--muted); }
+.tiprow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.zchip, .st { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+.ttype { font-size: 10.5px; font-weight: 600; padding: 0 5px; border-radius: 4px; background: var(--raised); color: var(--muted); border: 1px solid var(--line); }
+.ttype.bug { color: var(--overdue); border-color: color-mix(in srgb, var(--overdue) 40%, transparent); }
+.prio { font-size: 10.5px; font-weight: 600; padding: 0 5px; border-radius: 4px; color: #fff; background: #d98b2b; }
+.prio.highest { background: var(--overdue); }
+
+.toolbar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 2px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 20px rgb(0 0 0 / .14); }
+.toolbar button { width: 36px; height: 36px; display: grid; place-items: center; border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--fg); }
+.toolbar button:hover { background: var(--raised); }
+.toolbar button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.toolbar svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.toolbar .sep { width: 1px; background: var(--line); margin: 6px 3px; }
+#prompt { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); border: 1px solid var(--accent); background: var(--surface); padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 500; box-shadow: 0 4px 14px rgb(0 0 0 / .15); white-space: nowrap; }
+kbd { font: 500 11px var(--font-mono); padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--fg); }
+#help { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow-lg); width: min(360px, calc(100% - 32px)); box-sizing: border-box; }
+#help h3 { margin: 0 0 8px; font: 700 15px var(--font-display); }
+#help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0 0 12px; font-size: 13px; }
+#help dt { white-space: nowrap; } #help dd { margin: 0; color: var(--muted); }
+
+#drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 100%); background: var(--surface); border-left: 1px solid var(--line); transform: translateX(105%); transition: transform .22s ease; display: flex; flex-direction: column; box-shadow: -8px 0 24px rgb(0 0 0 / .08); }
+#drawer.open { transform: none; }
+.dhead { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--line); }
+.x { border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); padding: 2px 8px; border-radius: 6px; }
+.x:hover { background: var(--raised); color: var(--fg); }
+#drawer-body { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.who { display: flex; gap: 12px; align-items: center; }
+.who h2 { margin: 0 0 4px; font: 700 18px/1.15 var(--font-display); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stats div { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 8px; background: var(--raised); }
+.stats b { font: 700 18px var(--font-display); font-variant-numeric: tabular-nums; }
+.stats span { font-size: 12px; color: var(--muted); }
+.spbar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.spbar span { display: block; height: 100%; background: var(--done); transition: width .4s; }
+.tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tasks li { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.tasks li.hot { border-color: color-mix(in srgb, var(--overdue) 55%, transparent); background: color-mix(in srgb, var(--overdue) 5%, transparent); }
+.tasks a { text-decoration: none; } .tasks a:hover code { color: var(--accent); text-decoration: underline; }
+.row1, .row2 { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row2 { justify-content: flex-start; font-size: 12px; color: var(--muted); gap: 12px; font-variant-numeric: tabular-nums; }
+.tasks p { margin: 0; font-weight: 500; }
+.late { color: var(--overdue); }
+.dact { display: flex; gap: 8px; flex-wrap: wrap; }
+.people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.people button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: none; border-radius: 999px; padding: 2px 10px 2px 2px; cursor: pointer; font-size: 12.5px; }
+.people button:hover { background: var(--raised); }
+
+@media (max-width: 760px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+        #drawer { top: auto; height: 62%; width: 100%; border-left: 0; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0; transform: translateY(105%); }
+  }
+@media (prefers-reduced-motion: reduce) { #drawer { transition: none; } .say, .tag .flash { animation: none; } }

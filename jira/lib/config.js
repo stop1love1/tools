@@ -76,6 +76,9 @@ function defaults() {
     agent: {
       extraInstructions: [],
     },
+    office: {
+      qaPeople: [],
+    },
     server: {
       port: Number(env.PORT) || 4747,
       mcpUrl: env.MCP_SERVER_URL || 'https://mcp.atlassian.com/v1/mcp',
@@ -123,6 +126,9 @@ const SCHEMA = [
   ] },
   { section: 'Start with Claude', fields: [
     { key: 'agent.extraInstructions', label: 'Extra instructions in every prompt', type: 'lines', optional: true, help: 'Team conventions, commands to run before committing…' },
+  ] },
+  { section: 'Overview 3D office', fields: [
+    { key: 'office.qaPeople', label: 'QA people', type: 'lines', optional: true, help: 'Jira display names (or account ids), one per line. They sit in the QA room; everyone else in the Dev room.' },
   ] },
   { section: 'Server', fields: [
     { key: 'server.port', label: 'Port', type: 'number', min: 1024, max: 65535, restart: true },

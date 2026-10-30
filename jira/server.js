@@ -22,6 +22,7 @@ const issues = require('./lib/issues');
 const attachments = require('./lib/attachments');
 const notifications = require('./lib/notifications');
 const { listUsers } = require('./lib/users');
+const { listTeamSprint } = require('./lib/team');
 
 // Values of the user filter that are not an accountId: every assignee / tasks nobody is assigned to.
 const ALL_USERS = '__all__';
@@ -158,6 +159,13 @@ async function api(req, res, url) {
     const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).map(Number);
     if (!ids.length || ids.length > 20 || !ids.every((id) => Number.isInteger(id) && id > 0)) return send(res, 400, { error: 'ids must be 1–20 sprint ids' });
     return send(res, 200, await issues.listSprints(ids, await forUserMapper(), { fresh: url.searchParams.has('fresh') }));
+  }
+
+  // Overview 3D office: the whole team's tasks in one sprint (default: the team's active sprint).
+  if (route === 'GET /api/team-sprint') {
+    const sprint = url.searchParams.get('sprint');
+    if (sprint && !/^\d{1,12}$/.test(sprint)) return send(res, 400, { error: 'sprint must be a sprint id' });
+    return send(res, 200, await listTeamSprint({ sprintId: sprint ? Number(sprint) : null, fresh: url.searchParams.has('fresh') }));
   }
 
   // Overview trends: everything created or resolved in the window, plus whatever is still open (the backlog at each point).
