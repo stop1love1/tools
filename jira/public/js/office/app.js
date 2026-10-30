@@ -94,30 +94,15 @@ function refreshRooms() {
     bugsOpen: all.filter((t) => isOpen(t) && t.type === 'bug').length,
     passed: all.filter((t) => !isOpen(t) && t.type === 'bug').length,
   });
-  for (const z of ROOM_ORDER) roomCards[z].querySelector('small').textContent = roomData(z).line;
   if (roomOpen) renderRoomDrawer();
   if (rv.room) { buildDetails(); renderRoomHead(); }
 }
-const roomCards = {};
-for (const z of ROOM_ORDER) {
-  const b = document.createElement('button'); b.className = 'room'; b.dataset.z = z;
-  b.innerHTML = `<i></i><span>${ZONES[z].name}<small></small></span>`;
-  b.addEventListener('click', () => viewRoom(z));
-  b.addEventListener('pointerenter', () => { ZONES[z].glow.material.color.set(COL[ZONES[z].color]); ZONES[z].glow.material.opacity = 0.18; });
-  b.addEventListener('pointerleave', resetGlow);
-  $('#rooms').append(b); roomCards[z] = b;
-}
-function placeRoomCards() {
-  if (rv.room) return;
-  const w = stage.clientWidth, h = stage.clientHeight;
-  for (const z of ROOM_ORDER) {
-    // Pin each card to the room corner farthest from the camera, so it sits behind the people.
-    const [x0, x1, z0, z1] = ZONES[z].rect, sx = Math.sin(view.az) > 0 ? x0 : x1, sz = Math.cos(view.az) > 0 ? z0 : z1;
-    proj.set(sx + (sx === x0 ? 0.6 : -0.6), 2.4, sz + (sz === z0 ? 0.6 : -0.6)).project(viewCam);
-    // Keep it on screen (y is the card's bottom edge).
-    const x = clamp(((proj.x + 1) / 2) * w, 30, w - 150), y = clamp(((1 - proj.y) / 2) * h, 60, h - 70);
-    roomCards[z].style.transform = `translate(${x}px, ${y}px) translate(-15%, -100%)`;
-  }
+// Hovering a door sign lights the room's floor; clicking it looks into the room.
+let signHover = null;
+function hoverSign(zone) {
+  if (signHover === zone) return;
+  signHover = zone; resetGlow();
+  if (zone) ZONES[zone].glow.material.opacity = 0.18;
 }
 function openRoom(z) { selected = null; roomOpen = z; $('#drawer-kind').textContent = 'Room'; renderRoomDrawer(); drawer.classList.add('open'); }
 function renderRoomDrawer() {
@@ -159,9 +144,9 @@ function exitRoom() {
   camGoal = v(0, 0); setZoom(fitZoom());
 }
 function setRoomMode(on) {
+  hoverSign(null);
   $('.app').classList.toggle('room-mode', on);
   $('#roomhead').hidden = !on;
-  labels.forEach((l) => (l.pivot.visible = !on)); // the big floor lettering is only for the overview
   if (on) renderRoomHead();
 }
 function renderRoomHead() {
@@ -177,7 +162,6 @@ $('#room-next').addEventListener('click', () => stepRoom(1));
 function markFocus() {
   // In a room, hide people outside it, and the name tag of anyone sitting behind a desk badge.
   for (const c of chars) c.tag.classList.toggle('far', !!rv.room && (zoneAt(c.pos.x, c.pos.z) !== rv.room || (!!c.seat && !!c.seat.desk && c.sitting)));
-  for (const z of ROOM_ORDER) roomCards[z].hidden = !!rv.room;
 }
 // Desk badges in the Dev / QA rooms: "Name · KEY", details on hover, the person on click.
 // Other rooms show their information on their own screens and boards, and in the drawer.
@@ -363,6 +347,12 @@ function overMeetButton(x, y) {
   ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, viewCam);
   return ray.intersectObject(meetButton, true).length > 0 && !(rv.room && rv.room !== 'review');
 }
+function signAt(x, y) {
+  if (rv.room) return null;
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, viewCam);
+  return ray.intersectObjects(signs, false)[0]?.object.userData.zone || null;
+}
 function hit(x, y) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, viewCam);
@@ -391,7 +381,9 @@ function endPointer(e) {
   if (drag && !drag.moved && drag.button === 0 && e.type === 'pointerup' && player) {
     const h = hit(e.clientX, e.clientY);
     const inRoom = h.floor && zoneAt(h.floor.point.x, h.floor.point.z) === rv.room;
-    if (overMeetButton(e.clientX, e.clientY)) setMeeting(!meeting);
+    const sign = signAt(e.clientX, e.clientY);
+    if (sign) viewRoom(sign);
+    else if (overMeetButton(e.clientX, e.clientY)) setMeeting(!meeting);
     else if (h.char) openDrawer(h.char);
     else if (rv.room && !inRoom) exitRoom(); // clicking outside the room leaves it
     else if (h.floor) goTo(h.floor.point);
@@ -518,16 +510,17 @@ function frame(now) {
   for (const c of chars) stepChar(c, dt, time);
   stepEffects(dt, time);
   updateWalls();
-  for (const l of labels) l.pivot.rotation.y = camAz(); // text reads left to right from any side
   updateCamera();
   renderer.render(scene, viewCam);
-  placeTags(); placeRoomCards(); placeDetails(); placeMeetTag(); if (player) checkNearby();
+  placeTags(); placeDetails(); placeMeetTag(); if (player) checkNearby();
   if (frameN % 10 === 0) markFocus();
   if (rv.room && frameN % 90 === 0) buildDetails(); // people come and go
   if ((frameN++ & 1) === 0) {
     const h = mouse && !drag ? hit(mouse.x, mouse.y).char || null : null;
     hoverChar(h);
-    canvas.classList.toggle('over', !!h || (!!mouse && !drag && overMeetButton(mouse.x, mouse.y)));
+    const sign = mouse && !drag ? signAt(mouse.x, mouse.y) : null;
+    if (!rv.room) hoverSign(sign);
+    canvas.classList.toggle('over', !!h || !!sign || (!!mouse && !drag && overMeetButton(mouse.x, mouse.y)));
     showTip(h, mouse?.lx, mouse?.ly);
   }
 }

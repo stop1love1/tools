@@ -39,7 +39,7 @@ button, input { font: inherit; color: inherit; }
 #stage { position: relative; min-height: 0; overflow: hidden; background: var(--scene-bg); }
 #stage canvas { position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; }
 #stage canvas.dragging { cursor: grabbing; } #stage canvas.over { cursor: pointer; }
-#tags, #rooms, #details { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+#tags, #details { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 #tags, #details { z-index: 1; }
 #tags.off { display: none; }
 #tip, #prompt, #help, .toolbar, #drawer, #info { z-index: 2; }
@@ -76,18 +76,9 @@ button, input { font: inherit; color: inherit; }
 .say.ok { background: var(--done); color: #fff; } .say.ok::after { border-top-color: var(--done); }
 @keyframes pop { from { transform: scale(.85); opacity: 0 } }
 
-.room {
-  position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; display: flex; gap: 8px; align-items: flex-start; text-align: left;
-  padding: 6px 10px 7px 8px; border-radius: 8px; border: 1px solid var(--line); border-top: 3px solid var(--c);
-  background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 4px 14px rgb(0 0 0 / .14);
-  font: 700 12.5px/1.25 var(--font-display); white-space: nowrap; will-change: transform;
-}
-.room:hover { background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / .2); }
-.room i { width: 8px; height: 8px; border-radius: 2px; background: var(--c); margin-top: 4px; }
-.room small { display: block; font: 500 11px var(--font-display); color: var(--muted); }
 
-/* Room view: its own header sits top left, in place of the sprint label; the room cards and overview-only tools hide. */
-.app.room-mode .office-only, .app.room-mode #rooms, .app.room-mode #info { display: none; }
+/* Room view: its own header sits top left, in place of the sprint label; overview-only tools hide. */
+.app.room-mode .office-only, .app.room-mode #info { display: none; }
 #roomhead {
   position: absolute; z-index: 3; top: 10px; left: 10px; display: flex; align-items: center; gap: 12px;
   padding: 6px 8px 6px 6px; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 12px;

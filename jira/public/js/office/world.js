@@ -137,31 +137,33 @@ function windowAt(wall, along) {
 [-8, 0.5, 6].forEach((z) => windowAt(wRight, z));
 B(0.5, 2.4, 3, M.books, -20.75, 0, -9, { parent: wLeft.g, solid: true });
 B(0.5, 2.4, 3, M.books, -20.75, 0, 0, { parent: wLeft.g, solid: true });
-// Low partitions around the Dev and QA rooms, each with a 2-unit door at x=2 on the corridor side.
-for (const [x0, x1, z] of [[-7, 1, -2], [3, 11, -2], [-7, 1, 2], [3, 11, 2]]) { B(x1 - x0, 1.1, 0.16, M.wall, (x0 + x1) / 2, 0, z, { solid: true }); B(x1 - x0, 0.06, 0.2, M.trim, (x0 + x1) / 2, 1.1, z, { cast: false }); }
+// Low partitions on the corridor side of the Dev, QA, War room and Planning rooms, each with a 2-unit door under its sign.
+for (const [x0, x1, z] of [[-7, 1, -2], [3, 11, -2], [-7, 1, 2], [3, 11, 2], [-21, -15, -2], [-13, -7, -2], [-21, -15, 2], [-13, -7, 2]]) { B(x1 - x0, 1.1, 0.16, M.wall, (x0 + x1) / 2, 0, z, { solid: true }); B(x1 - x0, 0.06, 0.2, M.trim, (x0 + x1) / 2, 1.1, z, { cast: false }); }
 for (const [x, z0, z1] of [[-7, -13, -2], [-7, 2, 13], [11, 2, 13]]) { B(0.16, 1.1, z1 - z0, M.wall, x, 0, (z0 + z1) / 2, { solid: true }); B(0.2, 0.06, z1 - z0, M.trim, x, 1.1, (z0 + z1) / 2, { cast: false }); }
 function updateWalls() {
   const cx = Math.sin(camAz()), cz = Math.cos(camAz());
   for (const w of walls) w.g.visible = w.n[0] * cx + w.n[1] * cz < 0.25;
 }
 
-// Floor labels: lie on the floor, turn with the camera so they read left to right.
-const labels = [];
-function floorLabel(x, z, title, sub, w = 7.6) {
-  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 256;
-  const t = new THREE.CanvasTexture(cv); t.anisotropy = 4;
-  const pivot = new THREE.Group(); pivot.position.set(x, 0.03, z); scene.add(pivot);
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }));
-  m.rotation.x = -Math.PI / 2; pivot.add(m);
-  labels.push({ pivot, draw: (fg) => {
-    const g = cv.getContext('2d'); g.clearRect(0, 0, 1024, 256); g.textAlign = 'center'; g.fillStyle = fg;
-    g.globalAlpha = 0.85; g.font = `700 92px ${FONT}`; g.fillText(title.toUpperCase(), 512, 125);
-    g.globalAlpha = 0.6; g.font = `500 58px ${FONT}`; g.fillText(sub, 512, 210);
-    t.needsUpdate = true;
-  } });
+// Door signs: a frame over each room's door with its name on a board, readable from both sides. Clicking one looks
+// into the room (app.js). The meeting room's glass wall already frames its door.
+const signs = []; // meshes, userData.zone
+function doorSign(zone) {
+  const Z = ZONES[zone], [dx, dz] = Z.doors[Z.doors.length - 1]; // the outer door point, on the corridor
+  const z = Math.sign(dz) * 2; // the room's edge on the corridor
+  if (zone !== 'review') { B(0.12, 2.3, 0.12, M.trim, dx - 1.05, 0, z); B(0.12, 2.3, 0.12, M.trim, dx + 1.05, 0, z); B(2.22, 0.1, 0.12, M.trim, dx, 2.3, z); }
+  const cv = makeCanvas(512, 128, (g) => {
+    g.fillStyle = '#20282c'; g.fillRect(0, 0, 512, 128);
+    g.fillStyle = css(`--${Z.color}`) || '#8a94a3'; g.fillRect(0, 0, 14, 128);
+    g.fillStyle = '#f4f6f6'; g.font = `700 58px ${FONT}`; g.textBaseline = 'middle'; g.fillText(Z.name, 40, 68);
+  });
+  const mat = new THREE.MeshBasicMaterial({ map: tex(cv) });
+  for (const side of [0, Math.PI]) {
+    const m = plane(1.9, 0.48, mat, dx, 2.0, z + (side ? -0.07 : 0.07), side);
+    m.userData.zone = zone; signs.push(m);
+  }
+  B(1.96, 0.54, 0.1, M.metal, dx, 1.73, z, { cast: false });
 }
-for (const [k, Z] of Object.entries(ZONES)) if (k !== 'review') floorLabel(Z.center[0], Z.rect[3] < 0 ? -3.0 : 3.0, Z.name, Z.sub);
-floorLabel(16, -1.0, ZONES.review.name, ZONES.review.sub, 6.4);
 
 function chair(x, z, rotY) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
@@ -263,6 +265,8 @@ for (let i = 0; i < 8; i++) {
 }
 for (const [x, z] of [[-6.2, 12.3], [10.2, 12.3]]) plant(x, z, true);
 
+Object.keys(ZONES).forEach(doorSign);
+
 // info: { all: [{k, s, st, pr, type, who}], highest: [same], bugsOpen, passed }
 function updateRooms(info) {
   let g = warScreen.g;
@@ -320,5 +324,4 @@ function applyWorldTheme(dark, fg) {
   sun.intensity = dark ? 0.2 : 0.6; sun.color.set(dark ? '#9fb4ff' : '#ffffff');
   lamps.forEach((l) => (l.intensity = dark ? 0.7 : 0));
   M.pane.color.set(dark ? '#1c2f52' : '#d7eef7');
-  labels.forEach((l) => l.draw(fg));
 }

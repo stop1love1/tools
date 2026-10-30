@@ -26,10 +26,10 @@ const SORDER = ['urgent', 'review', 'desk', 'todo', 'done'];
 
 // Where people stand. Floor plan x -21..21, z -13..13; corridor along z=0. Doors list the inner point first.
 const ZONES = {
-  urgent: { name: 'War room', sub: 'Highest priority', color: 'overdue', rect: [-21, -7, -13, -2], doors: [[-14, -1.2]], wander: [-16.2, -11.8, -9, -5] },
+  urgent: { name: 'War room', sub: 'Highest priority', color: 'overdue', rect: [-21, -7, -13, -2], doors: [[-14, -3], [-14, -1.2]], wander: [-16.2, -11.8, -9, -5] },
   dev: { name: 'Dev room', sub: 'Devs at work', color: 'prog', rect: [-7, 11, -13, -2], doors: [[2, -3], [2, -1.2]], wander: [-5, 9, -3.5, -2.8] },
   review: { name: 'Meeting room', sub: 'In review', color: 'review', rect: [11, 21, -13, -2], doors: [[16, -3], [16, -1.2]], wander: [19.3, 20.4, -11.5, -3.5] },
-  todo: { name: 'Planning board', sub: 'Only To Do left', color: 'todo', rect: [-21, -7, 2, 13], doors: [[-14, 1.2]], wander: [-17.5, -10.5, 4, 10], face: -Math.PI / 2 },
+  todo: { name: 'Planning board', sub: 'Only To Do left', color: 'todo', rect: [-21, -7, 2, 13], doors: [[-14, 3], [-14, 1.2]], wander: [-17.5, -10.5, 4, 10], face: -Math.PI / 2 },
   qa: { name: 'QA room', sub: 'QA testing', color: 'prog', rect: [-7, 11, 2, 13], doors: [[2, 3], [2, 1.2]], wander: [-5, 9, 2.8, 3.5] },
   done: { name: 'Pantry', sub: 'All done', color: 'done', rect: [11, 21, 2, 13], doors: [[16, 1.2]], wander: [13, 17.5, 3, 8] },
 };
