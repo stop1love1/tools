@@ -78,15 +78,29 @@ async function fetchTeam(sprintId) {
   };
 }
 
+// What the office's Team panel and Settings set: each person's gender and a role that wins over the QA people list,
+// the team's order (meeting seats, standup turns) and the day's schedule. Applied on every answer, cached or not,
+// so a change shows on the next load.
+const withProfiles = (team, { people = {}, order = [], hours, lunch, standup, retro } = {}) => ({
+  ...team,
+  members: team.members.map((m) => {
+    const p = people[m.accountId] || {};
+    return { ...m, role: p.role || m.role, gender: p.gender || null };
+  }),
+  order,
+  schedule: { hours, lunch, standup, retro },
+});
+
 // `sprintId`: a sprint picked on the Overview; none = the team's active sprint. `fresh` skips the cache.
 function listTeamSprint({ sprintId = null, fresh = false } = {}) {
   const key = sprintId || 'open';
   const hit = cache.get(key);
-  if (!fresh && hit && Date.now() - hit.at < TTL) return hit.promise;
+  const profiles = (team) => withProfiles(team, config.get().office);
+  if (!fresh && hit && Date.now() - hit.at < TTL) return hit.promise.then(profiles);
   const promise = fetchTeam(sprintId);
   cache.set(key, { at: Date.now(), promise });
   promise.catch(() => cache.get(key)?.promise === promise && cache.delete(key));
-  return promise;
+  return promise.then(profiles);
 }
 
-module.exports = { listTeamSprint, groupTeam };
+module.exports = { listTeamSprint, groupTeam, withProfiles };

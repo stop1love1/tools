@@ -12,7 +12,10 @@ const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 const STATUS = { todo: 'To Do', prog: 'In Progress', review: 'In Review', done: 'Done' };
 const PRIORITY = { highest: 'Highest', high: 'High', medium: 'Medium', low: 'Low' };
-const ROLES = { dev: 'Dev', qa: 'QA' };
+// Set per person in the Team panel (lib/config.js PERSON), with the room each works in.
+const ROLES = { dev: 'Dev', qa: 'QA', ba: 'BA', po: 'PO', pm: 'PM' };
+const ROLE_ROOM = { dev: 'dev', qa: 'qa', ba: 'qa', po: 'review', pm: 'review' };
+const GENDERS = { male: 'Male', female: 'Female' };
 
 // What a person is doing: drives colours, filters and grouping. `urgent` = an open Highest-priority task or bug.
 const STATES = {
@@ -28,10 +31,10 @@ const SORDER = ['urgent', 'review', 'desk', 'todo', 'done'];
 const ZONES = {
   urgent: { name: 'War room', sub: 'Highest priority', color: 'overdue', rect: [-21, -7, -13, -2], doors: [[-14, -3], [-14, -1.2]], wander: [-16.2, -11.8, -9, -5] },
   dev: { name: 'Dev room', sub: 'Devs at work', color: 'prog', rect: [-7, 11, -13, -2], doors: [[2, -3], [2, -1.2]], wander: [-5, 9, -3.5, -2.8] },
-  review: { name: 'Meeting room', sub: 'In review', color: 'review', rect: [11, 21, -13, -2], doors: [[16, -3], [16, -1.2]], wander: [19.3, 20.4, -11.5, -3.5] },
-  todo: { name: 'Planning board', sub: 'Only To Do left', color: 'todo', rect: [-21, -7, 2, 13], doors: [[-14, 3], [-14, 1.2]], wander: [-17.5, -10.5, 4, 10], face: -Math.PI / 2 },
-  qa: { name: 'QA room', sub: 'QA testing', color: 'prog', rect: [-7, 11, 2, 13], doors: [[2, 3], [2, 1.2]], wander: [-5, 9, 2.8, 3.5] },
-  done: { name: 'Pantry', sub: 'All done', color: 'done', rect: [11, 21, 2, 13], doors: [[16, 1.2]], wander: [13, 17.5, 3, 8] },
+  review: { name: 'Meeting room', sub: 'Meetings', color: 'review', rect: [11, 21, -13, -2], doors: [[16, -3], [16, -1.2]], wander: [19.3, 20.4, -11.5, -3.5] },
+  todo: { name: 'Sprint board', sub: 'Daily standup', color: 'todo', rect: [-21, -7, 2, 13], doors: [[-14, 3], [-14, 1.2]], wander: [-17.5, -10.5, 4, 10], face: -Math.PI / 2 },
+  qa: { name: 'QA room', sub: 'Testing, review queue', color: 'prog', rect: [-7, 11, 2, 13], doors: [[2, 3], [2, 1.2]], wander: [-5, 9, 2.8, 3.5] },
+  done: { name: 'Pantry', sub: 'All done, lunch', color: 'done', rect: [11, 21, 2, 13], doors: [[16, 1.2]], wander: [13, 17.5, 3, 8] },
 };
 const TABLE = { x: 16, z: -7.5 }; // meeting table; its seats are built in world.js
 
@@ -54,12 +57,16 @@ function toTask(t, now = new Date()) {
     sp: t.storyPoints || 0,
     due: t.due ? Math.round((dayStart(new Date(`${t.due}T00:00:00`)) - dayStart(now)) / DAY) : null,
     idle: t.updated ? Math.max(0, Math.floor((now - new Date(t.updated)) / DAY)) : 0,
+    at: t.updated ? Date.parse(t.updated) : 0,
     pr: /highest|blocker|critical/i.test(p) ? 'highest' : /high|major/i.test(p) ? 'high' : /low|minor|trivial/i.test(p) ? 'low' : 'medium',
     type: /bug/i.test(t.type || '') ? 'bug' : 'task',
   };
 }
 const toPeople = (members, now = new Date()) =>
-  members.map((m) => ({ id: m.accountId, name: m.name, me: !!m.me, role: m.role === 'qa' ? 'qa' : 'dev', tasks: m.tasks.map((t) => toTask(t, now)) }));
+  members.map((m) => ({
+    id: m.accountId, name: m.name, me: !!m.me, role: ROLES[m.role] ? m.role : 'dev',
+    gender: GENDERS[m.gender] ? m.gender : null, tasks: m.tasks.map((t) => toTask(t, now)),
+  }));
 
 // ---- Rules ----
 const isLate = (t) => t.st !== 'done' && t.due !== null && t.due < 0;
@@ -71,9 +78,41 @@ function stateOf(u) {
   if (open.some((t) => t.st === 'prog')) return 'desk';
   return open.length ? 'todo' : 'done';
 }
-// The room for a state: people at work sit in their role's room.
-const zoneOf = (u) => { const s = stateOf(u); return s === 'desk' ? (u.role === 'qa' ? 'qa' : 'dev') : s; };
-const placeName = (u) => ZONES[zoneOf(u)].name;
+// Where a person works: Highest-priority work in the war room, anything else in their role's room (Dev; QA and BA in the
+// QA room; PO and PM at the meeting table), where work waiting for review waits in the QA room's queue, not its author.
+// All done: the pantry, except for PO and PM, whose work is rarely tasks of their own.
+const zoneOf = (u) => {
+  const s = stateOf(u), room = ROLE_ROOM[u.role] || 'dev';
+  return s === 'urgent' ? s : s === 'done' && room !== 'review' ? s : room;
+};
+// Someone with a Jira update in the last hour: still at work after hours.
+const isActive = (u, now = Date.now()) => u.tasks.some((t) => t.at && now - t.at < 3_600_000);
+// The Team panel's order (top first), then by name: meeting seats from the head of the table, standup turns.
+const byOrder = (order) => (a, b) => {
+  const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+  return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib) || baseName(a.name).localeCompare(baseName(b.name), 'vi');
+};
+
+// The office's day (Settings → Overview 3D office): hours, lunch, the daily standup (an hour of sprint planning on the
+// sprint's first day) and the review & retro on its last. → { kind: off|work|standup|planning|lunch|retro, name, until, next }
+const hm = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec((s || '').trim()); return m ? +m[1] * 60 + +m[2] : null; };
+const hmText = (x) => `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+function scheduleAt(now, S = {}, sprint = null) {
+  const span = (s, dflt) => { const [a, b] = (s || dflt).split('-').map(hm); return a !== null && b !== null && a < b ? [a, b] : dflt.split('-').map(hm); };
+  const [ws, we] = span(S.hours, '08:30-17:30'), [ls, le] = span(S.lunch, '12:00-13:00');
+  const su = hm(S.standup) ?? hm('09:15'), rt = hm(S.retro) ?? hm('16:00');
+  const m = now.getHours() * 60 + now.getMinutes(), wd = now.getDay();
+  const today = (iso) => !!iso && dayStart(new Date(iso)).getTime() === dayStart(now).getTime();
+  const events = [
+    today(sprint?.startDate) ? { kind: 'planning', name: 'Sprint planning', from: su, to: su + 60 } : { kind: 'standup', name: 'Daily standup', from: su, to: su + 15 },
+    { kind: 'lunch', name: 'Lunch', from: ls, to: le },
+    ...(today(sprint?.endDate) ? [{ kind: 'retro', name: 'Sprint review & retro', from: rt, to: rt + 60 }] : []),
+  ];
+  if (wd === 0 || wd === 6 || m < ws || m >= we) return { kind: 'off', name: 'After hours', until: null, next: null, hours: `${hmText(ws)}–${hmText(we)}` };
+  const on = events.find((e) => m >= e.from && m < e.to);
+  const next = events.filter((e) => e.from > m).sort((a, b) => a.from - b.from)[0];
+  return { kind: on ? on.kind : 'work', name: on ? on.name : 'Working', until: on ? hmText(on.to) : null, next: next ? { kind: next.kind, name: next.name, at: hmText(next.from) } : null };
+}
 const isIdle = (u) => u.tasks.some((t) => t.st === 'prog' && t.idle >= 3);
 const spOf = (u) => ({ done: u.tasks.filter((t) => t.st === 'done').reduce((s, t) => s + t.sp, 0), total: u.tasks.reduce((s, t) => s + t.sp, 0) });
 const RANK = { review: 1, prog: 2, todo: 3, done: 4 };

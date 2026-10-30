@@ -3,6 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "description": "Local dashboard for my Jira issues and their Confluence docs",
+  "homepage": "https://github.com/stop1love1/tools",
+  "author": "stop1love1",
   "engines": {
     "node": ">=18"
   },

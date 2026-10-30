@@ -38,13 +38,6 @@ const CANVAS = {
     g.fillStyle = '#8d7259'; g.fillRect(0, 0, 64, 64);
     for (let s = 0; s < 4; s++) { let x = 2; while (x < 62) { const w = 3 + Math.floor(r() * 3), h = 11 + Math.floor(r() * 3); g.fillStyle = spines[Math.floor(r() * spines.length)]; g.fillRect(x, s * 16 + 15 - h, w, h); x += w + 1; } }
   }),
-  tv: makeCanvas(256, 128, (g) => {
-    g.fillStyle = '#16202b'; g.fillRect(0, 0, 256, 128);
-    g.fillStyle = '#8a98a8'; g.font = `600 13px ${FONT}`; g.fillText('Sprint burndown', 14, 22);
-    g.strokeStyle = '#3a4756'; g.lineWidth = 1; for (let y = 40; y <= 110; y += 14) { g.beginPath(); g.moveTo(14, y); g.lineTo(242, y); g.stroke(); }
-    g.strokeStyle = '#5b6b7c'; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(14, 40); g.lineTo(242, 110); g.stroke(); g.setLineDash([]);
-    g.strokeStyle = '#63a4fa'; g.lineWidth = 3; g.beginPath(); [[14, 40], [46, 44], [78, 56], [110, 58], [142, 72], [174, 80]].forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
-  }),
   // Dev room whiteboard: a hand-drawn system sketch.
   arch: makeCanvas(256, 96, (g) => {
     g.fillStyle = '#fbfbf8'; g.fillRect(0, 0, 256, 96);
@@ -69,10 +62,17 @@ const HAIR = ['#2a211c', '#4a3527', '#1b1b1b', '#6e4a2e', '#b39066', '#5d6066'];
 const SHIRT = ['#33507a', '#4f74a8', '#5b7f6e', '#8a5c48', '#6b7078', '#e8e6e1', '#3d5a6c', '#7a5670', '#a88a55', '#2e3a46'];
 const PANTS = ['#2b3442', '#3a3d42', '#5a4d3e', '#26414d', '#43473e'];
 const SHOES = ['#1f1f1f', '#e9e9e6', '#4f3828'];
+const SKIRT = ['#2b3442', '#7a5670', '#a8794f', '#3d5a6c', '#8a4b4b', '#5b6b52'];
+const LIPS = ['#c4636a', '#b5545c', '#d2777c'];
 
 function skinOf(u) {
   const r = rng(hash(u.id + u.name)), p = (a) => a[Math.floor(r() * a.length)];
-  return { skin: p(SKIN), hair: p(HAIR), shirt: p(SHIRT), pants: p(PANTS), shoes: p(SHOES), long: r() < 0.35, shirtStyle: Math.floor(r() * 3), glasses: r() < 0.3 };
+  const S = { skin: p(SKIN), hair: p(HAIR), shirt: p(SHIRT), pants: p(PANTS), shoes: p(SHOES), long: r() < 0.35, shirtStyle: Math.floor(r() * 3), glasses: r() < 0.3 };
+  // A woman: long hair to the shoulders, lips, and now and then a skirt. Unset gender: a woman when drawn with long hair.
+  S.female = u.gender ? u.gender === 'female' : S.long;
+  S.long = S.female;
+  S.skirt = S.female && r() < 0.5 ? p(SKIRT) : null; S.lips = p(LIPS);
+  return S;
 }
 function grid(w, h, fn) { return makeCanvas(w, h, (g) => fn((x, y, c, ww = 1, hh = 1) => { g.fillStyle = c; g.fillRect(x, y, ww, hh); })); }
 function headFaces(S) {
@@ -85,7 +85,8 @@ function headFaces(S) {
     if (S.long) { P(0, 2, S.hair, 1, 6); P(7, 2, S.hair, 1, 6); }
     P(2, 4, '#2a2f36'); P(5, 4, '#2a2f36');
     if (S.glasses) { P(1, 3, '#2a2f36', 3, 1); P(4, 3, '#2a2f36', 3, 1); }
-    P(3, 6, shade(S.skin, 0.78), 2, 1);
+    P(3, 6, S.female ? S.lips : shade(S.skin, 0.78), 2, 1);
+    if (S.female) { P(1, 4, '#2a2f36'); P(6, 4, '#2a2f36'); } // lashes
   });
   const back = grid(8, 8, (P) => { P(0, 0, S.skin, 8, 8); P(0, 0, S.hair, 8, S.long ? 8 : 6); });
   const top = grid(8, 8, (P) => P(0, 0, S.hair, 8, 8));
@@ -109,6 +110,8 @@ function armFaces(S) {
   return [f(), f(), grid(4, 4, (P) => P(0, 0, base, 4, 4)), grid(4, 4, (P) => P(0, 0, S.skin, 4, 4)), f(), f()];
 }
 function legFaces(S) {
-  const f = () => grid(4, 12, (P) => { P(0, 0, S.pants, 4, 12); P(0, 10, S.shoes, 4, 2); });
-  return [f(), f(), grid(4, 4, (P) => P(0, 0, S.pants, 4, 4)), grid(4, 4, (P) => P(0, 0, S.shoes, 4, 4)), f(), f()];
+  const top = S.skirt ? S.skin : S.pants; // bare legs under a skirt
+  const f = () => grid(4, 12, (P) => { P(0, 0, top, 4, 12); P(0, 10, S.shoes, 4, 2); });
+  return [f(), f(), grid(4, 4, (P) => P(0, 0, top, 4, 4)), grid(4, 4, (P) => P(0, 0, S.shoes, 4, 4)), f(), f()];
 }
+const solidFaces = (c) => Array.from({ length: 6 }, () => grid(4, 4, (P) => P(0, 0, c, 4, 4)));

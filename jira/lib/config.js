@@ -78,6 +78,12 @@ function defaults() {
     },
     office: {
       qaPeople: [],
+      people: {}, // accountId → { gender, role }, set from the office's Team panel (savePerson)
+      order: [], // accountIds as dragged in the Team panel: meeting seats and standup turns (saveOrder)
+      hours: '08:30-17:30',
+      lunch: '12:00-13:00',
+      standup: '09:15',
+      retro: '16:00',
     },
     server: {
       port: Number(env.PORT) || 4747,
@@ -128,7 +134,11 @@ const SCHEMA = [
     { key: 'agent.extraInstructions', label: 'Extra instructions in every prompt', type: 'lines', optional: true, help: 'Team conventions, commands to run before committing…' },
   ] },
   { section: 'Overview 3D office', fields: [
-    { key: 'office.qaPeople', label: 'QA people', type: 'lines', optional: true, help: 'Jira display names (or account ids), one per line. They sit in the QA room; everyone else in the Dev room.' },
+    { key: 'office.qaPeople', label: 'QA people', type: 'lines', optional: true, help: 'Jira display names (or account ids), one per line. They sit in the QA room; everyone else in the Dev room. The Team panel in the office sets each person\'s role (Dev, QA, BA, PO, PM).' },
+    { key: 'office.hours', label: 'Office hours', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}-\\d{1,2}:\\d{2}$', help: 'Outside them (and at weekends) only people with a Jira update in the last hour stay in the office.' },
+    { key: 'office.lunch', label: 'Lunch break', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}-\\d{1,2}:\\d{2}$', help: 'Everyone goes to the pantry.' },
+    { key: 'office.standup', label: 'Daily standup', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}$', help: '15 minutes at the sprint board. On the sprint\'s first day: an hour of sprint planning in the meeting room instead.' },
+    { key: 'office.retro', label: 'Sprint review & retro', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}$', help: 'An hour in the meeting room on the sprint\'s last day.' },
   ] },
   { section: 'Server', fields: [
     { key: 'server.port', label: 'Port', type: 'number', min: 1024, max: 65535, restart: true },
@@ -160,6 +170,8 @@ function load() {
     const v = getAt(overrides, f.key);
     if (v !== undefined && !validate(f, v)) setAt(base, f.key, v);
   }
+  base.office.people = cleanPeople(overrides.office?.people);
+  base.office.order = cleanOrder(overrides.office?.order);
   current = base;
   startup ??= Object.fromEntries(FIELDS.filter((f) => f.restart).map((f) => [f.key, getAt(base, f.key)]));
   return current;
@@ -220,12 +232,65 @@ function save(values) {
     else setAt(next, key, v);
   }
   if (Object.keys(errors).length) throw Object.assign(httpError(400, Object.values(errors).join(' · ')), { fields: errors });
+  write(next);
+  return view();
+}
+
+function write(next) {
   const tmp = FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n');
   fs.renameSync(tmp, FILE);
   load();
   for (const fn of listeners) fn(current);
-  return view();
+}
+
+// The office's people: gender (the character's look) and role (which room they work in).
+const PERSON = {
+  gender: ['male', 'female'],
+  role: ['dev', 'qa', 'ba', 'po', 'pm'],
+};
+const ACCOUNT_RE = /^[A-Za-z0-9:_-]{1,128}$/;
+// Keeps the known values only; a person with nothing set is dropped.
+function cleanPerson(p) {
+  const out = {};
+  for (const [k, allowed] of Object.entries(PERSON)) if (allowed.includes(p?.[k])) out[k] = p[k];
+  return Object.keys(out).length ? out : null;
+}
+function cleanPeople(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const [id, p] of Object.entries(v).slice(0, 500)) {
+    const c = ACCOUNT_RE.test(id) && cleanPerson(p);
+    if (c) out[id] = c;
+  }
+  return out;
+}
+// Sets one person's profile (unknown or empty values clear that field) and returns everyone's.
+function savePerson(id, profile) {
+  if (!ACCOUNT_RE.test(id || '')) throw httpError(400, 'Invalid accountId');
+  for (const [k, allowed] of Object.entries(PERSON)) {
+    const val = profile?.[k];
+    if (val != null && val !== '' && !allowed.includes(val)) throw httpError(400, `Unknown ${k}: ${val}`);
+  }
+  get(); // overrides are read on first use
+  const next = JSON.parse(JSON.stringify(overrides));
+  const people = cleanPeople(next.office?.people);
+  const p = cleanPerson(profile);
+  if (p) people[id] = p; else delete people[id];
+  if (Object.keys(people).length) setAt(next, 'office.people', people); else deleteAt(next, 'office.people');
+  write(next);
+  return current.office.people;
+}
+const cleanOrder = (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => typeof id === 'string' && ACCOUNT_RE.test(id)))].slice(0, 500) : []);
+// The Team panel's order, top first.
+function saveOrder(ids) {
+  if (!Array.isArray(ids)) throw httpError(400, 'order must be a list of accountIds');
+  get(); // overrides are read on first use
+  const next = JSON.parse(JSON.stringify(overrides));
+  const order = cleanOrder(ids);
+  if (order.length) setAt(next, 'office.order', order); else deleteAt(next, 'office.order');
+  write(next);
+  return current.office.order;
 }
 
 function deleteAt(obj, key) {
@@ -271,4 +336,4 @@ function client() {
 const listeners = [];
 const onChange = (fn) => listeners.push(fn);
 
-module.exports = { get, load, save, view, client, onChange, startupValue: (key) => (get(), startup[key]) };
+module.exports = { get, load, save, savePerson, saveOrder, view, client, onChange, startupValue: (key) => (get(), startup[key]) };

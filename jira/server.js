@@ -167,6 +167,12 @@ async function api(req, res, url) {
     if (sprint && !/^\d{1,12}$/.test(sprint)) return send(res, 400, { error: 'sprint must be a sprint id' });
     return send(res, 200, await listTeamSprint({ sprintId: sprint ? Number(sprint) : null, fresh: url.searchParams.has('fresh') }));
   }
+  // The office's Team panel: one person's gender and role, and everyone's order.
+  if (route === 'PUT /api/office/people') {
+    const body = await readJson(req);
+    return send(res, 200, { people: config.savePerson(body?.accountId, body?.profile) });
+  }
+  if (route === 'PUT /api/office/order') return send(res, 200, { order: config.saveOrder((await readJson(req))?.order) });
 
   // Overview trends: everything created or resolved in the window, plus whatever is still open (the backlog at each point).
   if (route === 'GET /api/history') {

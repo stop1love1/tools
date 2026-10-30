@@ -9,6 +9,7 @@ const SPRINT = new URLSearchParams(location.search).get('sprint');
 const DEMO = typeof OFFICE_DEMO !== 'undefined' ? OFFICE_DEMO : null; // the static demo build (demo.js): made-up data, no server
 const tryStore = (k, val) => { try { if (val === undefined) return localStorage.getItem(k); localStorage.setItem(k, val); } catch { return null; } };
 const byId = (id) => chars.find((c) => c.u.id === id);
+const whereText = (c) => (c.group.visible ? ZONES[c.isPlayer ? zoneAt(c.pos.x, c.pos.z) || 'dev' : c.zone || zoneOf(c.u)].name : 'Gone home');
 const stateChip = (c) => `<span class="zchip" data-z="${c.state}">${STATES[c.state].name}</span>`;
 const typeChip = (t) => `<span class="ttype${t.type === 'bug' ? ' bug' : ''}">${t.type === 'bug' ? 'Bug' : 'Task'}</span>`;
 const prioChip = (t) => (t.pr === 'highest' || t.pr === 'high' ? `<span class="prio ${t.pr}">${PRIORITY[t.pr]}</span>` : '');
@@ -34,7 +35,7 @@ const tip = $('#tip');
 function showTip(c, x, y) {
   if (!c) { tip.hidden = true; return; }
   const t = currentTask(c.u), sp = spOf(c.u);
-  tip.innerHTML = `<b>${esc(fullName(c.u))}</b><span class="tiprow">${stateChip(c)}<span class="k">${ROLES[c.u.role]} · ${placeName(c.u)}</span></span>
+  tip.innerHTML = `<b>${esc(fullName(c.u))}</b><span class="tiprow">${stateChip(c)}<span class="k">${ROLES[c.u.role]} · ${whereText(c)}</span></span>
     ${t ? `<span class="tiprow">${typeChip(t)}${prioChip(t)}<span class="k">${t.k} · ${esc(t.statusName)}</span></span><span>${esc(t.s)}</span>` : '<span>Nothing open</span>'}
     <span class="k">${sp.done}/${sp.total} SP · click for details</span>`;
   tip.hidden = false;
@@ -50,13 +51,13 @@ const taskItem = (t, who) => `<li class="${t.pr === 'highest' && isOpen(t) ? 'ho
   <p>${esc(t.s)}</p>
   <div class="row2">${who ? `<span>${who}</span>` : ''}<span>${t.sp} SP</span><span class="${isLate(t) ? 'late' : ''}">${dueText(t)}</span>${t.st === 'prog' && t.idle >= 3 ? `<span>${t.idle}d without an update</span>` : ''}</div>
 </li>`;
-function openDrawer(c) { roomOpen = null; selected = c; $('#drawer-kind').textContent = 'Person'; renderDrawer(); drawer.classList.add('open'); }
-function closeDrawer() { selected = null; roomOpen = null; drawer.classList.remove('open'); }
+function openDrawer(c) { roomOpen = null; teamOpen = false; selected = c; $('#drawer-kind').textContent = 'Person'; renderDrawer(); drawer.classList.add('open'); }
+function closeDrawer() { selected = null; roomOpen = null; teamOpen = false; drawer.classList.remove('open'); }
 function renderDrawer() {
   if (!selected) return;
   const c = selected, u = c.u, sp = spOf(u), open = u.tasks.filter(isOpen).length, late = u.tasks.filter(isLate).length;
   $('#drawer-body').innerHTML = `
-    <div class="who">${avatarHTML(c, 'ava')}<div><h2>${esc(fullName(u))}</h2><span class="tiprow">${stateChip(c)}<span class="k">${ROLES[u.role]} · ${placeName(u)}</span></span></div></div>
+    <div class="who">${avatarHTML(c, 'ava')}<div><h2>${esc(fullName(u))}</h2><span class="tiprow">${stateChip(c)}<span class="k">${ROLES[u.role]} · ${whereText(c)}</span></span></div></div>
     <div class="stats"><div><b>${sp.done}/${sp.total}</b><span>SP done</span></div><div><b>${open}</b><span>open</span></div><div><b class="${late ? 'late' : ''}">${late}</b><span>overdue</span></div></div>
     <div class="spbar"><span style="width:${sp.total ? (sp.done / sp.total) * 100 : 0}%"></span></div>
     <ul class="tasks">${sortTasks(u.tasks).map((t) => taskItem(t)).join('') || '<li class="k">No tasks in this sprint.</li>'}</ul>
@@ -74,15 +75,15 @@ $('#close').addEventListener('click', closeDrawer);
 const ROOM_ORDER = ['urgent', 'dev', 'review', 'todo', 'qa', 'done'];
 function roomData(z) {
   const all = chars.flatMap((c) => c.u.tasks.map((t) => ({ ...t, c })));
-  const people = chars.filter((c) => !c.isPlayer && zoneOf(c.u) === z || (c.isPlayer && zoneAt(c.pos.x, c.pos.z) === z));
+  const people = chars.filter((c) => c.group.visible && (c.isPlayer ? zoneAt(c.pos.x, c.pos.z) : c.zone) === z);
   const sp = (l) => l.reduce((s, t) => s + t.sp, 0);
   const bugs = all.filter((t) => isOpen(t) && t.type === 'bug');
   let tasks, line;
   if (z === 'urgent') { tasks = all.filter((t) => isOpen(t) && t.pr === 'highest'); line = `${tasks.length} Highest open`; }
-  else if (z === 'dev') { tasks = all.filter((t) => t.st === 'prog' && t.c.u.role === 'dev' && t.pr !== 'highest'); line = `${people.length} coding · ${sp(tasks)} SP`; }
-  else if (z === 'qa') { tasks = all.filter((t) => t.pr !== 'highest' && ((t.st === 'prog' && t.c.u.role === 'qa') || (isOpen(t) && t.type === 'bug'))); line = `${people.length} testing · ${bugs.length} open bugs`; }
-  else if (z === 'review') { tasks = all.filter((t) => t.st === 'review'); line = `${tasks.length} waiting for review`; }
-  else if (z === 'todo') { tasks = all.filter((t) => t.st === 'todo'); line = `${tasks.length} not started`; }
+  else if (z === 'dev') { tasks = all.filter((t) => t.st === 'prog' && zoneOf(t.c.u) === 'dev' && t.pr !== 'highest'); line = `${people.length} coding · ${sp(tasks)} SP`; }
+  else if (z === 'qa') { tasks = all.filter((t) => t.pr !== 'highest' && (t.st === 'review' || (t.st === 'prog' && zoneOf(t.c.u) === 'qa') || (isOpen(t) && t.type === 'bug'))); line = `${people.length} testing · ${all.filter((t) => t.st === 'review').length} in the review queue · ${bugs.length} open bugs`; }
+  else if (z === 'review') { tasks = all.filter((t) => isOpen(t) && zoneOf(t.c.u) === 'review'); line = meetLine(); }
+  else if (z === 'todo') { tasks = all.filter((t) => t.st === 'todo'); line = `${tasks.length} not started · standup ${hmText(hm(schedule.standup) ?? 555)}`; }
   else { tasks = all.filter((t) => t.st === 'done'); line = `${tasks.length} done · ${sp(tasks)}/${sp(all)} SP`; }
   return { people, tasks, line };
 }
@@ -104,7 +105,7 @@ function hoverSign(zone) {
   signHover = zone; resetGlow();
   if (zone) ZONES[zone].glow.material.opacity = 0.18;
 }
-function openRoom(z) { selected = null; roomOpen = z; $('#drawer-kind').textContent = 'Room'; renderRoomDrawer(); drawer.classList.add('open'); }
+function openRoom(z) { selected = null; teamOpen = false; roomOpen = z; $('#drawer-kind').textContent = 'Room'; renderRoomDrawer(); drawer.classList.add('open'); }
 function renderRoomDrawer() {
   const z = roomOpen, d = roomData(z);
   $('#drawer-body').innerHTML = `
@@ -113,6 +114,139 @@ function renderRoomDrawer() {
     <ul class="tasks">${sortTasks(d.tasks).map((t) => taskItem(t, `${esc(short(t.c.u))} · ${ROLES[t.c.u.role]}`)).join('') || '<li class="k">No tasks here.</li>'}</ul>`;
   $('#drawer-body .people').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) focusChar(byId(b.dataset.id), true); });
 }
+
+// ---- Team panel: everyone's gender and role, and their order (drag to change): meeting seats and standup turns ----
+let teamOpen = false, teamOrder = [];
+const demoProfiles = {};
+const options = (map, val, none) => (none ? `<option value="">${none}</option>` : '') + Object.entries(map).map(([k, l]) => `<option value="${k}"${k === val ? ' selected' : ''}>${l}</option>`).join('');
+const ordered = () => [...chars].sort((a, b) => byOrder(teamOrder)(a.u, b.u));
+function openTeam() { selected = null; roomOpen = null; teamOpen = true; $('#drawer-kind').textContent = 'Team'; renderTeam(); drawer.classList.add('open'); }
+function renderTeam() {
+  $('#drawer-body').innerHTML = `
+    <ul class="team">${ordered().map((c, i) => `<li data-id="${esc(c.u.id)}">
+      <div class="trow"><span class="grip" aria-hidden="true">⋮⋮</span><b class="tno">${i + 1}</b>
+      <button class="tname" title="Show in the office">${avatarHTML(c, 'pav sm')}<span>${esc(fullName(c.u))}</span></button></div>
+      <div class="tsel">
+        <select data-f="gender" aria-label="Gender">${options(GENDERS, c.u.gender, 'Gender —')}</select>
+        <select data-f="role" aria-label="Role">${options(ROLES, c.u.role)}</select>
+      </div></li>`).join('') || '<li class="k">The team has not loaded yet.</li>'}</ul>`;
+}
+const body = $('#drawer-body');
+async function put(url, data) {
+  const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' }, body: JSON.stringify(data) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+  return out;
+}
+// A server started before an update keeps only what it knows: say so instead of looking saved.
+const STALE = 'the server did not keep it. Restart it (npm start or the app) to pick up the update';
+body.addEventListener('click', (e) => {
+  const b = teamOpen && e.target.closest('.tname');
+  if (b) focusChar(byId(b.closest('li').dataset.id), false);
+});
+body.addEventListener('change', async (e) => {
+  const sel = e.target.closest('.team select'); if (!sel) return;
+  const c = byId(sel.closest('li').dataset.id); if (!c) return;
+  const profile = { gender: c.u.gender, role: c.u.role, [sel.dataset.f]: sel.value || null };
+  if (DEMO) demoProfiles[c.u.id] = profile; // no server: kept for this visit
+  else {
+    try {
+      const kept = (await put('/api/office/people', { accountId: c.u.id, profile })).people?.[c.u.id] || {};
+      if (Object.entries(profile).some(([k, val]) => val && kept[k] !== val)) throw new Error(STALE);
+    } catch (err) {
+      toast(`Could not save: ${err.message}`);
+      return renderTeam();
+    }
+  }
+  setProfile(c, profile);
+  renderTeam();
+});
+// Reordering: drag a card by anything but its menus. It lifts and follows the pointer, the others slide out of its
+// way, the list scrolls near its edges; dropping saves the new order.
+async function saveOrder(order) {
+  if (order.join() === ordered().map((c) => c.u.id).join()) return renderTeam();
+  const was = teamOrder; teamOrder = order;
+  if (!DEMO) {
+    try {
+      const kept = (await put('/api/office/order', { order })).order;
+      if (!kept || kept.join() !== order.join()) throw new Error(STALE);
+    } catch (err) {
+      toast(`Could not save the order: ${err.message}`);
+      teamOrder = was;
+    }
+  }
+  renderTeam(); replan();
+}
+const domOrder = () => [...body.querySelectorAll('.team li[data-id]')].map((li) => li.dataset.id);
+let sorting = null; // { li, id, x0, y0, y, on, ph, off, raf }
+body.addEventListener('pointerdown', (e) => {
+  const li = teamOpen && e.button === 0 && !sorting && e.target.closest('.team li[data-id]');
+  if (!li || e.target.closest('select')) return;
+  sorting = { li, id: e.pointerId, x0: e.clientX, y0: e.clientY, y: e.clientY, on: false };
+});
+function liftCard(e) {
+  const S = sorting, r = S.li.getBoundingClientRect();
+  S.on = true; S.off = e.clientY - r.top;
+  S.ph = document.createElement('li'); S.ph.className = 'tph'; S.ph.style.height = `${r.height}px`;
+  S.li.before(S.ph);
+  Object.assign(S.li.style, { position: 'fixed', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, zIndex: 50, pointerEvents: 'none' });
+  S.li.classList.add('dragging'); body.classList.add('sorting');
+  try { body.setPointerCapture(e.pointerId); } catch {}
+  const scroll = () => { // keeps scrolling while the pointer rests near an edge
+    if (sorting !== S) return;
+    const b = body.getBoundingClientRect(), edge = 48;
+    const v = S.y < b.top + edge ? -(b.top + edge - S.y) : S.y > b.bottom - edge ? S.y - (b.bottom - edge) : 0;
+    if (v) { body.scrollTop += v * 0.35; placeHolder(); }
+    S.raf = requestAnimationFrame(scroll);
+  };
+  S.raf = requestAnimationFrame(scroll);
+}
+// Moves the gap to where the pointer is; the cards it passes slide (FLIP).
+function placeHolder() {
+  const S = sorting, others = [...body.querySelectorAll('.team li[data-id]')].filter((x) => x !== S.li);
+  const before = others.find((x) => { const b = x.getBoundingClientRect(); return S.y < b.top + b.height / 2; }) || null;
+  if (S.ph.nextElementSibling === before && (before || !S.ph.nextElementSibling)) return;
+  const tops = new Map(others.map((x) => [x, x.getBoundingClientRect().top]));
+  S.li.parentNode.insertBefore(S.ph, before);
+  for (const x of others) {
+    const d = tops.get(x) - x.getBoundingClientRect().top; if (!d) continue;
+    x.style.transition = 'none'; x.style.transform = `translateY(${d}px)`;
+    x.getBoundingClientRect(); // apply before animating back
+    x.style.transition = 'transform .16s ease'; x.style.transform = '';
+  }
+}
+body.addEventListener('pointermove', (e) => {
+  const S = sorting; if (!S || e.pointerId !== S.id) return;
+  S.y = e.clientY;
+  if (!S.on) { if (Math.hypot(e.clientX - S.x0, e.clientY - S.y0) < 4) return; liftCard(e); } // a click on the name stays a click
+  e.preventDefault();
+  S.li.style.top = `${e.clientY - S.off}px`;
+  placeHolder();
+});
+function endDrag(e) {
+  const S = sorting; if (!S || e.pointerId !== S.id) return;
+  sorting = null;
+  if (!S.on) return;
+  cancelAnimationFrame(S.raf);
+  const to = S.ph.getBoundingClientRect().top;
+  S.li.style.transition = 'top .14s ease'; S.li.style.top = `${to}px`;
+  setTimeout(() => {
+    S.ph.replaceWith(S.li); S.li.removeAttribute('style'); S.li.classList.remove('dragging'); body.classList.remove('sorting');
+    body.querySelectorAll('.team li[data-id]').forEach((x) => x.removeAttribute('style'));
+    saveOrder(domOrder());
+  }, 150);
+}
+body.addEventListener('pointerup', endDrag);
+body.addEventListener('pointercancel', endDrag);
+// A changed profile shows at once: a new look for a new gender, a walk to the other room for a new role.
+function setProfile(c, p) {
+  const look = c.u.gender !== p.gender;
+  c.u = { ...c.u, gender: p.gender, role: p.role };
+  if (look) reskin(c);
+  if (!c.isPlayer) retarget(c);
+  updateTag(c); refreshRooms();
+}
+$('#t-team').addEventListener('click', () => (teamOpen ? closeDrawer() : openTeam()));
 
 // ---- Room view: a perspective shot of one room, the rest clipped away ----
 let focusRoom = null;
@@ -193,44 +327,77 @@ function placeDetails() {
   }
 }
 
-// ---- Meeting: the red button on the meeting table calls everyone in; pressing it again sends them back ----
-const meetTag = $('#meet');
+// ---- The office's day: hours, standup, lunch, sprint planning / retro (scheduleAt); the red button calls a meeting ----
+let schedule = {}, sprint = null;
+// ?time=HH:MM shows the office at that time of today (to check the schedule).
+const AT = hm(new URLSearchParams(location.search).get('time'));
+const nowTime = () => { const d = new Date(); if (AT !== null) d.setHours(Math.floor(AT / 60), AT % 60, 0, 0); return d; };
+function meetLine() {
+  if (meeting) return 'Meeting now';
+  if (sched.kind === 'planning' || sched.kind === 'retro') return `${sched.name} until ${sched.until}`;
+  return sched.next && sched.next.kind !== 'lunch' ? `Next: ${sched.next.name} at ${sched.next.at}` : 'No meeting until tomorrow';
+}
+// Seats and spots for whoever is called in, in the Team panel's order; then everyone goes where they belong now.
+function replan(teleport = false) {
+  const list = ordered();
+  const seated = list.filter((c) => (c.isPlayer ? meeting : placeOf(c) === 'meeting'));
+  const standing = list.filter((c) => !c.isPlayer && placeOf(c) === 'standup');
+  for (const c of list) {
+    const seat = MEET_ORDER[seated.indexOf(c)] || null, spot = STAND_SPOTS[standing.indexOf(c)] || null;
+    if (seat !== (c.meetSeat || null) || spot !== (c.standSpot || null)) { c.meetSeat = seat; c.standSpot = spot; if (c.place === 'meeting' || c.place === 'standup') c.place = null; }
+  }
+  for (const c of chars) if (!c.isPlayer) retarget(c, teleport);
+  refreshRooms(); updateLines();
+}
+function updateLines() { drawMeetScreen(meetLine(), sprint, chars); }
+function tickSchedule(force = false) {
+  const s = scheduleAt(nowTime(), schedule, sprint);
+  if (DEMO && s.kind === 'off') Object.assign(s, { kind: 'work', name: 'Working' }); // the demo is always open
+  const changed = s.kind !== sched.kind;
+  sched = s;
+  if (changed && !force) { chars.forEach(cancelErrands); replan(); } else updateLines();
+}
+setInterval(() => tickSchedule(), 20_000);
+
 let pressedAt = -1;
 function setMeeting(on) {
   if (!player) return; // the team has not loaded yet
   meeting = on;
   chars.forEach(cancelErrands);
-  meetTag.textContent = on ? 'End meeting' : 'Meeting'; meetTag.setAttribute('aria-pressed', String(on));
   meetDome.material.color.set(on ? '#2f9e5b' : '#e0352b'); meetDome.material.emissive.set(on ? '#0c3d1f' : '#7a0d08');
   pressedAt = performance.now();
-  for (const c of chars) if (!c.isPlayer) retarget(c);
+  replan();
   if (on) { retarget(player); setFollow(false); camGoal = v(TABLE.x, TABLE.z); view.zoomT = Math.max(view.zoomT, 1.4); }
   else if (player.seat) { player.path = route(player, null, [], v(16, 0)); releaseSeat(player); player.place = null; }
 }
-meetTag.addEventListener('click', () => setMeeting(!meeting));
-// The tag floats over the button; inside another room's view the button is clipped away, and so is the tag.
-function placeMeetTag() {
-  meetTag.hidden = !!rv.room && rv.room !== 'review';
-  proj.set(TABLE.x, 1.55, TABLE.z).project(viewCam);
-  meetTag.style.transform = `translate(${((proj.x + 1) / 2) * stage.clientWidth}px, ${((1 - proj.y) / 2) * stage.clientHeight}px) translate(-50%, -100%)`;
-  // Pressed: the dome dips, then springs back.
+// Pressed: the dome dips, then springs back.
+function pressMeetButton() {
   const t = (performance.now() - pressedAt) / 250;
   meetDome.position.y = t < 1 ? 0.12 - 0.08 * Math.sin(t * Math.PI) : 0.12;
 }
+// Standup and meetings: one person at a time, in the Team panel's order, says what they are on.
+let turn = 0;
+setInterval(() => {
+  if (document.hidden) return;
+  const here = ordered().filter((c) => !c.isPlayer && (c.place === 'standup' || c.place === 'meeting') && !c.path.length);
+  if (!here.length) return;
+  const c = here[turn++ % here.length], t = currentTask(c.u);
+  say(c, t ? `${t.k} · ${trunc(t.s, 40)} (${t.statusName})` : 'All done, nothing open');
+}, 4500);
 
 // ---- Scenes between rooms: what a change on Jira looks like in the office ----
 const BOARD = (col) => v(-19.6, BOARD_COL_Z[col]);
-const COFFEE = v(19.5, 4.6);
-const pickOther = (list, not) => pick(list.filter((x) => x !== not && !x.errand && !x.isPlayer)) || null;
+const atWork = (c) => !c.isPlayer && !c.errand && ['dev', 'qa', 'urgent', 'done'].includes(c.place);
+const pickOther = (list, not) => pick(list.filter((x) => x !== not && atWork(x))) || null;
 function playChange(c, ch) {
-  if (meeting || c.isPlayer || c.errand) return;
+  if (meeting || !atWork(c)) return; // nobody leaves a standup, lunch or a meeting for it
   const t = ch.task, qas = chars.filter((x) => x.u.role === 'qa');
   if (ch.kind === 'new') {
     flow(BOARD('todo'), c.pos, t.pr === 'highest' ? COL.overdue : t.type === 'bug' ? COL.review : COL.todo);
     setTimeout(() => say(c, t.pr === 'highest' ? 'On it!' : `Got ${t.k}`, t.pr === 'highest' ? 'bug' : ''), 1300);
   } else if (ch.was === 'todo' && t.st !== 'done') { // pick the card up from the board, then go to work
     runErrands(c, [{ to: BOARD('todo'), yaw: -Math.PI / 2, pose: 'board', say: `Taking ${t.k}`, dur: 1.4 }], COL.prog);
-  } else if (ch.was === 'prog' && t.st === 'review' && c.u.role === 'dev') { // hand the card to QA
+  } else if (ch.was === 'prog' && t.st === 'review' && c.u.role !== 'qa') { // hand the card to QA
     const q = pickOther(qas, c);
     if (q) runErrands(c, [{ target: q, card: COL.review, pose: 'talk', say: `Can you test ${t.k}?`, dur: 2,
       onArrive: () => { c.card.visible = false; flow(c.pos, q.pos, COL.review); setTimeout(() => say(q, 'Sure, on it', 'ok'), 900); } }]);
@@ -242,42 +409,24 @@ function playChange(c, ch) {
     runErrands(c, [{ to: BOARD('done'), yaw: -Math.PI / 2, card: COL.done, pose: 'board', say: `${t.k} done`, tone: 'ok', dur: 1.4, onArrive: () => (c.card.visible = false) }]);
   }
 }
-// Ambient life between rooms: coffee runs and quick questions.
-const CHATS = [['New build is on staging', 'Great, testing it now'], ['Do we test this on iOS too?', 'Yes, Android as well'], ['Could you review my MR?', 'In 10 minutes'], ['Did the API response change?', 'Yes, check the docs']];
-function ambient() {
-  const npcs = chars.filter((c) => !c.isPlayer && !c.errand);
-  if (meeting || npcs.length < 2) return;
-  if (Math.random() < 0.45) {
-    const c = pick(npcs.filter((x) => x.zone === 'dev' || x.zone === 'qa' || x.zone === 'todo')); if (!c) return;
-    runErrands(c, [{ to: COFFEE, yaw: Math.PI / 2, say: 'Coffee break', dur: 2.2 }], '#e9e4da');
-  } else {
-    const devs = npcs.filter((x) => x.u.role === 'dev' && x.zone !== 'urgent'), qas = npcs.filter((x) => x.u.role === 'qa');
-    if (!devs.length || !qas.length) return;
-    const [a, b] = Math.random() < 0.5 ? [pick(devs), pick(qas)] : [pick(qas), pick(devs)], [q1, q2] = pick(CHATS);
-    runErrands(a, [{ target: b, pose: 'talk', say: q1, dur: 2.6, onArrive: () => setTimeout(() => say(b, q2, 'ok'), 1000) }]);
-  }
-}
-// Always on, except for people who asked their system for less motion.
-setInterval(() => { if (!reduceMotion && !document.hidden) ambient(); }, 9000);
 
 // ---- Data: /api/team-sprint, polled; differences between two loads play as scenes ----
 const POLL_MS = 90_000;
 let loading = false, loadedOnce = false;
-function sprintLine(s) {
-  if (!s) return 'No active sprint';
-  if (!s.endDate || s.state === 'closed') return s.name;
-  const left = Math.ceil((new Date(s.endDate) - Date.now()) / 86_400_000);
-  return `${s.name} · ${left > 0 ? `${left}d left` : 'ends today'}`;
+// Errors (loading, saving) show for a few seconds at the top.
+let toastTimer = 0;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 6000);
 }
 async function load({ fresh = false } = {}) {
   if (DEMO) {
-    applyData(loadedOnce ? DEMO.tick() : DEMO.data());
-    $('#status').textContent = 'Demo: made-up team and tasks';
+    const d = loadedOnce ? DEMO.tick() : DEMO.data();
+    applyData({ ...d, order: teamOrder, members: d.members.map((m) => ({ ...m, ...demoProfiles[m.accountId] })) });
     return;
   }
   if (loading) return;
   loading = true;
-  $('#status').textContent = 'Loading…';
   try {
     const params = new URLSearchParams();
     if (SPRINT) params.set('sprint', SPRINT);
@@ -286,38 +435,41 @@ async function load({ fresh = false } = {}) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     applyData(data);
-    $('#status').textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     $('#empty').hidden = chars.length > 1 || !!data.sprint;
   } catch (e) {
-    $('#status').textContent = `Could not load the team: ${e.message}`;
+    toast(`Could not load the team: ${e.message}`);
   } finally {
     loading = false;
   }
 }
 function applyData(data) {
-  $('#sprint').textContent = sprintLine(data.sprint);
+  sprint = data.sprint || null; schedule = data.schedule || {}; teamOrder = data.order || teamOrder;
+  tickSchedule(true);
   const first = !loadedOnce;
   loadedOnce = true;
-  const seen = new Set();
+  const seen = new Set(), moves = [];
   for (const u of toPeople(data.members || [])) {
     seen.add(u.id);
     let c = byId(u.id);
     if (!c) {
       c = addPerson(u); c.state = stateOf(u);
-      if (c.isPlayer) { c.pos.set(2, 0, 0); c.yaw = c.yawT = 0; } else if (first) retarget(c, true); else { c.pos.set(2, 0, 0); retarget(c); }
+      if (c.isPlayer) { c.pos.set(2, 0, 0); c.yaw = c.yawT = 0; } else if (!first) c.group.visible = false; // walks in from the corridor's end
       updateTag(c);
       continue;
     }
     const changes = diffTasks(c.u.tasks, u.tasks);
+    const look = c.u.gender !== u.gender;
     c.u = u; c.state = stateOf(u);
-    if (!c.isPlayer) retarget(c);
+    if (look) reskin(c); // changed in another window
     const done = changes.find((ch) => ch.kind === 'move' && ch.task.st === 'done');
     updateTag(c, done ? `✓ ${done.task.k}` : ''); if (done) setTimeout(() => chars.includes(c) && updateTag(c), 2400);
-    if (changes.length) playChange(c, changes.find((ch) => ch.kind === 'move') || changes[0]);
+    if (changes.length) moves.push([c, changes.find((ch) => ch.kind === 'move') || changes[0]]);
   }
   for (const c of [...chars]) if (!seen.has(c.u.id) && !c.isPlayer) { if (selected === c) closeDrawer(); removePerson(c); }
-  refreshRooms();
+  replan(first);
+  for (const [c, ch] of moves) playChange(c, ch);
   if (selected) renderDrawer();
+  if (teamOpen && !sorting && !drawer.contains(document.activeElement)) renderTeam(); // not while a choice is open or a card is dragged
 }
 setInterval(() => { if (!document.hidden) load(); }, DEMO ? 6000 : POLL_MS); // the demo moves a task every few seconds
 
@@ -356,7 +508,7 @@ function signAt(x, y) {
 function hit(x, y) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, viewCam);
-  const h = ray.intersectObjects(pickables, false)[0];
+  const h = ray.intersectObjects(pickables, false).find((x) => x.object.userData.char.group.visible);
   return h ? { char: h.object.userData.char } : { floor: ray.intersectObject(floor)[0] };
 }
 canvas.addEventListener('pointerdown', (e) => {
@@ -448,7 +600,7 @@ let nearest = null;
 promptEl.addEventListener('click', () => nearest && openDrawer(nearest));
 function checkNearby() {
   let best = null, bd = 2.4;
-  for (const c of chars) { if (c.isPlayer) continue; const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z); if (d < bd) { bd = d; best = c; } }
+  for (const c of chars) { if (c.isPlayer || !c.group.visible) continue; const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z); if (d < bd) { bd = d; best = c; } }
   if (best !== nearest) { nearest = best; if (best) promptEl.innerHTML = `<kbd>Space</kbd> See ${esc(short(best.u))}'s tasks`; }
   promptEl.hidden = !nearest || selected === nearest || !$('#help').hidden;
 }
@@ -473,7 +625,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 try { if (window.parent !== window) new MutationObserver(applyTheme).observe(window.parent.document.documentElement, { attributes: true, attributeFilter: ['class'] }); } catch {}
 
 // ---- Boot ----
-applyTheme(); refreshRooms();
+applyTheme(); refreshRooms(); tickSchedule(true);
 if (tryStore('jd:officeHelp') !== '1') $('#help').hidden = false;
 load();
 
@@ -512,7 +664,7 @@ function frame(now) {
   updateWalls();
   updateCamera();
   renderer.render(scene, viewCam);
-  placeTags(); placeDetails(); placeMeetTag(); if (player) checkNearby();
+  placeTags(); placeDetails(); pressMeetButton(); if (player) checkNearby();
   if (frameN % 10 === 0) markFocus();
   if (rv.room && frameN % 90 === 0) buildDetails(); // people come and go
   if ((frameN++ & 1) === 0) {

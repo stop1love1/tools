@@ -6,6 +6,7 @@
 const v = (x, z) => new THREE.Vector3(x, 0, z);
 const SCALE = 0.8;
 let meeting = false; // "Meeting": everyone takes a seat at the meeting table
+let sched = { kind: 'work' }; // the office's day now (scheduleAt), set by app.js
 
 function makeRig(u) {
   const S = skinOf(u), mats = [];
@@ -20,6 +21,8 @@ function makeRig(u) {
   const arms = [-0.375, 0.375].map((x) => { const p = new THREE.Group(); p.position.set(x, 1.5, 0); const m = mk(0.25, 0.75, 0.25, armF); m.position.y = -0.33; p.add(m); rig.add(p); return p; });
   const headG = new THREE.Group(); headG.position.y = 1.5; rig.add(headG);
   const h = mk(0.5, 0.5, 0.5, headFaces(S)); h.position.y = 0.25; headG.add(h);
+  if (S.female) { const hair = mk(0.54, 0.5, 0.14, solidFaces(S.hair)); hair.position.set(0, 0.06, -0.21); headG.add(hair); } // falls to the shoulders
+  if (S.skirt) { const sk = mk(0.56, 0.34, 0.32, solidFaces(S.skirt)); sk.position.y = 0.6; rig.add(sk); }
   // A task card (right hand) for hand-offs, a test phone (left hand) for QA at their desk.
   const card = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.4, 0.04), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
   card.position.set(0, -0.72, 0.16); card.visible = false; arms[1].add(card);
@@ -55,18 +58,23 @@ function addPerson(u) {
   chars.push(c);
   return c;
 }
+// A new look (gender changed): swap the rig, keep where they are and what they do.
+function reskin(c) {
+  c.rig.traverse((o) => { if (o.isMesh) { const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } });
+  c.group.remove(c.rig);
+  const r = makeRig(c.u); Object.assign(c, r, { hi: false, dim: false }); c.group.add(r.rig);
+  r.rig.traverse((o) => { if (o.isMesh) { o.userData.char = c; pickables.push(o); } });
+}
 function removePerson(c) {
-  releaseSeat(c); scene.remove(c.group); c.tag.remove(); c.bubble.remove();
+  releaseSeat(c); if (c.home) c.home.claim = null; scene.remove(c.group); c.tag.remove(); c.bubble.remove();
   c.rig.traverse((o) => { if (o.isMesh) { const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); } });
   chars.splice(chars.indexOf(c), 1);
 }
 
 function updateTag(c, flash) {
-  const late = c.u.tasks.some(isLate);
   c.tag.className = 'tag' + (c.isPlayer ? ' me' : '') + (c.hi ? ' hi' : '') + (c.dim ? ' dim' : '') + (c.state === 'urgent' ? ' urgent' : '');
-  c.tag.innerHTML = `<i style="background:var(--${STATES[c.state].color})"></i>${esc(short(c.u))}<small>${ROLES[c.u.role]}</small>`
-    + (late ? '<span class="late">Overdue</span>' : '') + (isIdle(c.u) ? '<span class="idle">stale</span>' : '')
-    + (flash ? `<b class="flash">${esc(flash)}</b>` : '');
+  c.tag.dataset.z = c.state; // coloured like the state badge
+  c.tag.innerHTML = esc(short(c.u)) + (flash ? `<b class="flash">${esc(flash)}</b>` : '');
 }
 function setHighlight(c, on) {
   if (c.hi === on) return; c.hi = on;
@@ -88,14 +96,46 @@ const SEATS = [
 function takeSeat(c, s) { s.owner = c; c.seat = s; if (s.desk) { s.desk.owner = c; setScreen(s.desk); } }
 function releaseSeat(c) {
   const s = c.seat; if (!s) return;
-  s.owner = null; c.seat = null; c.sitting = false;
+  c.seat = null; c.sitting = false;
+  if (s.owner !== c) return; // someone higher up took it for a meeting
+  s.owner = null;
   if (s.desk) { s.desk.owner = null; setScreen(s.desk); }
 }
+// Meeting seats, best first: the head of the table (by the screen), then pair by pair down both sides, the foot last.
+const MEET_ORDER = SEATS.filter((s) => s.kind === 'meet').sort((a, b) => a.z - b.z || a.x - b.x);
+// Standup: three rows facing the sprint board, front row first.
+const STAND_SPOTS = [-18.6, -17.3, -16].flatMap((x) => [4.4, 5.3, 6.2, 7.1, 8, 8.9, 9.8].map((z) => v(x, z)));
+// Everyone keeps their own desk in their role's room; it stays theirs (screen off) while they are elsewhere.
+function homeSeat(c, kind) {
+  if (c.home && c.home.kind === kind) return c.home;
+  if (c.home) c.home.claim = null;
+  c.home = SEATS.find((s) => s.kind === kind && !s.claim) || null;
+  if (c.home) c.home.claim = c;
+  return c.home;
+}
+// Where a person should be now. The player only moves for a meeting they called.
+function placeOf(c) {
+  if (meeting) return 'meeting';
+  const z = zoneOf(c.u);
+  if (sched.kind === 'off') return isActive(c.u) ? z : 'away';
+  if (z === 'urgent') return z; // Highest-priority work skips meetings and lunch
+  if (sched.kind === 'lunch') return 'lunch';
+  if (sched.kind === 'standup') return 'standup';
+  if (sched.kind === 'planning' || sched.kind === 'retro') return 'meeting';
+  return z;
+}
+const PLACE_ZONE = { meeting: 'review', lunch: 'done', standup: 'todo' };
 
 // ---- Paths ----
-function freeSpot([x0, x1, z0, z1]) {
-  for (let i = 0; i < 30; i++) { const p = v(rand(x0, x1), rand(z0, z1)); if (!blocked(p.x, p.z, 0.5)) return p; }
-  return v((x0 + x1) / 2, (z0 + z1) / 2);
+// A free spot in the rect, away from where others are headed when there is room.
+function freeSpot([x0, x1, z0, z1], self = null) {
+  let any = null;
+  for (let i = 0; i < 40; i++) {
+    const p = v(rand(x0, x1), rand(z0, z1)); if (blocked(p.x, p.z, 0.5)) continue;
+    if (!chars.some((o) => o !== self && o.goal && o.goal.distanceTo(p) < 0.9)) return p;
+    any ??= p;
+  }
+  return any || v((x0 + x1) / 2, (z0 + z1) / 2);
 }
 const doorsOut = (z) => ZONES[z].doors.map(([x, zz]) => v(x, zz));
 const doorsIn = (z) => doorsOut(z).reverse();
@@ -106,25 +146,30 @@ function route(c, to, via, target) {
   if (from !== to) { if (from) pts.push(...doorsOut(from)); if (to) pts.push(...doorsIn(to)); }
   return [...pts, ...via, target];
 }
-// Send a person where they belong now: a seat or spot in their zone, or the meeting table during a meeting.
+// Send a person where they belong now (placeOf): their desk, the war room, the pantry, the standup in front of the
+// sprint board, their seat at the meeting table (c.meetSeat, c.standSpot: app.js replan), or home (hidden).
 function retarget(c, teleport = false) {
-  const place = meeting ? 'meeting' : zoneOf(c.u);
+  const place = c.isPlayer && !meeting ? c.place : placeOf(c);
   if (c.errand || (place === c.place && !teleport)) return; // an errand sends them home when it ends
   const prev = { pos: c.pos, seat: c.seat, sitting: c.sitting };
   releaseSeat(c); c.place = place;
-  c.speed = c.baseSpeed * (meeting ? 1.7 : 1); // hurry to the meeting
-  const z = place === 'meeting' ? 'review' : place; c.zone = z;
-  const kind = z === 'review' ? 'meet' : z === 'dev' || z === 'qa' ? z : z === 'done' ? 'sofa' : null;
-  const seat = kind && SEATS.find((s) => s.kind === kind && !s.owner);
+  if (place === 'away') { c.group.visible = false; c.path = []; c.goal = null; c.zone = null; return; }
+  if (!c.group.visible) { c.group.visible = true; if (!teleport) { c.pos.set(20.4, 0, 0); prev.seat = null; } } // in from the corridor's end
+  c.speed = c.baseSpeed * (place === 'meeting' || place === 'standup' ? 1.5 : 1); // don't keep the others waiting
+  const z = PLACE_ZONE[place] || place; c.zone = z;
+  // PO and PM work at the meeting table from its foot, leaving the head free.
+  const seat = place === 'meeting' ? c.meetSeat : z === 'dev' || z === 'qa' ? homeSeat(c, z) : z === 'review' ? [...MEET_ORDER].reverse().find((s) => !s.owner) : z === 'done' ? SEATS.find((s) => s.kind === 'sofa' && !s.owner) : null;
   let target;
-  if (seat) { takeSeat(c, seat); target = v(seat.x, seat.z); } else target = freeSpot(ZONES[z].wander);
+  if (seat) { takeSeat(c, seat); target = v(seat.x, seat.z); } else target = (place === 'standup' && c.standSpot) || freeSpot(ZONES[z].wander, c);
+  c.goal = target;
   if (teleport) { c.pos.copy(target); c.path = []; if (seat) { c.sitting = true; c.yaw = c.yawT = seat.yaw; } return; }
   c.path = route(prev, z, seat ? seat.via : [], target);
-  c.sitting = false; c.wait = rand(2, 5);
+  c.sitting = false; c.wait = rand(6, 12);
 }
+// Only people with nothing left to do drift around the pantry; everyone else stays where their work is.
 function wander(c) {
-  if (!c.seat) c.path = [freeSpot(ZONES[c.zone].wander)];
-  c.wait = (c.zone === 'done' ? rand(5, 10) : rand(3, 7)) * (reduceMotion ? 2 : 1);
+  if (!c.seat && c.place === 'done') { c.path = [freeSpot(ZONES.done.wander, c)]; c.goal = c.path[0]; }
+  c.wait = rand(8, 16) * (reduceMotion ? 2 : 1);
 }
 function goTo(p) {
   let x = clamp(p.x, -20.5, 20.5), z = clamp(p.z, -12.5, 12.5);
@@ -191,6 +236,7 @@ function stepFlows(dt) {
 // ---- Per-frame ----
 const lerpAngle = (a, b, k) => a + (((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * k;
 function stepChar(c, dt, time) {
+  if (!c.group.visible) return; // gone home
   let moving = !!c.keyMoving;
   if (moving && c.seat) { releaseSeat(c); c.place = null; }
   if (c.path.length) {
@@ -218,7 +264,7 @@ function stepChar(c, dt, time) {
   } else if (c.sitting) {
     leg = -Math.PI / 2; bob = -0.12;
     // At the meeting table: listening, now and then talking with one hand.
-    if (c.seat.kind === 'meet') { armL = -0.9; armR = -0.9 + Math.max(0, Math.sin(time * 0.9 + c.phase)) * -0.5; turn = Math.sin(time * 0.4 + c.phase) * 0.35; }
+    if (c.seat.kind === 'meet' && c.place === 'meeting') { armL = -0.9; armR = -0.9 + Math.max(0, Math.sin(time * 0.9 + c.phase)) * -0.5; turn = Math.sin(time * 0.4 + c.phase) * 0.35; }
     else if (c.seat.kind === 'sofa') { armL = -0.35; armR = -0.6; turn = Math.sin(time * 0.5 + c.phase) * 0.5; } // chatting on the sofa
     else if (isIdle(c.u)) { armL = armR = -0.3; head = 0.35; }
     else if (c.seat.kind === 'qa') { armL = -1.5 + Math.sin(time * 3 + c.phase) * 0.08; armR = -1.2 + Math.sin(time * 9 + c.phase) * 0.12; head = 0.25; } // testing on a phone
@@ -240,6 +286,7 @@ const proj = new THREE.Vector3();
 function placeTags() {
   const w = stage.clientWidth, h = stage.clientHeight, now = performance.now();
   for (const c of chars) {
+    c.tag.hidden = !c.group.visible; if (c.tag.hidden) { c.bubble.hidden = true; continue; }
     proj.set(c.pos.x, c.sitting ? 1.95 : 2.1, c.pos.z).project(viewCam);
     const x = ((proj.x + 1) / 2) * w, y = ((1 - proj.y) / 2) * h;
     c.tag.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;

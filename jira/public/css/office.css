@@ -42,29 +42,20 @@ button, input { font: inherit; color: inherit; }
 #tags, #details { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 #tags, #details { z-index: 1; }
 #tags.off { display: none; }
-#tip, #prompt, #help, .toolbar, #drawer, #info { z-index: 2; }
-#info { position: absolute; top: 10px; left: 10px; margin: 0; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-size: 12px; box-shadow: 0 2px 8px rgb(0 0 0 / .12); max-width: calc(100% - 20px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#info #sprint { color: var(--fg); font-weight: 600; }
-/* The label over the red meeting button (above the name tags); it presses the button too. */
-#meet { position: absolute; left: 0; top: 0; z-index: 2; padding: 3px 10px; border-radius: 999px; border: 0; background: #d63b30; color: #fff; font: 600 11.5px/1.3 var(--font-display); cursor: pointer; box-shadow: 0 2px 8px rgb(0 0 0 / .25); will-change: transform; white-space: nowrap; }
-#meet[aria-pressed="true"] { background: #2f9e5b; }
+#tip, #prompt, #help, .toolbar, #drawer { z-index: 2; }
+#toast { position: absolute; z-index: 3; top: 10px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 14px; border-radius: 8px; background: var(--surface); border: 1px solid var(--overdue); color: var(--fg); font-size: 12.5px; box-shadow: 0 4px 14px rgb(0 0 0 / .2); max-width: calc(100% - 32px); }
 #empty { position: absolute; z-index: 2; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
 
 .tag {
-  position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; padding: 2px 8px 2px 6px; border-radius: 6px;
-  background: var(--surface); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 1px 4px rgb(0 0 0 / .12);
+  position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px;
+  background: color-mix(in srgb, var(--c, var(--line)) 16%, var(--surface)); color: color-mix(in srgb, var(--c, var(--fg)) 70%, var(--fg));
+  border: 1px solid color-mix(in srgb, var(--c, var(--line)) 50%, transparent); box-shadow: 0 1px 4px rgb(0 0 0 / .12);
   font: 600 11px/1.35 var(--font-display); white-space: nowrap; will-change: transform; transition: opacity .2s;
 }
-.tag i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.tag small { color: var(--muted); font-weight: 500; font-size: 10px; }
-.tag .late { color: var(--overdue); font-weight: 600; font-size: 10px; }
-.tag .idle { color: var(--muted); font-weight: 500; font-size: 10px; font-style: italic; }
 .tag .flash { color: var(--done); font-size: 10px; animation: flash 2.4s ease-out forwards; }
 @keyframes flash { 0%, 70% { opacity: 1 } 100% { opacity: 0 } }
 .tag.me { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.tag.urgent { border-color: var(--overdue); }
 .tag.hi { background: var(--fg); color: var(--bg); border-color: var(--fg); }
-.tag.hi small { color: inherit; opacity: .7; }
 .tag.dim { opacity: .25; }
 .tag.far { display: none; }
 .say {
@@ -78,7 +69,7 @@ button, input { font: inherit; color: inherit; }
 
 
 /* Room view: its own header sits top left, in place of the sprint label; overview-only tools hide. */
-.app.room-mode .office-only, .app.room-mode #info { display: none; }
+.app.room-mode .office-only { display: none; }
 #roomhead {
   position: absolute; z-index: 3; top: 10px; left: 10px; display: flex; align-items: center; gap: 12px;
   padding: 6px 8px 6px 6px; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 12px;
@@ -155,6 +146,23 @@ kbd { font: 500 11px var(--font-mono); padding: 1px 5px; border: 1px solid var(-
 .people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .people button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: none; border-radius: 999px; padding: 2px 10px 2px 2px; cursor: pointer; font-size: 12.5px; }
 .people button:hover { background: var(--raised); }
+.team { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.team li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.tname { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 0; cursor: pointer; font-weight: 600; color: var(--fg); text-align: left; min-width: 0; }
+.tname span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tname:hover span { text-decoration: underline; }
+.tsel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.trow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.team li[data-id] { cursor: grab; user-select: none; touch-action: none; background: var(--surface); }
+.team li[data-id]:hover { border-color: var(--muted); }
+.team li.dragging { cursor: grabbing; border-color: var(--accent); box-shadow: 0 10px 28px rgb(0 0 0 / .32); transform: scale(1.02); }
+.team .tph { border: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 7%, transparent); box-sizing: border-box; }
+#drawer-body.sorting, #drawer-body.sorting * { cursor: grabbing !important; }
+.grip { color: var(--muted); font-size: 13px; letter-spacing: -3px; padding-right: 2px; }
+.tno { font: 700 12px var(--font-display); color: var(--muted); min-width: 16px; text-align: right; font-variant-numeric: tabular-nums; }
+.tsel select { cursor: pointer; }
+.tsel select { min-width: 0; font: inherit; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; }
+.tsel select:hover { border-color: var(--muted); }
 
 @media (max-width: 760px) {
   .app { grid-template-columns: minmax(0, 1fr); }

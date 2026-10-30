@@ -62,7 +62,7 @@ const lamps = [[-14, -7], [2, -7], [16, -7], [-14, 7], [2, 7], [16, 7]].map(([x,
 const lam = (c) => (typeof c === 'string' ? new THREE.MeshLambertMaterial({ color: c }) : new THREE.MeshLambertMaterial({ map: c }));
 const M = {
   wall: lam('#eceae4'), desk: lam('#c9ae8c'), deskLeg: lam('#a7aeb3'), fabric: lam('#4a5560'), leaves: lam('#7aa886'),
-  books: lam(tex(CANVAS.books)), tv: new THREE.MeshBasicMaterial({ map: tex(CANVAS.tv) }),
+  books: lam(tex(CANVAS.books)),
   metal: lam('#4a5357'), white: lam('#f4f3ef'), trim: lam('#8f969a'), pot: lam('#d9d4ca'), red: lam('#c0453f'), mug: lam('#e9e4da'),
   sofa: lam('#5f7f8c'), rug: lam('#d6cdbd'), screenOff: lam('#1a2026'),
   glass: new THREE.MeshLambertMaterial({ color: '#cfe6ec', transparent: true, opacity: 0.2, depthWrite: false }),
@@ -219,7 +219,31 @@ const meetDome = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 12, 0, Math.P
   meetButton.add(base, meetDome);
 }
 B(3.4, 1.9, 0.1, M.metal, 16, 0.8, -12.9, { parent: wBack.g });
-plane(3.2, 1.7, M.tv, 16, 1.75, -12.84, 0, wBack.g);
+const meetScreen = screenAt(3.2, 1.7, 512, 272, 16, 1.75, -12.84, 0, wBack.g);
+// The meeting room screen: the meeting now or next, and how far the sprint is against its time.
+function drawMeetScreen(title, sprint, people) {
+  const g = meetScreen.g, all = people.flatMap((c) => c.u.tasks), sp = (l) => l.reduce((s, t) => s + t.sp, 0);
+  const total = sp(all), done = sp(all.filter((t) => t.st === 'done'));
+  g.fillStyle = '#16202b'; g.fillRect(0, 0, 512, 272);
+  g.fillStyle = '#8b5cf6'; g.fillRect(0, 0, 512, 6);
+  g.fillStyle = '#eef2f6'; g.font = `700 30px ${FONT}`; g.fillText(trunc(title, 30), 24, 54);
+  g.fillStyle = '#8a98a8'; g.font = `600 18px ${FONT}`; g.fillText(sprint ? trunc(sprint.name, 40) : 'No active sprint', 24, 96);
+  if (!sprint) { meetScreen.t.needsUpdate = true; return; }
+  const t0 = Date.parse(sprint.startDate), t1 = Date.parse(sprint.endDate);
+  const time = t0 && t1 > t0 ? clamp((Date.now() - t0) / (t1 - t0), 0, 1) : null, work = total ? done / total : 0;
+  const bar = (y, f, color, label) => {
+    g.fillStyle = '#2a3440'; g.fillRect(24, y, 464, 22); g.fillStyle = color; g.fillRect(24, y, 464 * f, 22);
+    g.fillStyle = '#c9d2dc'; g.font = `500 15px ${FONT}`; g.fillText(label, 24, y - 8);
+  };
+  bar(150, work, '#22a052', `Done ${done}/${total} SP (${Math.round(work * 100)}%)`);
+  if (time !== null) {
+    bar(214, time, '#5b6b7c', `Time ${Math.round(time * 100)}%`);
+    const ahead = work >= time - 0.05;
+    g.fillStyle = ahead ? '#4cd27f' : '#f0a35a'; g.font = `700 16px ${FONT}`; g.textAlign = 'right';
+    g.fillText(ahead ? 'On track' : 'Behind', 488, 206); g.textAlign = 'left';
+  }
+  meetScreen.t.needsUpdate = true;
+}
 plant(20.2, -2.8); plant(11.8, -12.2);
 
 // Planning board (To Do): real task cards, drawn in updateRooms().
