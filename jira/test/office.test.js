@@ -158,8 +158,8 @@ test('withProfiles: the Team panel sets gender, and its role wins over the QA li
   const { withProfiles } = require('../lib/team');
   const out = withProfiles({ sprint: null, members: [{ accountId: 'ann', role: 'dev' }, { accountId: 'bob', role: 'qa' }] }, { people: { ann: { role: 'qa', gender: 'female' } }, order: ['bob', 'ann'], standup: '09:15' });
   assert.deepEqual(out.members, [
-    { accountId: 'ann', role: 'qa', gender: 'female' },
-    { accountId: 'bob', role: 'qa', gender: null },
+    { accountId: 'ann', role: 'qa', gender: 'female', gitlab: null },
+    { accountId: 'bob', role: 'qa', gender: null, gitlab: null },
   ]);
   assert.deepEqual(out.order, ['bob', 'ann']);
   assert.equal(out.schedule.standup, '09:15');
@@ -183,4 +183,56 @@ test('saveOrder: keeps valid, unique account ids in the given order', () => {
   assert.deepEqual(config.get().office.order, ['bob', 'ann']);
   assert.deepEqual(config.saveOrder([]), []);
   assert.throws(() => config.saveOrder('bob'), /order/);
+});
+
+// ---- lib/office-events.js ----
+test('personMatcher: GitLab people to team members by the Team panel username, a handle in the Jira name, or the name', () => {
+  const { personMatcher } = require('../lib/office-events');
+  const who = personMatcher(
+    [{ accountId: 'a', name: 'Nguyễn Văn Huy - (huynv111)' }, { accountId: 'b', name: 'Phan Đăng Lưu' }, { accountId: 'c', name: 'Vũ Thị Vui' }],
+    { c: { gitlab: 'vui.vt' } },
+  );
+  assert.equal(who({ username: 'huynv111', name: 'Huy' }).id, 'a');
+  assert.equal(who({ username: 'pn.luupd', name: 'Phan Đăng Lưu [VSF-PN]' }).id, 'b');
+  assert.equal(who({ username: 'vui.vt', name: 'Someone' }).id, 'c');
+  assert.deepEqual(who({ username: 'x', name: 'Đỗ Cao Long [VSF]' }), { id: null, name: 'Đỗ Cao Long' });
+});
+
+test('jiraIssueEvents: status, assignment and priority changes, comments with mentions', () => {
+  const { jiraIssueEvents } = require('../lib/office-events');
+  const j = {
+    fields: { summary: 'Fix login', comment: { comments: [{ id: '9', created: '2026-10-30T03:00:00Z', author: { accountId: 'q', displayName: 'Q' }, body: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Still broken ' }, { type: 'mention', attrs: { id: 'd', text: '@D' } }] }] } }] } },
+    changelog: { histories: [{ id: '1', created: '2026-10-30T02:00:00Z', author: { accountId: 'q', displayName: 'Q' }, items: [{ field: 'status', fromString: 'In Testing', toString: 'Reopen' }, { field: 'assignee', to: 'd', toString: 'D' }, { field: 'Rank' }] }] },
+  };
+  const ev = jiraIssueEvents('V-1', j, { accountId: 'd', displayName: 'D' });
+  assert.deepEqual(ev.map((e) => [e.kind, e.actor.id, e.target?.id]), [['status', 'q', 'd'], ['assign', 'q', 'd'], ['comment', 'q', 'd']]);
+  assert.equal(ev[0].to, 'Reopen');
+  assert.deepEqual(ev[2].mentions, ['d']);
+  assert.equal(ev[2].text, 'Still broken @D');
+});
+
+test('gitlabRepoEvents: pushes, MRs with their reviewer, merges, and pipeline failures and fixes', () => {
+  const { gitlabRepoEvents, personMatcher } = require('../lib/office-events');
+  const who = personMatcher([{ accountId: 'a', name: 'Ann Lee' }, { accountId: 'b', name: 'Bob Tran' }]);
+  const ann = { username: 'ann', name: 'Ann Lee' }, bob = { username: 'bob', name: 'Bob Tran' };
+  const act = {
+    mrs: [{ iid: 7, title: 'VL-12: login', source_branch: 'feature/VL-12-login-uat', target_branch: 'uat', author: ann, reviewers: [bob], web_url: 'u' }],
+    events: [
+      { id: 1, created_at: '2026-10-30T01:00:00Z', author: ann, action_name: 'pushed to', push_data: { commit_count: 2, ref: 'feature/VL-12-login-uat', ref_type: 'branch', action: 'pushed', commit_title: 'VL-12: x' } },
+      { id: 2, created_at: '2026-10-30T01:05:00Z', author: ann, action_name: 'opened', target_type: 'MergeRequest', target_iid: 7 },
+      { id: 3, created_at: '2026-10-30T01:20:00Z', author: bob, action_name: 'accepted', target_type: 'MergeRequest', target_iid: 7 },
+    ],
+    pipes: [
+      { id: 50, status: 'success', ref: 'refs/merge-requests/7/head', updated_at: '2026-10-30T01:06:00Z' },
+      { id: 51, status: 'failed', ref: 'refs/merge-requests/7/head', updated_at: '2026-10-30T01:10:00Z' },
+      { id: 52, status: 'success', ref: 'refs/merge-requests/7/head', updated_at: '2026-10-30T01:15:00Z' },
+    ],
+  };
+  const ev = gitlabRepoEvents('backend', act, who, 'uat');
+  assert.deepEqual(ev.map((e) => [e.kind, e.actor.id, e.target?.id ?? null, e.key]), [
+    ['push', 'a', null, 'VL-12'], ['mr-open', 'a', 'b', 'VL-12'], ['mr-merge', 'b', 'a', 'VL-12'],
+    ['pipeline', 'a', null, 'VL-12'], ['pipeline', 'a', null, 'VL-12'],
+  ]);
+  assert.equal(ev[2].uat, true);
+  assert.deepEqual(ev.slice(3).map((e) => e.status), ['failed', 'success']); // the first, routine success is left out
 });

@@ -69,4 +69,4 @@ function mrs(repo, fresh) {
 
 const clearMrs = () => cache.clear();
 
-module.exports = { mrs, clearMrs };
+module.exports = { mrs, clearMrs, glabApi };

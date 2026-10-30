@@ -85,7 +85,7 @@ const withProfiles = (team, { people = {}, order = [], hours, lunch, standup, re
   ...team,
   members: team.members.map((m) => {
     const p = people[m.accountId] || {};
-    return { ...m, role: p.role || m.role, gender: p.gender || null };
+    return { ...m, role: p.role || m.role, gender: p.gender || null, gitlab: p.gitlab || null };
   }),
   order,
   schedule: { hours, lunch, standup, retro },

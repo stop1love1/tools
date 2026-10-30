@@ -9,7 +9,7 @@ const SPRINT = new URLSearchParams(location.search).get('sprint');
 const DEMO = typeof OFFICE_DEMO !== 'undefined' ? OFFICE_DEMO : null; // the static demo build (demo.js): made-up data, no server
 const tryStore = (k, val) => { try { if (val === undefined) return localStorage.getItem(k); localStorage.setItem(k, val); } catch { return null; } };
 const byId = (id) => chars.find((c) => c.u.id === id);
-const whereText = (c) => (c.group.visible ? ZONES[c.isPlayer ? zoneAt(c.pos.x, c.pos.z) || 'dev' : c.zone || zoneOf(c.u)].name : 'Gone home');
+const whereText = (c) => (c.group.visible ? ZONES[c.zone || zoneOf(c.u)].name : 'Gone home');
 const stateChip = (c) => `<span class="zchip" data-z="${c.state}">${STATES[c.state].name}</span>`;
 const typeChip = (t) => `<span class="ttype${t.type === 'bug' ? ' bug' : ''}">${t.type === 'bug' ? 'Bug' : 'Task'}</span>`;
 const prioChip = (t) => (t.pr === 'highest' || t.pr === 'high' ? `<span class="prio ${t.pr}">${PRIORITY[t.pr]}</span>` : '');
@@ -61,12 +61,7 @@ function renderDrawer() {
     <div class="stats"><div><b>${sp.done}/${sp.total}</b><span>SP done</span></div><div><b>${open}</b><span>open</span></div><div><b class="${late ? 'late' : ''}">${late}</b><span>overdue</span></div></div>
     <div class="spbar"><span style="width:${sp.total ? (sp.done / sp.total) * 100 : 0}%"></span></div>
     <ul class="tasks">${sortTasks(u.tasks).map((t) => taskItem(t)).join('') || '<li class="k">No tasks in this sprint.</li>'}</ul>
-    <div class="dact">${c.isPlayer ? '' : `<button class="btn primary" id="walk-to">Walk over to ${esc(short(u))}</button>`}<button class="btn" id="look">Look</button></div>`;
-  const walk = $('#walk-to');
-  if (walk) walk.addEventListener('click', () => {
-    const dx = player.pos.x - c.pos.x, dz = player.pos.z - c.pos.z, d = Math.hypot(dx, dz) || 1;
-    goTo(v(c.pos.x + (dx / d) * 1.3, c.pos.z + (dz / d) * 1.3)); setFollow(true);
-  });
+    <div class="dact"><button class="btn" id="look">Look</button></div>`;
   $('#look').addEventListener('click', () => focusChar(c, false));
 }
 $('#close').addEventListener('click', closeDrawer);
@@ -75,7 +70,7 @@ $('#close').addEventListener('click', closeDrawer);
 const ROOM_ORDER = ['urgent', 'dev', 'review', 'todo', 'qa', 'done'];
 function roomData(z) {
   const all = chars.flatMap((c) => c.u.tasks.map((t) => ({ ...t, c })));
-  const people = chars.filter((c) => c.group.visible && (c.isPlayer ? zoneAt(c.pos.x, c.pos.z) : c.zone) === z);
+  const people = chars.filter((c) => c.group.visible && c.zone === z);
   const sp = (l) => l.reduce((s, t) => s + t.sp, 0);
   const bugs = all.filter((t) => isOpen(t) && t.type === 'bug');
   let tasks, line;
@@ -87,6 +82,15 @@ function roomData(z) {
   else { tasks = all.filter((t) => t.st === 'done'); line = `${tasks.length} done · ${sp(tasks)}/${sp(all)} SP`; }
   return { people, tasks, line };
 }
+// The sprint board shows what the dashboard's header filter (person, JQL) keeps of this sprint (office.html sets
+// window.officeFilter); standing alone, the whole team.
+function boardFilter(all) {
+  let f = null;
+  try { f = window.parent !== window ? window.parent.officeFilter?.() : null; } catch {}
+  if (!f || !f.keys) return { tasks: all, label: 'Whole team' };
+  const keep = new Set(f.keys);
+  return { tasks: all.filter((t) => keep.has(t.k)), label: f.label };
+}
 function refreshRooms() {
   const all = chars.flatMap((c) => c.u.tasks.map((t) => ({ ...t, who: short(c.u) })));
   updateRooms({
@@ -94,6 +98,7 @@ function refreshRooms() {
     highest: all.filter((t) => isOpen(t) && t.pr === 'highest'),
     bugsOpen: all.filter((t) => isOpen(t) && t.type === 'bug').length,
     passed: all.filter((t) => !isOpen(t) && t.type === 'bug').length,
+    board: boardFilter(all),
   });
   if (roomOpen) renderRoomDrawer();
   if (rv.room) { buildDetails(); renderRoomHead(); }
@@ -243,7 +248,7 @@ function setProfile(c, p) {
   const look = c.u.gender !== p.gender;
   c.u = { ...c.u, gender: p.gender, role: p.role };
   if (look) reskin(c);
-  if (!c.isPlayer) retarget(c);
+  retarget(c);
   updateTag(c); refreshRooms();
 }
 $('#t-team').addEventListener('click', () => (teamOpen ? closeDrawer() : openTeam()));
@@ -287,7 +292,7 @@ function renderRoomHead() {
   const z = rv.room; if (!z) return;
   $('#roomhead').dataset.z = z;
   $('#rh-name').textContent = ZONES[z].name;
-  $('#rh-line').textContent = roomData(z).line + (z === 'dev' ? ` · build ${warLight.userData.on ? 'red' : 'green'}` : '');
+  $('#rh-line').textContent = roomData(z).line + (z === 'dev' && ciState ? ` · build ${ciState === 'failed' ? 'red' : 'green'}` : '');
 }
 const stepRoom = (d) => viewRoom(ROOM_ORDER[(ROOM_ORDER.indexOf(rv.room) + d + ROOM_ORDER.length) % ROOM_ORDER.length]);
 $('#room-exit').addEventListener('click', exitRoom);
@@ -340,13 +345,13 @@ function meetLine() {
 // Seats and spots for whoever is called in, in the Team panel's order; then everyone goes where they belong now.
 function replan(teleport = false) {
   const list = ordered();
-  const seated = list.filter((c) => (c.isPlayer ? meeting : placeOf(c) === 'meeting'));
-  const standing = list.filter((c) => !c.isPlayer && placeOf(c) === 'standup');
+  const seated = list.filter((c) => placeOf(c) === 'meeting');
+  const standing = list.filter((c) => placeOf(c) === 'standup');
   for (const c of list) {
     const seat = MEET_ORDER[seated.indexOf(c)] || null, spot = STAND_SPOTS[standing.indexOf(c)] || null;
     if (seat !== (c.meetSeat || null) || spot !== (c.standSpot || null)) { c.meetSeat = seat; c.standSpot = spot; if (c.place === 'meeting' || c.place === 'standup') c.place = null; }
   }
-  for (const c of chars) if (!c.isPlayer) retarget(c, teleport);
+  for (const c of chars) retarget(c, teleport);
   refreshRooms(); updateLines();
 }
 function updateLines() { drawMeetScreen(meetLine(), sprint, chars); }
@@ -367,8 +372,7 @@ function setMeeting(on) {
   meetDome.material.color.set(on ? '#2f9e5b' : '#e0352b'); meetDome.material.emissive.set(on ? '#0c3d1f' : '#7a0d08');
   pressedAt = performance.now();
   replan();
-  if (on) { retarget(player); setFollow(false); camGoal = v(TABLE.x, TABLE.z); view.zoomT = Math.max(view.zoomT, 1.4); }
-  else if (player.seat) { player.path = route(player, null, [], v(16, 0)); releaseSeat(player); player.place = null; }
+  if (on) { setFollow(false); camGoal = v(TABLE.x, TABLE.z); view.zoomT = Math.max(view.zoomT, 1.4); }
 }
 // Pressed: the dome dips, then springs back.
 function pressMeetButton() {
@@ -379,36 +383,11 @@ function pressMeetButton() {
 let turn = 0;
 setInterval(() => {
   if (document.hidden) return;
-  const here = ordered().filter((c) => !c.isPlayer && (c.place === 'standup' || c.place === 'meeting') && !c.path.length);
+  const here = ordered().filter((c) => (c.place === 'standup' || c.place === 'meeting') && !c.path.length);
   if (!here.length) return;
   const c = here[turn++ % here.length], t = currentTask(c.u);
   say(c, t ? `${t.k} · ${trunc(t.s, 40)} (${t.statusName})` : 'All done, nothing open');
 }, 4500);
-
-// ---- Scenes between rooms: what a change on Jira looks like in the office ----
-const BOARD = (col) => v(-19.6, BOARD_COL_Z[col]);
-const atWork = (c) => !c.isPlayer && !c.errand && ['dev', 'qa', 'urgent', 'done'].includes(c.place);
-const pickOther = (list, not) => pick(list.filter((x) => x !== not && atWork(x))) || null;
-function playChange(c, ch) {
-  if (meeting || !atWork(c)) return; // nobody leaves a standup, lunch or a meeting for it
-  const t = ch.task, qas = chars.filter((x) => x.u.role === 'qa');
-  if (ch.kind === 'new') {
-    flow(BOARD('todo'), c.pos, t.pr === 'highest' ? COL.overdue : t.type === 'bug' ? COL.review : COL.todo);
-    setTimeout(() => say(c, t.pr === 'highest' ? 'On it!' : `Got ${t.k}`, t.pr === 'highest' ? 'bug' : ''), 1300);
-  } else if (ch.was === 'todo' && t.st !== 'done') { // pick the card up from the board, then go to work
-    runErrands(c, [{ to: BOARD('todo'), yaw: -Math.PI / 2, pose: 'board', say: `Taking ${t.k}`, dur: 1.4 }], COL.prog);
-  } else if (ch.was === 'prog' && t.st === 'review' && c.u.role !== 'qa') { // hand the card to QA
-    const q = pickOther(qas, c);
-    if (q) runErrands(c, [{ target: q, card: COL.review, pose: 'talk', say: `Can you test ${t.k}?`, dur: 2,
-      onArrive: () => { c.card.visible = false; flow(c.pos, q.pos, COL.review); setTimeout(() => say(q, 'Sure, on it', 'ok'), 900); } }]);
-  } else if (ch.was === 'review' && t.st === 'prog') { // QA walks over to report a problem
-    const q = pickOther(qas, c);
-    if (q) runErrands(q, [{ target: c, card: COL.overdue, pose: 'talk', say: `Found a bug in ${t.k}`, tone: 'bug', dur: 2,
-      onArrive: () => { q.card.visible = false; flow(q.pos, c.pos, COL.overdue); setTimeout(() => say(c, 'Fixing it'), 900); } }]);
-  } else if (t.st === 'done') { // put the card in the Done column
-    runErrands(c, [{ to: BOARD('done'), yaw: -Math.PI / 2, card: COL.done, pose: 'board', say: `${t.k} done`, tone: 'ok', dur: 1.4, onArrive: () => (c.card.visible = false) }]);
-  }
-}
 
 // ---- Data: /api/team-sprint, polled; differences between two loads play as scenes ----
 const POLL_MS = 90_000;
@@ -453,7 +432,7 @@ function applyData(data) {
     let c = byId(u.id);
     if (!c) {
       c = addPerson(u); c.state = stateOf(u);
-      if (c.isPlayer) { c.pos.set(2, 0, 0); c.yaw = c.yawT = 0; } else if (!first) c.group.visible = false; // walks in from the corridor's end
+      if (!first) c.group.visible = false; // walks in from the corridor's end
       updateTag(c);
       continue;
     }
@@ -464,10 +443,15 @@ function applyData(data) {
     const done = changes.find((ch) => ch.kind === 'move' && ch.task.st === 'done');
     updateTag(c, done ? `✓ ${done.task.k}` : ''); if (done) setTimeout(() => chars.includes(c) && updateTag(c), 2400);
     if (changes.length) moves.push([c, changes.find((ch) => ch.kind === 'move') || changes[0]]);
+    const mine = !DEMO && c.isPlayer && changes.find((ch) => ch.kind === 'new');
+    if (mine) goBoard(c, mine.task.k); // created for you: no "assigned" in the changelog
   }
   for (const c of [...chars]) if (!seen.has(c.u.id) && !c.isPlayer) { if (selected === c) closeDrawer(); removePerson(c); }
+  for (const c of chars) c.lastAct = lastAct.get(c.u.id) || 0;
   replan(first);
-  for (const [c, ch] of moves) playChange(c, ch);
+  // Live, the activity (activity.js) plays what happened, with who did it; the demo has only its task moves.
+  if (DEMO) enqueue(moves.map(([c, ch]) => demoEvent(c, ch)));
+  else if (first) loadEvents();
   if (selected) renderDrawer();
   if (teamOpen && !sorting && !drawer.contains(document.activeElement)) renderTeam(); // not while a choice is open or a card is dragged
 }
@@ -476,7 +460,6 @@ setInterval(() => { if (!document.hidden) load(); }, DEMO ? 6000 : POLL_MS); // 
 function stepEffects(dt, time) {
   stepFlows(dt);
   warLight.intensity = warLight.userData.on ? 0.35 + 0.35 * Math.sin(time * 2.2) : 0;
-  marker.material.opacity = Math.max(0, marker.material.opacity - dt * 1.2);
   selRing.visible = !!selected; if (selected) selRing.position.set(selected.pos.x, 0.045, selected.pos.z);
 }
 
@@ -530,7 +513,7 @@ canvas.addEventListener('pointermove', (e) => {
 });
 function endPointer(e) {
   pointers.delete(e.pointerId);
-  if (drag && !drag.moved && drag.button === 0 && e.type === 'pointerup' && player) {
+  if (drag && !drag.moved && drag.button === 0 && e.type === 'pointerup') {
     const h = hit(e.clientX, e.clientY);
     const inRoom = h.floor && zoneAt(h.floor.point.x, h.floor.point.z) === rv.room;
     const sign = signAt(e.clientX, e.clientY);
@@ -538,7 +521,6 @@ function endPointer(e) {
     else if (overMeetButton(e.clientX, e.clientY)) setMeeting(!meeting);
     else if (h.char) openDrawer(h.char);
     else if (rv.room && !inRoom) exitRoom(); // clicking outside the room leaves it
-    else if (h.floor) goTo(h.floor.point);
   }
   if (pointers.size < 2) pinch = null;
   if (!pointers.size) { drag = null; canvas.classList.remove('dragging'); }
@@ -548,7 +530,6 @@ canvas.addEventListener('dblclick', (e) => { const h = hit(e.clientX, e.clientY)
 canvas.addEventListener('pointerleave', () => { mouse = null; });
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
 
-const keys = new Set();
 addEventListener('keydown', (e) => {
   const typing = e.target.closest && e.target.closest('input, textarea, select');
   if (e.key === 'Escape') {
@@ -563,25 +544,7 @@ addEventListener('keydown', (e) => {
   if (k === '+' || k === '=') return zoomBy(1.25);
   if (k === '-') return zoomBy(1 / 1.25);
   if (k === 'f') return setFollow(!follow);
-  if ((k === ' ' || k === 'enter') && nearest && e.target === document.body) { e.preventDefault(); return openDrawer(nearest); }
-  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift'].includes(k)) { if (k.startsWith('arrow')) e.preventDefault(); keys.add(k); }
 });
-addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
-addEventListener('blur', () => keys.clear());
-function movePlayerKeys(dt) {
-  let f = 0, s = 0;
-  if (keys.has('w') || keys.has('arrowup')) f += 1; if (keys.has('s') || keys.has('arrowdown')) f -= 1;
-  if (keys.has('d') || keys.has('arrowright')) s += 1; if (keys.has('a') || keys.has('arrowleft')) s -= 1;
-  player.keyMoving = !!(f || s);
-  if (!player.keyMoving) { if (!player.path.length) player.speed = 4.2; return; }
-  const fx = -Math.sin(camAz()), fz = -Math.cos(camAz()), mx = fx * f - fz * s, mz = fz * f + fx * s, n = Math.hypot(mx, mz);
-  player.path = []; player.speed = keys.has('shift') ? 7 : 4.2;
-  const nx = clamp(player.pos.x + (mx / n) * player.speed * dt, -20.6, 20.6), nz = clamp(player.pos.z + (mz / n) * player.speed * dt, -12.6, 12.6);
-  if (!blocked(nx, player.pos.z, 0.25)) player.pos.x = nx;
-  if (!blocked(player.pos.x, nz, 0.25)) player.pos.z = nz;
-  player.yawT = Math.atan2(mx, mz);
-}
-
 // ---- Toolbar ----
 function setFollow(on) { follow = on; $('#t-follow').setAttribute('aria-pressed', String(on)); if (on) camGoal = null; }
 $('#t-rotl').addEventListener('click', () => rotate(-1));
@@ -593,17 +556,6 @@ $('#t-follow').addEventListener('click', () => setFollow(!follow));
 $('#t-tags').addEventListener('click', (e) => { const off = $('#tags').classList.toggle('off'); e.currentTarget.setAttribute('aria-pressed', String(!off)); });
 $('#t-help').addEventListener('click', () => ($('#help').hidden = !$('#help').hidden));
 $('#help-ok').addEventListener('click', () => { $('#help').hidden = true; tryStore('jd:officeHelp', '1'); });
-
-// ---- Nearby prompt ----
-const promptEl = $('#prompt');
-let nearest = null;
-promptEl.addEventListener('click', () => nearest && openDrawer(nearest));
-function checkNearby() {
-  let best = null, bd = 2.4;
-  for (const c of chars) { if (c.isPlayer || !c.group.visible) continue; const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z); if (d < bd) { bd = d; best = c; } }
-  if (best !== nearest) { nearest = best; if (best) promptEl.innerHTML = `<kbd>Space</kbd> See ${esc(short(best.u))}'s tasks`; }
-  promptEl.hidden = !nearest || selected === nearest || !$('#help').hidden;
-}
 
 // ---- Theme: follows the dashboard page around it (html.light / html.dark), else the system ----
 function syncTheme() {
@@ -618,7 +570,7 @@ function applyTheme() {
   COL = Object.fromEntries(['fg', 'accent', 'todo', 'prog', 'review', 'done', 'overdue'].map((n) => [n, css('--' + n)]));
   const bg = new THREE.Color(css('--bg')), dark = bg.r + bg.g + bg.b < 1.2;
   applyWorldTheme(dark, COL.fg);
-  ringMat.color.set(COL.accent); selRing.material.color.set(COL.fg); marker.material.color.set(COL.accent);
+  ringMat.color.set(COL.accent); selRing.material.color.set(COL.fg);
   resetGlow();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
@@ -658,13 +610,12 @@ function frame(now) {
     view.target.x += dx * Math.min(1, dt * 4); view.target.z += dz * Math.min(1, dt * 4);
     if (!follow && Math.hypot(dx, dz) < 0.05) camGoal = null;
   }
-  if (player) movePlayerKeys(dt);
   for (const c of chars) stepChar(c, dt, time);
   stepEffects(dt, time);
   updateWalls();
   updateCamera();
   renderer.render(scene, viewCam);
-  placeTags(); placeDetails(); pressMeetButton(); if (player) checkNearby();
+  placeTags(); placeDetails(); pressMeetButton();
   if (frameN % 10 === 0) markFocus();
   if (rv.room && frameN % 90 === 0) buildDetails(); // people come and go
   if ((frameN++ & 1) === 0) {

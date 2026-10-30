@@ -23,6 +23,7 @@ const attachments = require('./lib/attachments');
 const notifications = require('./lib/notifications');
 const { listUsers } = require('./lib/users');
 const { listTeamSprint } = require('./lib/team');
+const { listOfficeEvents } = require('./lib/office-events');
 
 // Values of the user filter that are not an accountId: every assignee / tasks nobody is assigned to.
 const ALL_USERS = '__all__';
@@ -171,6 +172,12 @@ async function api(req, res, url) {
   if (route === 'PUT /api/office/people') {
     const body = await readJson(req);
     return send(res, 200, { people: config.savePerson(body?.accountId, body?.profile) });
+  }
+  // The office's activity: Jira changes and comments, GitLab pushes, merge requests and pipelines, since `since` (ms).
+  if (route === 'GET /api/office/events') {
+    const sprint = url.searchParams.get('sprint');
+    if (sprint && !/^\d{1,12}$/.test(sprint)) return send(res, 400, { error: 'sprint must be a sprint id' });
+    return send(res, 200, await listOfficeEvents({ sprintId: sprint ? Number(sprint) : null, since: Number(url.searchParams.get('since')) || 0 }));
   }
   if (route === 'PUT /api/office/order') return send(res, 200, { order: config.saveOrder((await readJson(req))?.order) });
 

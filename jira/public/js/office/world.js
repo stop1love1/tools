@@ -291,7 +291,7 @@ for (const [x, z] of [[-6.2, 12.3], [10.2, 12.3]]) plant(x, z, true);
 
 Object.keys(ZONES).forEach(doorSign);
 
-// info: { all: [{k, s, st, pr, type, who}], highest: [same], bugsOpen, passed }
+// info: { all: [{k, s, st, pr, type, who}], highest: [same], bugsOpen, passed, board: { tasks: [same], label } }
 function updateRooms(info) {
   let g = warScreen.g;
   g.fillStyle = '#1b1517'; g.fillRect(0, 0, 384, 204);
@@ -319,14 +319,13 @@ function updateRooms(info) {
   g.fillStyle = '#7d8a96'; g.font = `500 12px ${FONT}`; g.fillText('bugs in this sprint', 14, 128);
   qaScreen.t.needsUpdate = true;
 
-  ciLamp.material.color.set(info.highest.length ? '#f05a5a' : '#4cd27f');
-
-  // Planning board: one column per status, up to 5 cards each (key, summary, owner).
+  // Sprint board: the tasks the dashboard's header filter keeps (info.board), one column per status, up to 5 cards each.
   g = boardScreen.g;
   g.fillStyle = '#fbfbf8'; g.fillRect(0, 0, 1024, 276);
+  g.fillStyle = '#5b6a6b'; g.font = `600 12px ${FONT}`; g.textAlign = 'right'; g.fillText(trunc(info.board.label, 34), 1016, 34); g.textAlign = 'left';
   const cols = [['todo', 'To Do', '#64748b'], ['prog', 'In Progress', '#2563eb'], ['review', 'Review', '#7c3aed'], ['done', 'Done', '#15924a']];
   cols.forEach(([s, label, color], i) => {
-    const x = i * 256 + 8, list = info.all.filter((t) => t.st === s);
+    const x = i * 256 + 8, list = info.board.tasks.filter((t) => t.st === s);
     g.fillStyle = color; g.fillRect(x, 8, 240, 5);
     g.fillStyle = '#1d2a2c'; g.font = `700 16px ${FONT}`; g.fillText(`${label} · ${list.length}`, x, 34);
     list.slice(0, 5).forEach((t, r) => {

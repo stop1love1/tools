@@ -12,6 +12,7 @@
       <main id="stage">
         <div id="details"></div>
         <p id="toast" role="status" hidden></p>
+        <div id="replay" hidden><span>Replaying today · <b id="replay-time"></b></span><button class="obtn" id="replay-skip">Skip</button></div>
         <div id="roomhead" hidden>
           <button class="obtn primary" id="room-exit" title="Back to the whole office (Esc)">← Office</button>
           <div class="rh-title"><b id="rh-name"></b><small id="rh-line"></small></div>
@@ -20,15 +21,12 @@
         <div id="tags"></div>
         <div id="tip" hidden></div>
         <p id="empty" hidden>No active sprint found for your projects. Pick a sprint in the filter above.</p>
-        <button id="prompt" hidden></button>
         <div id="help" hidden>
           <h3>Getting around</h3>
           <dl>
             <dt>Drag</dt><dd>Move the map (orbit inside a room)</dd>
             <dt>Wheel / pinch</dt><dd>Zoom</dd>
             <dt><kbd>Q</kbd> <kbd>E</kbd></dt><dd>Turn the view 90°</dd>
-            <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Walk your character, <kbd>Shift</kbd> to run</dd>
-            <dt>Click the floor</dt><dd>Walk there</dd>
             <dt>Click a person</dt><dd>Their tasks</dd>
             <dt>Red button / <kbd>M</kbd></dt><dd>Call everyone to a meeting</dd>
             <dt>Door sign / double-click</dt><dd>Look into a room, <kbd>Esc</kbd> to come back</dd>
@@ -60,6 +58,7 @@
     <script src="/js/office/textures.js"></script>
     <script src="/js/office/world.js"></script>
     <script src="/js/office/people.js"></script>
+    <script src="/js/office/activity.js"></script>
     <script src="/js/office/app.js"></script>
     <script src="/js/livereload.js?port=35729"></script>
   </body>

@@ -44,13 +44,11 @@ const playerRing = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.52, 40), ringMa
 playerRing.rotation.x = -Math.PI / 2; playerRing.position.y = 0.04;
 const selRing = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.6, 40), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.8, depthWrite: false }));
 selRing.rotation.x = -Math.PI / 2; selRing.visible = false; scene.add(selRing);
-const marker = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.26, 32), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
-marker.rotation.x = -Math.PI / 2; marker.position.y = 0.04; scene.add(marker);
 
 function addPerson(u) {
   const r = makeRig(u);
   const group = new THREE.Group(); group.add(r.rig); scene.add(group);
-  const c = { u, ...r, group, pos: group.position, path: [], wait: rand(0, 3), zone: null, place: null, state: null, seat: null, sitting: false, phase: rand(0, 6), yaw: 0, yawT: 0, isPlayer: !!u.me, baseSpeed: u.me ? 4.2 : rand(1.9, 2.4), speed: 4.2, dim: false, hi: false, errands: [], errand: null };
+  const c = { u, ...r, group, pos: group.position, path: [], wait: rand(0, 3), zone: null, place: null, state: null, seat: null, sitting: false, phase: rand(0, 6), yaw: 0, yawT: 0, isPlayer: !!u.me, baseSpeed: rand(1.9, 2.4), speed: 2.2, dim: false, hi: false, errands: [], errand: null };
   r.rig.traverse((o) => { if (o.isMesh) { o.userData.char = c; pickables.push(o); } });
   c.tag = document.createElement('div'); tagsEl.append(c.tag);
   c.bubble = document.createElement('div'); c.bubble.className = 'say'; c.bubble.hidden = true; tagsEl.append(c.bubble);
@@ -113,11 +111,11 @@ function homeSeat(c, kind) {
   if (c.home) c.home.claim = c;
   return c.home;
 }
-// Where a person should be now. The player only moves for a meeting they called.
+// Where a person should be now (you too: your character goes where your work and the day take it).
 function placeOf(c) {
   if (meeting) return 'meeting';
   const z = zoneOf(c.u);
-  if (sched.kind === 'off') return isActive(c.u) ? z : 'away';
+  if (sched.kind === 'off') return isActive(c.u) || Date.now() - (c.lastAct || 0) < 3_600_000 ? z : 'away';
   if (z === 'urgent') return z; // Highest-priority work skips meetings and lunch
   if (sched.kind === 'lunch') return 'lunch';
   if (sched.kind === 'standup') return 'standup';
@@ -149,7 +147,7 @@ function route(c, to, via, target) {
 // Send a person where they belong now (placeOf): their desk, the war room, the pantry, the standup in front of the
 // sprint board, their seat at the meeting table (c.meetSeat, c.standSpot: app.js replan), or home (hidden).
 function retarget(c, teleport = false) {
-  const place = c.isPlayer && !meeting ? c.place : placeOf(c);
+  const place = placeOf(c);
   if (c.errand || (place === c.place && !teleport)) return; // an errand sends them home when it ends
   const prev = { pos: c.pos, seat: c.seat, sitting: c.sitting };
   releaseSeat(c); c.place = place;
@@ -171,14 +169,6 @@ function wander(c) {
   if (!c.seat && c.place === 'done') { c.path = [freeSpot(ZONES.done.wander, c)]; c.goal = c.path[0]; }
   c.wait = rand(8, 16) * (reduceMotion ? 2 : 1);
 }
-function goTo(p) {
-  let x = clamp(p.x, -20.5, 20.5), z = clamp(p.z, -12.5, 12.5);
-  if (blocked(x, z, 0.3)) { const s = freeSpot([x - 1.2, x + 1.2, z - 1.2, z + 1.2]); x = s.x; z = s.z; }
-  player.path = route(player, zoneAt(x, z), [], v(x, z));
-  releaseSeat(player); player.place = null;
-  marker.position.x = x; marker.position.z = z; marker.material.opacity = 1;
-}
-
 // ---- Errands: walk somewhere (a spot or another person), do something there, then go back to one's place ----
 // step: { to: Vector3 | target: person, via?, yaw?, say?, tone?, dur?, pose?: 'board'|'talk', card?: colour, onArrive? }
 function nearPerson(t, from) {
@@ -189,7 +179,7 @@ function nearPerson(t, from) {
   return { to: p, via: [] };
 }
 function runErrands(c, steps, carryHome = null) {
-  if (c.isPlayer || meeting) return;
+  if (meeting) return;
   c.errands = steps; c.carryHome = carryHome; nextErrand(c);
 }
 function nextErrand(c) {
@@ -237,8 +227,7 @@ function stepFlows(dt) {
 const lerpAngle = (a, b, k) => a + (((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * k;
 function stepChar(c, dt, time) {
   if (!c.group.visible) return; // gone home
-  let moving = !!c.keyMoving;
-  if (moving && c.seat) { releaseSeat(c); c.place = null; }
+  let moving = false;
   if (c.path.length) {
     const p = c.path[0], dx = p.x - c.pos.x, dz = p.z - c.pos.z, d = Math.hypot(dx, dz);
     if (d < 0.06) c.path.shift();
@@ -248,12 +237,11 @@ function stepChar(c, dt, time) {
     if (c.errandT === null) arriveErrand(c);
     if ((c.errandT -= dt) <= 0) nextErrand(c);
   } else if (c.seat) { c.sitting = true; c.yawT = c.seat.yaw; c.card.visible = false; }
-  else if (!c.isPlayer) {
+  else {
     c.card.visible = false;
     c.wait -= dt; if (c.wait <= 0) wander(c);
     if (ZONES[c.zone].face !== undefined) c.yawT = ZONES[c.zone].face;
   }
-  if (!c.isPlayer && !c.errand && !moving && !c.sitting && player && Math.hypot(player.pos.x - c.pos.x, player.pos.z - c.pos.z) < 2.4) c.yawT = Math.atan2(player.pos.x - c.pos.x, player.pos.z - c.pos.z);
   c.yaw = lerpAngle(c.yaw, c.yawT, Math.min(1, dt * 10)); c.group.rotation.y = c.yaw;
 
   const k = Math.min(1, dt * 10);
@@ -268,9 +256,18 @@ function stepChar(c, dt, time) {
     else if (c.seat.kind === 'sofa') { armL = -0.35; armR = -0.6; turn = Math.sin(time * 0.5 + c.phase) * 0.5; } // chatting on the sofa
     else if (isIdle(c.u)) { armL = armR = -0.3; head = 0.35; }
     else if (c.seat.kind === 'qa') { armL = -1.5 + Math.sin(time * 3 + c.phase) * 0.08; armR = -1.2 + Math.sin(time * 9 + c.phase) * 0.12; head = 0.25; } // testing on a phone
-    else { armL = -1.2 + Math.sin(time * 16 + c.phase) * 0.05; armR = -1.2 + Math.sin(time * 16 + c.phase + 1.7) * 0.05; }
+    else { // typing: hard right after a push, steadily while their work moves, slowly otherwise
+      const f = c.burst > performance.now() ? 22 : Date.now() - (c.lastAct || 0) < 1_800_000 ? 14 : 6, a = f > 14 ? 0.09 : 0.05;
+      armL = -1.2 + Math.sin(time * f + c.phase) * a; armR = -1.2 + Math.sin(time * f + c.phase + 1.7) * a;
+    }
   } else if (c.errand && c.errandT !== null) {
-    if (c.errand.pose === 'board') armR = -2.7 + Math.sin(time * 4) * 0.1; // putting a card on the board
+    const p = c.errand.pose;
+    if (p === 'board') armR = -2.7 + Math.sin(time * 4) * 0.1; // putting a card on the board
+    else if (p === 'exercise') { const j = Math.abs(Math.sin(time * 5 + c.phase)); armL = armR = -2.9 * j; bob = 0.18 * j; } // jumping jacks
+    else if (p === 'stretch') { armL = armR = -3 + Math.sin(time * 1.2 + c.phase) * 0.15; head = -0.25; turn = Math.sin(time * 0.8) * 0.3; }
+    else if (p === 'meditate') { armL = armR = -1.25; head = 0.3; bob = Math.sin(time * 1.1) * 0.02; } // hands together, breathing
+    else if (p === 'drink') { armR = -1.9 + Math.max(0, Math.sin(time * 0.9 + c.phase)) * 0.6; armL = -0.15; }
+    else if (p === 'look') { turn = Math.sin(time * 0.5 + c.phase) * 0.6; head = -0.1; } // looking around, out of the window
     else { armR = -0.6 + Math.sin(time * 5 + c.phase) * 0.35; armL = -0.2; } // talking
   } else { const br = Math.sin(time * 1.6 + c.phase) * 0.04; armL = br; armR = -br; }
   if (c.card.visible && !(c.errand && c.errandT !== null)) armR = -0.95; // holding the card out

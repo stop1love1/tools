@@ -42,7 +42,7 @@ button, input { font: inherit; color: inherit; }
 #tags, #details { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 #tags, #details { z-index: 1; }
 #tags.off { display: none; }
-#tip, #prompt, #help, .toolbar, #drawer { z-index: 2; }
+#tip, #help, .toolbar, #drawer, #replay { z-index: 2; }
 #toast { position: absolute; z-index: 3; top: 10px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 14px; border-radius: 8px; background: var(--surface); border: 1px solid var(--overdue); color: var(--fg); font-size: 12.5px; box-shadow: 0 4px 14px rgb(0 0 0 / .2); max-width: calc(100% - 32px); }
 #empty { position: absolute; z-index: 2; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
 
@@ -113,7 +113,6 @@ button, input { font: inherit; color: inherit; }
 .toolbar button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .toolbar svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .toolbar .sep { width: 1px; background: var(--line); margin: 6px 3px; }
-#prompt { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); border: 1px solid var(--accent); background: var(--surface); padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 500; box-shadow: 0 4px 14px rgb(0 0 0 / .15); white-space: nowrap; }
 kbd { font: 500 11px var(--font-mono); padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--fg); }
 #help { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow-lg); width: min(360px, calc(100% - 32px)); box-sizing: border-box; }
 #help h3 { margin: 0 0 8px; font: 700 15px var(--font-display); }
@@ -169,3 +168,7 @@ kbd { font: 500 11px var(--font-mono); padding: 1px 5px; border: 1px solid var(-
         #drawer { top: auto; height: 62%; width: 100%; border-left: 0; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0; transform: translateY(105%); }
   }
 @media (prefers-reduced-motion: reduce) { #drawer { transition: none; } .say, .tag .flash { animation: none; } }
+
+/* Replaying the day's activity (activity.js). */
+#replay { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 5px 6px 5px 14px; background: var(--surface); border: 1px solid var(--accent); border-radius: 999px; box-shadow: 0 4px 14px rgb(0 0 0 / .18); font-size: 13px; }
+#replay b { font-variant-numeric: tabular-nums; }

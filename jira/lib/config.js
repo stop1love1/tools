@@ -250,10 +250,13 @@ const PERSON = {
   role: ['dev', 'qa', 'ba', 'po', 'pm'],
 };
 const ACCOUNT_RE = /^[A-Za-z0-9:_-]{1,128}$/;
+const GITLAB_RE = /^[A-Za-z0-9._-]{1,64}$/; // their GitLab username, when the office can't match it from their name
 // Keeps the known values only; a person with nothing set is dropped.
 function cleanPerson(p) {
   const out = {};
   for (const [k, allowed] of Object.entries(PERSON)) if (allowed.includes(p?.[k])) out[k] = p[k];
+  const gl = typeof p?.gitlab === 'string' ? p.gitlab.trim().replace(/^@/, '') : '';
+  if (GITLAB_RE.test(gl)) out.gitlab = gl;
   return Object.keys(out).length ? out : null;
 }
 function cleanPeople(v) {
@@ -272,6 +275,8 @@ function savePerson(id, profile) {
     const val = profile?.[k];
     if (val != null && val !== '' && !allowed.includes(val)) throw httpError(400, `Unknown ${k}: ${val}`);
   }
+  const gl = typeof profile?.gitlab === 'string' ? profile.gitlab.trim().replace(/^@/, '') : '';
+  if (gl && !GITLAB_RE.test(gl)) throw httpError(400, `Not a GitLab username: ${gl}`);
   get(); // overrides are read on first use
   const next = JSON.parse(JSON.stringify(overrides));
   const people = cleanPeople(next.office?.people);

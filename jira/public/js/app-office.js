@@ -39,16 +39,23 @@ window.onShortcutExtra = (e, typing) => {
   }
 };
 
-// The header's filters: only the sprint matters here (the office shows the whole team, whatever the user or JQL).
+// The header's filters: the sprint picks the office's sprint; the person and the JQL pick what its sprint board shows
+// (office-scene.html asks officeFilter when it redraws its rooms).
+window.officeFilter = () => {
+  if (!state.fetchedAt) return null; // not loaded yet: the board shows the whole team meanwhile
+  const who = $('#user-filter')?.selectedOptions[0]?.textContent || 'Mine';
+  return { keys: state.issues.map((i) => i.key), label: state.jql ? `${who} · JQL` : who };
+};
+const redrawBoard = () => frame?.contentWindow?.refreshRooms?.();
 window.onSprintFilterChange = render;
-window.onUserFilterChange = render;
-window.onJqlChange = () => loadIssues().then(render);
+window.onUserFilterChange = () => { render(); loadIssues().then(redrawBoard); };
+window.onJqlChange = () => loadIssues().then(() => { render(); redrawBoard(); });
 window.onShortcutR = () => frame?.contentWindow?.load?.({ fresh: true });
 
 async function initPage() {
   render();
   loadUsers();
   // The task list fills the sprint filter's choices.
-  return loadIssues({ silent: !!state.fetchedAt }).then(render);
+  return loadIssues({ silent: !!state.fetchedAt }).then(() => { render(); redrawBoard(); });
 }
 window.initPage = initPage;
