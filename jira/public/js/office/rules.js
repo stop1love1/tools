@@ -90,34 +90,12 @@ const zoneOf = (u) => {
   const s = stateOf(u), room = ROLE_ROOM[u.role] || 'dev';
   return s === 'urgent' ? s : s === 'done' && room !== 'review' ? s : room;
 };
-// Someone with a Jira update in the last hour: still at work after hours.
-const isActive = (u, now = Date.now()) => u.tasks.some((t) => t.at && now - t.at < 3_600_000);
 // The Team panel's order (top first), then by name: meeting seats from the head of the table, standup turns.
 const byOrder = (order) => (a, b) => {
   const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
   return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib) || baseName(a.name).localeCompare(baseName(b.name), 'vi');
 };
 
-// The office's day (Settings → Overview 3D office): hours, lunch, the daily standup (an hour of sprint planning on the
-// sprint's first day) and the review & retro on its last. → { kind: off|work|standup|planning|lunch|retro, name, until, next }
-const hm = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec((s || '').trim()); return m ? +m[1] * 60 + +m[2] : null; };
-const hmText = (x) => `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
-function scheduleAt(now, S = {}, sprint = null) {
-  const span = (s, dflt) => { const [a, b] = (s || dflt).split('-').map(hm); return a !== null && b !== null && a < b ? [a, b] : dflt.split('-').map(hm); };
-  const [ws, we] = span(S.hours, '08:30-17:30'), [ls, le] = span(S.lunch, '12:00-13:00');
-  const su = hm(S.standup) ?? hm('09:15'), rt = hm(S.retro) ?? hm('16:00');
-  const m = now.getHours() * 60 + now.getMinutes(), wd = now.getDay();
-  const today = (iso) => !!iso && dayStart(new Date(iso)).getTime() === dayStart(now).getTime();
-  const events = [
-    today(sprint?.startDate) ? { kind: 'planning', name: 'Sprint planning', from: su, to: su + 60 } : { kind: 'standup', name: 'Daily standup', from: su, to: su + 15 },
-    { kind: 'lunch', name: 'Lunch', from: ls, to: le },
-    ...(today(sprint?.endDate) ? [{ kind: 'retro', name: 'Sprint review & retro', from: rt, to: rt + 60 }] : []),
-  ];
-  if (wd === 0 || wd === 6 || m < ws || m >= we) return { kind: 'off', name: 'After hours', until: null, next: null, hours: `${hmText(ws)}–${hmText(we)}` };
-  const on = events.find((e) => m >= e.from && m < e.to);
-  const next = events.filter((e) => e.from > m).sort((a, b) => a.from - b.from)[0];
-  return { kind: on ? on.kind : 'work', name: on ? on.name : 'Working', until: on ? hmText(on.to) : null, next: next ? { kind: next.kind, name: next.name, at: hmText(next.from) } : null };
-}
 const isIdle = (u) => u.tasks.some((t) => t.st === 'prog' && t.idle >= 3);
 const spOf = (u) => ({ done: u.tasks.filter((t) => t.st === 'done').reduce((s, t) => s + t.sp, 0), total: u.tasks.reduce((s, t) => s + t.sp, 0) });
 const RANK = { review: 1, prog: 2, todo: 3, done: 4 };

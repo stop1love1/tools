@@ -214,3 +214,4 @@ kbd { font: 500 11px var(--font-mono); padding: 1px 5px; border: 1px solid var(-
 .tr .st { flex: none; font-size: 10.5px; padding: 0 6px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
 .tr .late { flex: none; font-size: 10.5px; font-weight: 600; }
 .pav.xs { width: 18px; height: 18px; border-radius: 5px; font-size: 8px; flex: none; }
+

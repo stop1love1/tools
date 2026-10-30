@@ -68,7 +68,6 @@ const M = {
   glass: new THREE.MeshLambertMaterial({ color: '#cfe6ec', transparent: true, opacity: 0.2, depthWrite: false }),
   pane: new THREE.MeshBasicMaterial({ color: '#d7eef7' }),
 };
-const SCREENS = [1, 2, 3].map((s) => new THREE.MeshBasicMaterial({ map: tex(screenCanvas(100 + s)) }));
 const SOLIDS = [];
 const blocked = (x, z, r) => SOLIDS.some((b) => x > b[0] - r && x < b[1] + r && z > b[2] - r && z < b[3] + r);
 
@@ -155,7 +154,8 @@ function doorSign(zone) {
   const cv = makeCanvas(512, 128, (g) => {
     g.fillStyle = '#20282c'; g.fillRect(0, 0, 512, 128);
     g.fillStyle = css(`--${Z.color}`) || '#8a94a3'; g.fillRect(0, 0, 14, 128);
-    g.fillStyle = '#f4f6f6'; g.font = `700 58px ${FONT}`; g.textBaseline = 'middle'; g.fillText(Z.name, 40, 68);
+    g.fillStyle = '#f4f6f6'; g.font = `700 58px ${FONT}`; g.textBaseline = 'middle'; g.textAlign = 'center';
+    g.fillText(Z.name.replace(/\s*room$/i, ''), 263, 68); // centred beside the colour strip; "Dev", not "Dev room"
   });
   const mat = new THREE.MeshBasicMaterial({ map: tex(cv) });
   for (const side of [0, Math.PI]) {
@@ -182,14 +182,45 @@ for (const [room, dz, entryZ] of [['dev', -10, -3.4], ['dev', -6, -3.4], ['qa', 
   const screens = (room === 'dev' ? [dx - 0.42, dx + 0.42] : [dx]).map((sx) => {
     const w = room === 'dev' ? 0.8 : 1;
     B(w, 0.55, 0.06, M.metal, sx, 0.95, dz - 0.33);
-    return plane(w - 0.08, 0.47, M.screenOff, sx, 1.225, dz - 0.295);
+    const cv = makeCanvas(room === 'dev' ? 144 : 184, 88, () => {});
+    const t = new THREE.CanvasTexture(cv); t.anisotropy = 4;
+    return { mesh: plane(w - 0.08, 0.47, M.screenOff, sx, 1.225, dz - 0.295), cv, t, mat: new THREE.MeshBasicMaterial({ map: t }) };
   });
   B(0.7, 0.03, 0.22, M.white, dx, 0.75, dz + 0.12);
   chair(dx, dz + 0.9, Math.PI);
   if (room === 'qa') { B(0.18, 0.3, 0.02, M.metal, dx + 0.6, 0.75, dz - 0.05); B(0.3, 0.02, 0.4, M.metal, dx - 0.6, 0.75, dz + 0.05); } // test phone, tablet
   DESKS.push({ room, x: dx, z: dz, seatZ: dz + 0.9, aisleX: dx + 2, entryZ, owner: null, screens, i: DESKS.length });
 }
-function setScreen(d) { d.screens.forEach((s, j) => (s.material = d.owner ? SCREENS[(d.i + j) % 3] : M.screenOff)); }
+// Desk monitors follow whoever sits there: the left (or only) one shows their task, a Dev's right one their code,
+// bright after a push and red while their pipeline fails. Off when the desk is empty.
+const ST_COLOR = { prog: '#3b76f0', review: '#8b5cf6', todo: '#8a94a3', done: '#22a052' };
+function setScreen(d) {
+  const c = d.owner;
+  d.screens.forEach((s, j) => {
+    s.mesh.material = c ? s.mat : M.screenOff;
+    if (!c) return;
+    const g = s.cv.getContext('2d'), W = s.cv.width, H = s.cv.height, t = currentTask(c.u);
+    g.fillStyle = '#0f151c'; g.fillRect(0, 0, W, H);
+    if (j === 0) { // the task
+      g.fillStyle = t ? (t.pr === 'highest' ? '#e5484d' : ST_COLOR[t.st]) : '#22a052'; g.fillRect(0, 0, W, 7);
+      g.fillStyle = '#e6edf3'; g.font = `700 17px ${MONO}`; g.fillText(t ? t.k : 'All done', 8, 30);
+      g.fillStyle = '#9aa7b4'; g.font = `500 12px ${FONT}`;
+      if (t) { g.fillText(trunc(t.s, W > 150 ? 26 : 20), 8, 50); g.fillText(trunc(t.s.slice(W > 150 ? 25 : 19), W > 150 ? 26 : 20), 8, 65); }
+      g.fillStyle = t ? (t.pr === 'highest' ? '#ff8a8a' : ST_COLOR[t.st]) : '#22a052'; g.font = `600 11px ${FONT}`; g.fillText(t ? trunc(t.statusName, 22) : '', 8, 82);
+      if (d.room === 'qa' && t) { // a test checklist beside it
+        for (let k = 0; k < 3; k++) { const ok = k < (t.st === 'done' ? 3 : 1 + (t.idle % 2)); g.fillStyle = ok ? '#22a052' : '#3a4654'; g.fillRect(W - 34, 16 + k * 22, 10, 10); g.fillStyle = '#3a4654'; g.fillRect(W - 20, 19 + k * 22, 14, 4); }
+      }
+    } else { // their code: brighter after a push, red while their pipeline fails
+      const hot = c.burst > performance.now(), fail = c.ciFail, r = rng(d.i * 7 + 3);
+      const cols = fail ? ['#f47272', '#c9d2dc', '#7d8a96'] : hot ? ['#7fd1a4', '#9fe0c0', '#e2b86b', '#63a4fa'] : ['#63a4fa', '#7fd1a4', '#c9d2dc', '#e2b86b'];
+      for (let y = 8; y < H - 16; y += 7) { let x = 8 + Math.floor(r() * 3) * 6; const end = 40 + Math.floor(r() * 90); while (x < end) { const w = 6 + Math.floor(r() * 18); g.fillStyle = cols[Math.floor(r() * cols.length)]; g.globalAlpha = hot || fail ? 1 : 0.75; g.fillRect(x, y, Math.min(w, end - x), 3); x += w + 4; } }
+      g.globalAlpha = 1;
+      if (fail || hot) { g.fillStyle = fail ? '#e5484d' : '#22a052'; g.fillRect(0, H - 14, W, 14); g.fillStyle = '#fff'; g.font = `700 10px ${FONT}`; g.fillText(fail ? '✗ pipeline failed' : '↑ pushed', 6, H - 4); }
+    }
+    s.t.needsUpdate = true;
+  });
+}
+const refreshDesks = () => DESKS.forEach(setScreen);
 plant(10.2, -12.2, true); plant(-6.2, -12.2, true);
 
 // Meeting room (Review): glass walls with a door at x=16, long table along z with 12 seats.
@@ -302,14 +333,37 @@ B(3.8, 2.1, 0.1, M.metal, -14, 0.65, -12.9, { parent: wBack.g });
 const warScreen = screenAt(3.6, 1.9, 384, 204, -14, 1.7, -12.84, 0, wBack.g);
 const warLight = new THREE.PointLight(0xff4a4a, 0, 12, 1.6); warLight.position.set(-14, 2.6, -8); scene.add(warLight);
 
-// Dev room: build lamp and an architecture whiteboard.
+// Dev room: the build lamp, and a code review & CI board (activity.js fills it from GitLab).
 const ciLamp = B(0.6, 0.6, 0.1, new THREE.MeshBasicMaterial({ color: '#4cd27f' }), -1, 2.0, -12.93, { parent: wBack.g, cast: false });
-B(4, 1.6, 0.06, M.white, 3, 0.9, -12.95, { parent: wBack.g });
-plane(3.8, 1.45, new THREE.MeshBasicMaterial({ map: tex(CANVAS.arch) }), 3, 1.7, -12.91, 0, wBack.g);
+B(4.4, 1.9, 0.08, M.metal, 3, 0.75, -12.95, { parent: wBack.g });
+const devScreen = screenAt(4.2, 1.7, 720, 292, 3, 1.7, -12.9, 0, wBack.g);
+// mrs: [{ iid, key, title, author, reviewer, approved, repo }]; ci: [{ repo, status }] | null (no GitLab).
+function drawDevBoard(mrs = [], ci = null) {
+  const g = devScreen.g;
+  g.setTransform(1.5, 0, 0, 1.5, 0, 0); // drawn at 480×195
+  g.fillStyle = '#121a22'; g.fillRect(0, 0, 480, 195);
+  g.fillStyle = '#e6edf3'; g.font = `700 15px ${FONT}`; g.fillText(`Code review · ${mrs.length} open`, 12, 22);
+  let x = 468; g.font = `600 11px ${FONT}`; g.textAlign = 'right';
+  for (const r of [...(ci || [])].reverse()) { const label = `${r.repo} ${r.status === 'failed' ? '✗' : '✓'}`; g.fillStyle = r.status === 'failed' ? '#f47272' : '#4cd27f'; g.fillText(label, x, 22); x -= g.measureText(label).width + 12; }
+  if (!ci) { g.fillStyle = '#7d8a96'; g.fillText('CI: no GitLab', x, 22); }
+  g.textAlign = 'left';
+  g.fillStyle = '#2a3440'; g.fillRect(12, 30, 456, 1);
+  if (!mrs.length) { g.fillStyle = '#7d8a96'; g.font = `500 13px ${FONT}`; g.fillText('No merge request waiting for review today', 12, 58); }
+  mrs.slice(0, 6).forEach((m, i) => {
+    const y = 50 + i * 24;
+    g.fillStyle = m.approved ? '#4cd27f' : '#e2b86b'; g.fillRect(12, y - 10, 4, 14);
+    g.fillStyle = '#9aa7b4'; g.font = `600 11px ${MONO}`; g.fillText(`!${m.iid}`, 22, y);
+    g.fillStyle = '#e6edf3'; g.font = `500 12px ${FONT}`; g.fillText(trunc(m.key ? `${m.key} ${m.title.replace(m.key, '').replace(/^[:\s-]+/, '')}` : m.title, 40), 64, y);
+    g.fillStyle = '#9aa7b4'; g.font = `500 11px ${FONT}`; g.textAlign = 'right';
+    g.fillText(`${m.author}${m.reviewer ? ` → ${m.reviewer}` : ''}${m.approved ? ' 👍' : ''}`, 468, y); g.textAlign = 'left';
+  });
+  if (mrs.length > 6) { g.fillStyle = '#7d8a96'; g.font = `500 11px ${FONT}`; g.fillText(`+ ${mrs.length - 6} more`, 12, 190); }
+  devScreen.t.needsUpdate = true;
+}
 
-// QA room: test-run screen and a device wall, both on the partition facing into the room.
-B(0.1, 1.3, 2.4, M.metal, -6.8, 0.9, 4.6); B(0.12, 0.9, 0.12, M.metal, -6.8, 0, 4.6);
-const qaScreen = screenAt(2.25, 1.15, 288, 148, -6.74, 1.55, 4.6, Math.PI / 2);
+// QA room: the queue board (ready for test, open bugs) and a device wall, both on the partition facing into the room.
+B(0.1, 1.75, 4.4, M.metal, -6.8, 0.82, 5); for (const z of [3.2, 6.8]) B(0.12, 0.85, 0.12, M.metal, -6.8, 0, z);
+const qaScreen = screenAt(4.2, 1.6, 720, 274, -6.74, 1.7, 5, Math.PI / 2);
 B(0.4, 1.7, 2.8, M.white, -6.7, 0, 9.6, { solid: true });
 for (let i = 0; i < 8; i++) {
   B(0.04, 0.34, 0.2, M.metal, -6.49, 0.45 + Math.floor(i / 4) * 0.6, 8.55 + (i % 4) * 0.7, { cast: false });
@@ -335,36 +389,48 @@ function updateRooms(info) {
   warScreen.t.needsUpdate = true;
   warLight.userData.on = info.highest.length > 0;
 
+  // QA board: the review queue (longest waiting first) and the open bugs (Highest first), with how many bugs are fixed.
   g = qaScreen.g;
-  const total = info.passed + info.bugsOpen, pass = total ? info.passed / total : 1;
-  g.fillStyle = '#121a22'; g.fillRect(0, 0, 288, 148);
-  g.fillStyle = '#c9d2dc'; g.font = `600 15px ${FONT}`; g.fillText('Sprint bugs', 14, 26);
-  g.fillStyle = '#2a3440'; g.fillRect(14, 44, 260, 18);
-  g.fillStyle = '#4cd27f'; g.fillRect(14, 44, 260 * pass, 18);
-  g.fillStyle = '#f47272'; g.fillRect(14 + 260 * pass, 44, 260 * (1 - pass), 18);
-  g.font = `700 26px ${FONT}`; g.fillStyle = '#4cd27f'; g.fillText(`${info.passed} fixed`, 14, 100);
-  g.fillStyle = info.bugsOpen ? '#f47272' : '#7d8a96'; g.fillText(`${info.bugsOpen} open`, 160, 100);
-  g.fillStyle = '#7d8a96'; g.font = `500 12px ${FONT}`; g.fillText('bugs in this sprint', 14, 128);
+  g.setTransform(1.5, 0, 0, 1.5, 0, 0); // drawn at 480×183
+  g.fillStyle = '#121a22'; g.fillRect(0, 0, 480, 183);
+  const col = (x, title, color, list, line) => {
+    g.fillStyle = color; g.fillRect(x, 10, 4, 16);
+    g.fillStyle = '#e6edf3'; g.font = `700 14px ${FONT}`; g.fillText(`${title} · ${list.length}`, x + 10, 23);
+    if (!list.length) { g.fillStyle = '#7d8a96'; g.font = `500 12px ${FONT}`; g.fillText('Nothing here', x + 10, 50); }
+    list.slice(0, 5).forEach((t, i) => {
+      const y = 48 + i * 26;
+      g.fillStyle = t.pr === 'highest' ? '#f47272' : '#9aa7b4'; g.font = `600 10.5px ${MONO}`; g.fillText(t.k, x + 10, y);
+      g.fillStyle = '#dfe5ea'; g.font = `500 11.5px ${FONT}`; g.fillText(trunc(t.s, 30), x + 10, y + 13);
+      g.fillStyle = '#9aa7b4'; g.font = `500 10.5px ${FONT}`; g.textAlign = 'right'; g.fillText(line(t), x + 222, y); g.textAlign = 'left';
+    });
+    if (list.length > 5) { g.fillStyle = '#7d8a96'; g.font = `500 10.5px ${FONT}`; g.fillText(`+ ${list.length - 5} more`, x + 10, 178); }
+  };
+  const PR = { highest: 0, high: 1, medium: 2, low: 3 };
+  col(8, 'Ready for test', '#8b5cf6', info.all.filter((t) => t.st === 'review').sort((a, b) => b.idle - a.idle), (t) => `${t.who} · ${t.idle ? `${t.idle}d` : 'today'}`);
+  g.fillStyle = '#2a3440'; g.fillRect(240, 10, 1, 166);
+  col(248, 'Open bugs', '#f47272', info.all.filter((t) => isOpen(t) && t.type === 'bug').sort((a, b) => PR[a.pr] - PR[b.pr] || b.idle - a.idle), (t) => `${t.who} · ${t.statusName}`);
+  g.fillStyle = '#4cd27f'; g.font = `600 11px ${FONT}`; g.textAlign = 'right'; g.fillText(`${info.passed} fixed`, 472, 23); g.textAlign = 'left';
   qaScreen.t.needsUpdate = true;
+  refreshDesks();
 
   // Sprint board: the tasks the dashboard's header filter keeps (info.board), one column per status, up to 5 cards each.
   g = boardScreen.g;
-  g.fillStyle = '#fbfbf8'; g.fillRect(0, 0, 1024, 276);
-  g.fillStyle = '#5b6a6b'; g.font = `600 12px ${FONT}`; g.textAlign = 'right'; g.fillText(trunc(info.board.label, 34), 1016, 34); g.textAlign = 'left';
-  const cols = [['todo', 'To Do', '#64748b'], ['prog', 'In Progress', '#2563eb'], ['review', 'Review', '#7c3aed'], ['done', 'Done', '#15924a']];
+  g.fillStyle = '#121a22'; g.fillRect(0, 0, 1024, 276); // dark like the office's other screens
+  g.fillStyle = '#8b949e'; g.font = `600 12px ${FONT}`; g.textAlign = 'right'; g.fillText(trunc(info.board.label, 34), 1016, 34); g.textAlign = 'left';
+  const cols = [['todo', 'To Do', '#8a94a3'], ['prog', 'In Progress', '#3b76f0'], ['review', 'Review', '#8b5cf6'], ['done', 'Done', '#22a052']];
   cols.forEach(([s, label, color], i) => {
     const x = i * 256 + 8, list = info.board.tasks.filter((t) => t.st === s);
     g.fillStyle = color; g.fillRect(x, 8, 240, 5);
-    g.fillStyle = '#1d2a2c'; g.font = `700 16px ${FONT}`; g.fillText(`${label} · ${list.length}`, x, 34);
+    g.fillStyle = '#e6edf3'; g.font = `700 16px ${FONT}`; g.fillText(`${label} · ${list.length}`, x, 34);
     list.slice(0, 5).forEach((t, r) => {
       const y = 44 + r * 44;
-      g.fillStyle = '#ffffff'; g.fillRect(x, y, 240, 38); g.strokeStyle = '#d6dbdd'; g.strokeRect(x + 0.5, y + 0.5, 239, 37);
+      g.fillStyle = '#1b2430'; g.fillRect(x, y, 240, 38); g.strokeStyle = '#2a3440'; g.strokeRect(x + 0.5, y + 0.5, 239, 37);
       g.fillStyle = t.pr === 'highest' ? '#d9534f' : t.type === 'bug' ? '#e0a33a' : color; g.fillRect(x, y, 4, 38);
-      g.fillStyle = '#5b6a6b'; g.font = `600 11px ${MONO}`; g.fillText(t.k, x + 10, y + 15);
+      g.fillStyle = '#8b949e'; g.font = `600 11px ${MONO}`; g.fillText(t.k, x + 10, y + 15);
       g.textAlign = 'right'; g.font = `600 11px ${FONT}`; g.fillText(t.who, x + 232, y + 15); g.textAlign = 'left';
-      g.fillStyle = '#1d2a2c'; g.font = `500 12.5px ${FONT}`; g.fillText(trunc(t.s, 32), x + 10, y + 31);
+      g.fillStyle = '#dfe5ea'; g.font = `500 12.5px ${FONT}`; g.fillText(trunc(t.s, 32), x + 10, y + 31);
     });
-    if (list.length > 5) { g.fillStyle = '#5b6a6b'; g.font = `500 12px ${FONT}`; g.fillText(`+${list.length - 5} more`, x, 268); }
+    if (list.length > 5) { g.fillStyle = '#8b949e'; g.font = `500 12px ${FONT}`; g.fillText(`+${list.length - 5} more`, x, 268); }
   });
   boardScreen.t.needsUpdate = true;
 }

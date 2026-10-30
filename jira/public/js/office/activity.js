@@ -6,10 +6,11 @@
 const seenEvents = new Set();
 const lastAct = new Map(); // accountId → ms of their latest event: who is really at work now
 let ciState = null; // 'success' | 'failed' | null (no GitLab)
+let ciRepos = null, openMrs = []; // the Dev room's board: each repo's latest pipeline, the open merge requests
+const approved = new Set(); // `${repo}:${iid}` approved today
 let evQueue = [], evBusy = false, replaying = null; // replaying: { list, i, timer }
 
 const BOARD = (col) => v(-19.6, BOARD_COL_Z[col]);
-const COFFEE = v(19.4, 4.9);
 // At their own place and free for a walk (not in a meeting, standup or at lunch).
 const atWork = (c) => !!c && !c.errand && c.group.visible && ['dev', 'qa', 'review', 'urgent', 'done'].includes(c.place);
 const evCol = (to) => { const s = String(to || ''); return /done|closed|resolved|production/i.test(s) ? 'done' : REVIEW_RE.test(s) ? 'review' : /to ?do|open|backlog|new/i.test(s) ? 'todo' : 'prog'; };
@@ -42,7 +43,8 @@ function playEvent(e) {
   } else if (e.kind === 'priority') {
     say(a, `🔥 ${key} → ${e.to}`, /highest|blocker|critical/i.test(e.to || '') ? 'bug' : '');
   } else if (e.kind === 'push') {
-    a.burst = performance.now() + 30_000; // typing hard
+    a.burst = performance.now() + 30_000; // typing hard, the code screen bright for a while
+    if (deskOf(a)) { setScreen(deskOf(a)); setTimeout(() => deskOf(a) && setScreen(deskOf(a)), 31_000); }
     say(a, `${e.created ? '🌱 New branch' : `↑ ${e.count} commit${e.count > 1 ? 's' : ''}`} · ${key || trunc(e.ref || '', 28)}`);
   } else if (e.kind === 'mr-open') {
     visit(a, t, `Review MR !${e.iid}${key ? ` · ${key}` : ''}?`, { card: COL.review, reply: '👀 On it' });
@@ -77,9 +79,20 @@ function nextQueued() {
 function record(list) {
   for (const e of list) {
     if (e.actor?.id) lastAct.set(e.actor.id, Math.max(lastAct.get(e.actor.id) || 0, Date.parse(e.at)));
-    if (e.kind === 'pipeline') setCi(e.status);
+    if (e.kind === 'pipeline') {
+      setCi(e.status);
+      const a = byId(e.actor?.id); if (a) { a.ciFail = e.status === 'failed' ? e.ref : null; deskOf(a) && setScreen(deskOf(a)); }
+    }
+    if (e.kind === 'mr-approve') approved.add(`${e.repo}:${e.iid}`);
   }
+  if (list.some((e) => /^mr-/.test(e.kind))) drawDev();
 }
+const deskOf = (c) => DESKS.find((d) => d.owner === c) || null;
+// The team's own merge requests touched in the last two weeks: the open list has every old and outside one too.
+const teamMrs = () => openMrs.filter((m) => m.author?.id && Date.now() - Date.parse(m.updated) < 14 * 86_400_000);
+const drawDev = () => drawDevBoard(teamMrs().map((m) => ({ ...m, author: baseName(m.author?.name || ''), reviewer: m.reviewer ? baseName(m.reviewer.name) : '', approved: approved.has(`${m.repo}:${m.iid}`) })), ciRepos);
+
+drawDevBoard([], null); // until the first load
 
 // ---- Build lamp: the latest finished pipeline of each repo; red while any is failing ----
 function setCi(status) {
@@ -113,7 +126,7 @@ function stopReplay() {
 $('#replay-skip').addEventListener('click', stopReplay);
 
 // ---- Loading: every 30s, today's events since midnight; new ones play ----
-const dayStartMs = () => { const d = nowTime(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const dayStartMs = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
 let evLoading = false, evFirst = true;
 const warned = new Set();
 async function loadEvents() {
@@ -129,6 +142,8 @@ async function loadEvents() {
     fresh.forEach((e) => seenEvents.add(e.id));
     const ci = data.ci || [];
     setCi(ci.length ? (ci.some((x) => x.status === 'failed') ? 'failed' : 'success') : null);
+    ciRepos = data.sources?.gitlab === 'ok' ? ci : null; openMrs = data.mrs || [];
+    drawDev();
     const gl = data.sources?.gitlab;
     if (gl && gl !== 'ok' && !warned.has('gitlab')) { warned.add('gitlab'); toast(`GitLab offline (VPN?): ${gl}`); }
     if (evFirst) {
@@ -152,54 +167,3 @@ function demoEvent(c, ch) {
   const t = ch.task;
   return { id: `demo:${Date.now()}:${t.k}`, at: new Date().toISOString(), src: 'jira', kind: ch.kind === 'new' ? 'assign' : 'status', actor: { id: c.u.id, name: c.u.name }, target: { id: c.u.id, name: c.u.name }, key: t.k, to: t.statusName, text: t.s };
 }
-
-// ---- Idle people: nothing of theirs has moved for a while, so they get up ----
-// Every few seconds, someone idle at their place (no Jira or GitLab activity for IDLE_MS, nothing urgent) may go for a
-// coffee or water, stretch or exercise, meditate on the pantry rug, look out of a window, stroll the corridor or chat
-// with another idle person, then sit back down for a few minutes. Icons only: none of it claims a fact. Busy people
-// stay at work, apart from a coffee now and then.
-const IDLE_MS = 40 * 60_000;
-const lastWork = (c) => Math.max(c.lastAct || 0, ...c.u.tasks.map((t) => t.at || 0));
-const isIdleNow = (c) => Date.now() - lastWork(c) > IDLE_MS;
-const spot = (x, z, r = 0.6) => freeSpot([x - r, x + r, z - r, z + r], null);
-const WINDOWS = [[-2, 12.2, 0], [6, 12.2, 0], [20.2, 0.5, Math.PI / 2], [20.2, 6, Math.PI / 2]]; // spot in front, facing out
-const IDLE_ACTS = [
-  { w: 3, steps: () => [{ to: COFFEE, yaw: Math.PI / 2, say: '☕', dur: 5, pose: 'drink' }], cup: '#e9e4da' },
-  { w: 2, steps: () => [{ to: v(19.5, 10.2), yaw: Math.PI / 2, say: '💧', dur: 4, pose: 'drink' }], cup: '#cfe6ec' },
-  { w: 2, steps: () => [{ to: spot(15, 6.5, 1.5), yaw: rand(-1, 1), say: '🏃', dur: 9, pose: 'exercise' }] },
-  { w: 2, steps: () => [{ to: spot(rand(-16, 16), 0, 0.5), yaw: rand(-3, 3), say: '🙆', dur: 7, pose: 'stretch' }] },
-  { w: 2, steps: () => [{ to: spot(15, 11.2, 1.2), yaw: Math.PI, say: '🧘', dur: 12, pose: 'meditate' }] },
-  { w: 1, steps: () => { const [x, z, yaw] = pick(WINDOWS); return [{ to: spot(x, z, 0.4), yaw, say: '🌤️', dur: 8, pose: 'look' }]; } },
-  { w: 2, steps: () => { const x = rand(-18, 18); return [{ to: v(x, 0.2), dur: 0.3, pose: 'look' }, { to: v(clamp(x + pick([-9, 9]), -19, 19), -0.2), say: '🚶', dur: 2, pose: 'look' }]; } },
-  { w: 2, pair: true },
-];
-const weighted = (list) => { let r = Math.random() * list.reduce((s, a) => s + a.w, 0); return list.find((a) => (r -= a.w) < 0) || list[0]; };
-function idleTick() {
-  if (document.hidden || reduceMotion || replaying || meeting || sched.kind !== 'work') return;
-  const now = Date.now(), free = chars.filter((c) => atWork(c) && c.place !== 'urgent');
-  const out = chars.filter((c) => c.errand?.ambient).length;
-  if (out >= Math.max(2, Math.ceil(chars.length * 0.4))) return; // the office never empties
-  const idle = free.filter((c) => isIdleNow(c) && now >= (c.nextIdle || 0));
-  const c = pick(idle);
-  if (!c) {
-    // Busy people: a coffee about every 45 minutes each.
-    const b = pick(free.filter((x) => !isIdleNow(x) && x.place !== 'done'));
-    if (b && Math.random() < free.length / 45 / 6) runErrands(b, [{ ...IDLE_ACTS[0].steps()[0], ambient: true }], IDLE_ACTS[0].cup);
-    return;
-  }
-  c.nextIdle = now + rand(120_000, 300_000); // back at their place for a few minutes after this
-  let act = weighted(IDLE_ACTS);
-  if (act.pair) {
-    const o = pick(idle.filter((x) => x !== c));
-    if (o) {
-      o.nextIdle = c.nextIdle;
-      const meet = spot(rand(-12, 12), 0, 0.5);
-      runErrands(o, [{ to: meet, yaw: Math.PI / 2, dur: 8, pose: 'look', ambient: true }]);
-      runErrands(c, [{ to: v(meet.x + 1.1, meet.z), yaw: -Math.PI / 2, say: '😄', dur: 7, pose: 'talk', ambient: true, onArrive: () => setTimeout(() => chars.includes(o) && say(o, '😂'), 1500) }]);
-      return;
-    }
-    act = IDLE_ACTS[0];
-  }
-  runErrands(c, act.steps().map((s) => ({ ...s, ambient: true })), act.cup || null);
-}
-setInterval(idleTick, 8_000);

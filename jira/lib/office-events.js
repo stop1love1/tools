@@ -108,12 +108,13 @@ async function repoActivity(dir, sinceDay) {
   if (!web) return null;
   const u = new URL(web), p = encodeURIComponent(u.pathname.slice(1));
   const after = new Date(Date.parse(sinceDay) - 86_400_000).toISOString().slice(0, 10); // `after` is exclusive
-  const [events, mrs, pipes] = await Promise.all([
+  const [events, mrs, pipes, open] = await Promise.all([
     glabApi(glab, u.host, `projects/${p}/events?after=${after}&per_page=100`),
     glabApi(glab, u.host, `projects/${p}/merge_requests?state=all&updated_after=${sinceDay}&per_page=100`),
     glabApi(glab, u.host, `projects/${p}/pipelines?updated_after=${sinceDay}&per_page=100`),
+    glabApi(glab, u.host, `projects/${p}/merge_requests?state=opened&per_page=100`),
   ]);
-  return { web, events, mrs, pipes };
+  return { web, events, mrs, pipes, open };
 }
 
 function gitlabRepoEvents(repo, act, who, uat) {
@@ -159,7 +160,7 @@ function gitlabRepoEvents(repo, act, who, uat) {
 
 async function gitlabEvents(who, since) {
   const s = settings(), sinceDay = new Date(since).toISOString();
-  const out = [], errors = [], ci = [];
+  const out = [], errors = [], ci = [], open = [];
   await Promise.all(Object.entries(s.repos).map(async ([repo, dir]) => {
     let hit = glCache.get(repo);
     if (!hit || hit.day !== sinceDay || Date.now() - hit.at > (hit.failed ? 30_000 : 45_000)) {
@@ -173,11 +174,17 @@ async function gitlabEvents(who, since) {
       out.push(...gitlabRepoEvents(repo, act, who, s.uat));
       const last = act.pipes.filter((p) => p.status === 'success' || p.status === 'failed').sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
       if (last) ci.push({ repo, status: last.status, at: last.updated_at });
+      for (const m of act.open) {
+        if (m.draft || m.work_in_progress) continue;
+        const r = (m.reviewers || []).map(who)[0] || null;
+        open.push({ repo, iid: m.iid, key: (String(m.title).match(KEY_RE) || String(m.source_branch).match(KEY_RE) || [])[0] || null, title: oneLine(m.title, 120), author: who(m.author), reviewer: r, target: m.target_branch, updated: m.updated_at, url: m.web_url });
+      }
     } catch (e) {
       errors.push(`${repo}: ${e.message}`);
     }
   }));
-  return { events: out, ci, error: errors.join(' · ') || null };
+  open.sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated));
+  return { events: out, ci, open, error: errors.join(' · ') || null };
 }
 
 // `since`: ms; at most two days back. Jira and GitLab load side by side; one failing leaves the other.
@@ -188,11 +195,11 @@ async function listOfficeEvents({ sprintId = null, since }) {
   const who = personMatcher(team.members, config.get().office.people);
   const [jira, gitlab] = await Promise.all([
     jiraEvents(tasks, from).then((events) => ({ events, error: null }), (e) => ({ events: [], error: e.message })),
-    gitlabEvents(who, from).catch((e) => ({ events: [], ci: [], error: e.message })),
+    gitlabEvents(who, from).catch((e) => ({ events: [], ci: [], open: [], error: e.message })),
   ]);
   const events = [...jira.events, ...gitlab.events].filter((e) => Date.parse(e.at) >= from).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  // ci: each repo's latest finished pipeline (the Dev room's build lamp).
-  return { since: new Date(from).toISOString(), events, ci: gitlab.ci, sources: { jira: jira.error || 'ok', gitlab: gitlab.error || 'ok' } };
+  // ci: each repo's latest finished pipeline (the Dev room's build lamp); mrs: the open, non-draft merge requests.
+  return { since: new Date(from).toISOString(), events, ci: gitlab.ci, mrs: gitlab.open, sources: { jira: jira.error || 'ok', gitlab: gitlab.error || 'ok' } };
 }
 
 module.exports = { listOfficeEvents, personMatcher, jiraIssueEvents, gitlabRepoEvents };

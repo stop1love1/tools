@@ -47,13 +47,14 @@ function showTip(c, x, y) {
 const drawer = $('#drawer');
 let roomOpen = null;
 // A person's tasks as a tree, one line each: Epic → Story / Task → Sub-task. A sub-task whose parent isn't theirs sits
-// under the Epic with its parent's key. Epics with work left come first; the filter (Open / All / Done) hides the rest,
-// keeping a Story that still has matching sub-tasks.
+// under the Epic with its parent's key. Epics with work left come first, folded until opened; the filter (Open / All /
+// Done) hides the rest, keeping a Story that still has matching sub-tasks.
 const typeKind = (t) => (t.epicType ? 'epic' : t.sub ? 'sub' : t.type === 'bug' ? 'bug' : /story/i.test(t.typeName) ? 'story' : 'task');
 const typeIcon = (t) => `<i class="ti" data-t="${typeKind(t)}" title="${esc(t.typeName)}"></i>`;
 const taskRow = (t, { sub = false, note = '', who = null, faded = false } = {}) => `<li class="tr${sub ? ' sub' : ''}${t.st === 'done' || faded ? ' done' : ''}${t.pr === 'highest' && isOpen(t) ? ' hot' : ''}" title="${esc(`${t.k} · ${t.s} · ${t.statusName}${t.sp ? ` · ${t.sp} SP` : ''} · ${dueText(t)}`)}">
   ${typeIcon(t)}${taskLink(t)}<span class="ts">${note ? `<small>↳ ${esc(note)}</small> ` : ''}${esc(t.s)}</span>${isLate(t) ? '<span class="late">late</span>' : ''}${who ? avatarHTML(who, 'pav xs') : ''}<span class="st" data-st="${t.st}">${esc(t.statusName)}</span></li>`;
 let treeFilter = tryStore('jd:officeTree') || 'open';
+const openEpics = new Set(); // Epic groups opened in the drawer: folded by default, kept open across redraws
 function taskTree(tasks, filter = 'all') {
   const show = (t) => filter === 'all' || (filter === 'open' ? isOpen(t) : !isOpen(t));
   const groups = new Map(), keys = new Set(tasks.map((t) => t.k));
@@ -77,7 +78,7 @@ function taskTree(tasks, filter = 'all') {
     }).join('');
     if (!rows && !(g.epic && show(g.epic))) return '';
     const pct = g.total ? Math.round((g.done / g.total) * 100) : 0;
-    return `<details class="eg" open><summary>${g.key ? '<i class="ti" data-t="epic"></i>' : '<i class="ti" data-t="none"></i>'}<span class="en" title="${esc(g.key ? `${g.key} · ${g.name}` : g.name)}">${esc(g.name)}</span>
+    return `<details class="eg" data-g="${esc(g.key)}"${openEpics.has(g.key) ? ' open' : ''}><summary>${g.key ? '<i class="ti" data-t="epic"></i>' : '<i class="ti" data-t="none"></i>'}<span class="en" title="${esc(g.key ? `${g.key} · ${g.name}` : g.name)}">${esc(g.name)}</span>
       <span class="em">${g.spTotal ? `${g.spDone}/${g.spTotal} SP · ` : ''}<b>${g.done}/${g.total}</b></span><span class="ebar"><span style="width:${pct}%"></span></span></summary>
       <ul class="tt">${g.epic && show(g.epic) ? taskRow(g.epic) : ''}${rows}</ul></details>`;
   }).join('');
@@ -102,6 +103,7 @@ function renderDrawer() {
     </div>
     <div class="tree">${taskTree(u.tasks, treeFilter) || `<p class="k empty">${u.tasks.length ? `Nothing ${treeFilter === 'done' ? 'done' : 'open'}.` : 'No tasks in this sprint.'}</p>`}</div>`;
   $('#look').addEventListener('click', () => focusChar(c, false));
+  $('#drawer-body .tree').addEventListener('toggle', (e) => { const g = e.target.dataset.g; if (g !== undefined) e.target.open ? openEpics.add(g) : openEpics.delete(g); }, true);
   $('#drawer-body .seg').addEventListener('click', (e) => { const b = e.target.closest('[data-f]'); if (!b) return; treeFilter = b.dataset.f; tryStore('jd:officeTree', treeFilter); renderDrawer(); });
 }
 $('#close').addEventListener('click', closeDrawer);
@@ -117,7 +119,7 @@ function roomData(z) {
   else if (z === 'dev') { tasks = all.filter((t) => t.st === 'prog' && zoneOf(t.c.u) === 'dev' && t.pr !== 'highest'); line = `${people.length} coding · ${sp(tasks)} SP`; }
   else if (z === 'qa') { tasks = all.filter((t) => t.pr !== 'highest' && (t.st === 'review' || (t.st === 'prog' && zoneOf(t.c.u) === 'qa') || (isOpen(t) && t.type === 'bug'))); line = `${people.length} testing · ${all.filter((t) => t.st === 'review').length} in the review queue · ${bugs.length} open bugs`; }
   else if (z === 'review') { tasks = all.filter((t) => isOpen(t) && zoneOf(t.c.u) === 'review'); line = meetLine(); }
-  else if (z === 'todo') { tasks = all.filter((t) => t.st === 'todo'); line = `${tasks.length} not started · standup ${hmText(hm(schedule.standup) ?? 555)}`; }
+  else if (z === 'todo') { tasks = all.filter((t) => t.st === 'todo'); line = `${tasks.length} not started`; }
   else { tasks = all.filter((t) => t.st === 'done'); line = `${tasks.length} done · ${sp(tasks)}/${sp(all)} SP`; }
   return { people, tasks, line };
 }
@@ -299,7 +301,8 @@ const ROOM_SHOT = {
   urgent: { az: 0.3, center: [-14, -8.6], dist: 15, el: 0.5 }, // war-room screen on the back wall
   review: { az: 0.2, center: [16, -9.5], dist: 12, el: 0.42 }, // the screen above the head of the table
   todo: { az: Math.PI / 2, center: [-19.5, 7], dist: 11, el: 0.48 }, // kanban board on the left wall, above people's heads
-  qa: { az: 1.1, center: [-1, 7.5], dist: 20, el: 0.55 }, // bug screen and device wall
+  qa: { az: 1.25, center: [-3, 6], dist: 16, el: 0.5 }, // the queue board and the device wall
+  dev: { az: 0.15, center: [3, -9], dist: 16, el: 0.55 }, // the code review & CI board above the desks
 };
 function viewRoom(z) {
   const [x0, x1, z0, z1] = ZONES[z].rect, shot = ROOM_SHOT[z] || {};
@@ -359,24 +362,21 @@ function placeDetails() {
   }
 }
 
-// ---- The office's day: hours, standup, lunch, sprint planning / retro (scheduleAt); the red button calls a meeting ----
-let schedule = {}, sprint = null;
-// ?time=HH:MM shows the office at that time of today (to check the schedule).
-const AT = hm(new URLSearchParams(location.search).get('time'));
-const nowTime = () => { const d = new Date(); if (AT !== null) d.setHours(Math.floor(AT / 60), AT % 60, 0, 0); return d; };
+// ---- Meetings: the red button on the meeting table calls everyone in; pressing it again sends them back ----
+let sprint = null;
+// The meeting room screen's title: the meeting, else how long the sprint has left.
 function meetLine() {
   if (meeting) return 'Meeting now';
-  if (sched.kind === 'planning' || sched.kind === 'retro') return `${sched.name} until ${sched.until}`;
-  return sched.next && sched.next.kind !== 'lunch' ? `Next: ${sched.next.name} at ${sched.next.at}` : 'No meeting until tomorrow';
+  if (!sprint?.endDate || sprint.state === 'closed') return 'Sprint';
+  const left = Math.ceil((Date.parse(sprint.endDate) - Date.now()) / 86_400_000);
+  return left > 0 ? `${left} day${left > 1 ? 's' : ''} left in the sprint` : 'The sprint ends today';
 }
-// Seats and spots for whoever is called in, in the Team panel's order; then everyone goes where they belong now.
+// Seats for whoever is called in, in the Team panel's order; then everyone goes where they belong now.
 function replan(teleport = false) {
-  const list = ordered();
-  const seated = list.filter((c) => placeOf(c) === 'meeting');
-  const standing = list.filter((c) => placeOf(c) === 'standup');
+  const list = ordered(), seated = list.filter((c) => placeOf(c) === 'meeting');
   for (const c of list) {
-    const seat = MEET_ORDER[seated.indexOf(c)] || null, spot = STAND_SPOTS[standing.indexOf(c)] || null;
-    if (seat !== (c.meetSeat || null) || spot !== (c.standSpot || null)) { c.meetSeat = seat; c.standSpot = spot; if (c.place === 'meeting' || c.place === 'standup') c.place = null; }
+    const seat = MEET_ORDER[seated.indexOf(c)] || null;
+    if (seat !== (c.meetSeat || null)) { c.meetSeat = seat; if (c.place === 'meeting') c.place = null; }
   }
   for (const c of chars) retarget(c, teleport);
   refreshRooms(); updateLines();
@@ -404,15 +404,6 @@ function renderScreenNav() {
 $('#screen-prev').addEventListener('click', () => stepScreen(-1));
 $('#screen-next').addEventListener('click', () => stepScreen(1));
 $('#screen-who').addEventListener('change', (e) => setScreenView(e.target.value || null, true));
-function tickSchedule(force = false) {
-  const s = scheduleAt(nowTime(), schedule, sprint);
-  if (DEMO && s.kind === 'off') Object.assign(s, { kind: 'work', name: 'Working' }); // the demo is always open
-  const changed = s.kind !== sched.kind;
-  sched = s;
-  if (changed && !force) { chars.forEach(cancelErrands); replan(); } else updateLines();
-}
-setInterval(() => tickSchedule(), 20_000);
-
 let pressedAt = -1;
 function setMeeting(on) {
   if (!player) return; // the team has not loaded yet
@@ -429,11 +420,11 @@ function pressMeetButton() {
   const t = (performance.now() - pressedAt) / 250;
   meetDome.position.y = t < 1 ? 0.12 - 0.08 * Math.sin(t * Math.PI) : 0.12;
 }
-// Standup and meetings: one person at a time, in the Team panel's order, says what they are on.
+// Meetings: one person at a time, in the Team panel's order, says what they are on.
 let turn = 0;
 setInterval(() => {
   if (document.hidden) return;
-  const here = ordered().filter((c) => (c.place === 'standup' || c.place === 'meeting') && !c.path.length);
+  const here = ordered().filter((c) => c.place === 'meeting' && !c.path.length);
   if (!here.length) return;
   const c = here[turn++ % here.length], t = currentTask(c.u);
   say(c, t ? `${t.k} · ${trunc(t.s, 40)} (${t.statusName})` : 'All done, nothing open');
@@ -473,8 +464,7 @@ async function load({ fresh = false } = {}) {
   }
 }
 function applyData(data) {
-  sprint = data.sprint || null; schedule = data.schedule || {}; teamOrder = data.order || teamOrder;
-  tickSchedule(true);
+  sprint = data.sprint || null; teamOrder = data.order || teamOrder;
   const first = !loadedOnce;
   loadedOnce = true;
   const seen = new Set(), moves = [];
@@ -636,7 +626,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 try { if (window.parent !== window) new MutationObserver(applyTheme).observe(window.parent.document.documentElement, { attributes: true, attributeFilter: ['class'] }); } catch {}
 
 // ---- Boot ----
-applyTheme(); refreshRooms(); tickSchedule(true);
+applyTheme(); refreshRooms(); updateLines();
 if (tryStore('jd:officeHelp') !== '1') $('#help').hidden = false;
 load();
 

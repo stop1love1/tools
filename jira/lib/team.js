@@ -113,17 +113,15 @@ async function fetchTeam(sprintId) {
   };
 }
 
-// What the office's Team panel and Settings set: each person's gender and a role that wins over the QA people list,
-// the team's order (meeting seats, standup turns) and the day's schedule. Applied on every answer, cached or not,
-// so a change shows on the next load.
-const withProfiles = (team, { people = {}, order = [], hours, lunch, standup, retro } = {}) => ({
+// What the office's Team panel sets: each person's gender and a role that wins over the QA people list, and the team's
+// order (meeting seats, speaking turns). Applied on every answer, cached or not, so a change shows on the next load.
+const withProfiles = (team, { people = {}, order = [] } = {}) => ({
   ...team,
   members: team.members.map((m) => {
     const p = people[m.accountId] || {};
     return { ...m, role: p.role || m.role, gender: p.gender || null, gitlab: p.gitlab || null };
   }),
   order,
-  schedule: { hours, lunch, standup, retro },
 });
 
 // `sprintId`: a sprint picked on the Overview; none = the team's active sprint. `fresh` skips the cache.

@@ -72,25 +72,6 @@ test('zoneOf: people at work sit in their role\'s room', () => {
   assert.equal(zoneOf(person([{ priority: 'Highest' }], 'pm')), 'urgent');
 });
 
-test('scheduleAt: office hours, standup, lunch, and the sprint\'s first and last day', () => {
-  const scheduleAt = R('scheduleAt'), S = { hours: '08:30-17:30', lunch: '12:00-13:00', standup: '09:15', retro: '16:00' };
-  const at = (h, m, d = 14) => new Date(2026, 9, d, h, m); // 14 Oct 2026 is a Wednesday
-  const kind = (h, m, sprint, d) => scheduleAt(at(h, m, d), S, sprint).kind;
-  assert.equal(kind(8, 0), 'off');
-  assert.equal(kind(9, 0), 'work');
-  assert.equal(scheduleAt(at(9, 0), S).next.name, 'Daily standup');
-  assert.equal(kind(9, 20), 'standup');
-  assert.equal(kind(9, 30), 'work');
-  assert.equal(kind(12, 30), 'lunch');
-  assert.equal(kind(17, 30), 'off');
-  assert.equal(kind(10, 0, null, 17), 'off'); // Saturday
-  const sprint = { startDate: at(0, 0).toISOString(), endDate: at(0, 0, 16).toISOString() };
-  assert.equal(kind(9, 50, sprint), 'planning');
-  assert.equal(kind(16, 30, sprint, 16), 'retro');
-  assert.equal(kind(9, 20, { startDate: 'x' }), 'standup');
-  assert.equal(scheduleAt(at(9, 0), { hours: 'bad' }).kind, 'work'); // a bad setting falls back to the defaults
-});
-
 test('byOrder: the Team panel order first, then by name', () => {
   const byOrder = R('byOrder');
   const people = [{ id: 'c', name: 'Cee' }, { id: 'a', name: 'Ann' }, { id: 'b', name: 'Bob' }];
@@ -154,15 +135,14 @@ test('groupTeam: an asked-for sprint wins over the busiest one', () => {
   assert.deepEqual(out.members.map((m) => m.accountId), ['cid']);
 });
 
-test('withProfiles: the Team panel sets gender, and its role wins over the QA list; order and schedule come along', () => {
+test('withProfiles: the Team panel sets gender, and its role wins over the QA list; the order comes along', () => {
   const { withProfiles } = require('../lib/team');
-  const out = withProfiles({ sprint: null, members: [{ accountId: 'ann', role: 'dev' }, { accountId: 'bob', role: 'qa' }] }, { people: { ann: { role: 'qa', gender: 'female' } }, order: ['bob', 'ann'], standup: '09:15' });
+  const out = withProfiles({ sprint: null, members: [{ accountId: 'ann', role: 'dev' }, { accountId: 'bob', role: 'qa' }] }, { people: { ann: { role: 'qa', gender: 'female' } }, order: ['bob', 'ann'] });
   assert.deepEqual(out.members, [
     { accountId: 'ann', role: 'qa', gender: 'female', gitlab: null },
     { accountId: 'bob', role: 'qa', gender: null, gitlab: null },
   ]);
   assert.deepEqual(out.order, ['bob', 'ann']);
-  assert.equal(out.schedule.standup, '09:15');
 });
 
 test('savePerson: keeps known values only, clears a person with nothing set, leaves other settings alone', () => {

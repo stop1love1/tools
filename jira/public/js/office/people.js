@@ -6,7 +6,6 @@
 const v = (x, z) => new THREE.Vector3(x, 0, z);
 const SCALE = 0.8;
 let meeting = false; // "Meeting": everyone takes a seat at the meeting table
-let sched = { kind: 'work' }; // the office's day now (scheduleAt), set by app.js
 
 function makeRig(u) {
   const S = skinOf(u), mats = [];
@@ -48,7 +47,7 @@ selRing.rotation.x = -Math.PI / 2; selRing.visible = false; scene.add(selRing);
 function addPerson(u) {
   const r = makeRig(u);
   const group = new THREE.Group(); group.add(r.rig); scene.add(group);
-  const c = { u, ...r, group, pos: group.position, path: [], wait: rand(0, 3), zone: null, place: null, state: null, seat: null, sitting: false, phase: rand(0, 6), yaw: 0, yawT: 0, isPlayer: !!u.me, baseSpeed: rand(1.9, 2.4), speed: 2.2, dim: false, hi: false, errands: [], errand: null };
+  const c = { u, ...r, group, pos: group.position, path: [], zone: null, place: null, state: null, seat: null, sitting: false, phase: rand(0, 6), yaw: 0, yawT: 0, isPlayer: !!u.me, baseSpeed: rand(1.9, 2.4), speed: 2.2, dim: false, hi: false, errands: [], errand: null };
   r.rig.traverse((o) => { if (o.isMesh) { o.userData.char = c; pickables.push(o); } });
   c.tag = document.createElement('div'); tagsEl.append(c.tag);
   c.bubble = document.createElement('div'); c.bubble.className = 'say'; c.bubble.hidden = true; tagsEl.append(c.bubble);
@@ -101,8 +100,6 @@ function releaseSeat(c) {
 }
 // Meeting seats, best first: the head of the table (by the screen), then pair by pair down both sides, the foot last.
 const MEET_ORDER = SEATS.filter((s) => s.kind === 'meet').sort((a, b) => a.z - b.z || a.x - b.x);
-// Standup: three rows facing the sprint board, front row first.
-const STAND_SPOTS = [-18.6, -17.3, -16].flatMap((x) => [4.4, 5.3, 6.2, 7.1, 8, 8.9, 9.8].map((z) => v(x, z)));
 // Everyone keeps their own desk in their role's room; it stays theirs (screen off) while they are elsewhere.
 function homeSeat(c, kind) {
   if (c.home && c.home.kind === kind) return c.home;
@@ -111,18 +108,9 @@ function homeSeat(c, kind) {
   if (c.home) c.home.claim = c;
   return c.home;
 }
-// Where a person should be now (you too: your character goes where your work and the day take it).
-function placeOf(c) {
-  if (meeting) return 'meeting';
-  const z = zoneOf(c.u);
-  if (sched.kind === 'off') return isActive(c.u) || Date.now() - (c.lastAct || 0) < 3_600_000 ? z : 'away';
-  if (z === 'urgent') return z; // Highest-priority work skips meetings and lunch
-  if (sched.kind === 'lunch') return 'lunch';
-  if (sched.kind === 'standup') return 'standup';
-  if (sched.kind === 'planning' || sched.kind === 'retro') return 'meeting';
-  return z;
-}
-const PLACE_ZONE = { meeting: 'review', lunch: 'done', standup: 'todo' };
+// Where a person should be now: where their Jira work puts them (zoneOf), or at the table while a meeting is called.
+// You too: your character goes where your work takes it. No clock: the office follows Jira, whatever the time.
+const placeOf = (c) => (meeting ? 'meeting' : zoneOf(c.u));
 
 // ---- Paths ----
 // A free spot in the rect, away from where others are headed when there is room.
@@ -144,30 +132,24 @@ function route(c, to, via, target) {
   if (from !== to) { if (from) pts.push(...doorsOut(from)); if (to) pts.push(...doorsIn(to)); }
   return [...pts, ...via, target];
 }
-// Send a person where they belong now (placeOf): their desk, the war room, the pantry, the standup in front of the
-// sprint board, their seat at the meeting table (c.meetSeat, c.standSpot: app.js replan), or home (hidden).
+// Send a person where they belong now (placeOf): their desk, the war room, the pantry, or their seat at the meeting
+// table (c.meetSeat: app.js replan). Someone new walks in from the corridor's end.
 function retarget(c, teleport = false) {
   const place = placeOf(c);
   if (c.errand || (place === c.place && !teleport)) return; // an errand sends them home when it ends
   const prev = { pos: c.pos, seat: c.seat, sitting: c.sitting };
   releaseSeat(c); c.place = place;
-  if (place === 'away') { c.group.visible = false; c.path = []; c.goal = null; c.zone = null; return; }
   if (!c.group.visible) { c.group.visible = true; if (!teleport) { c.pos.set(20.4, 0, 0); prev.seat = null; } } // in from the corridor's end
-  c.speed = c.baseSpeed * (place === 'meeting' || place === 'standup' ? 1.5 : 1); // don't keep the others waiting
-  const z = PLACE_ZONE[place] || place; c.zone = z;
+  c.speed = c.baseSpeed * (place === 'meeting' ? 1.5 : 1); // don't keep the others waiting
+  const z = place === 'meeting' ? 'review' : place; c.zone = z;
   // PO and PM work at the meeting table from its foot, leaving the head free.
   const seat = place === 'meeting' ? c.meetSeat : z === 'dev' || z === 'qa' ? homeSeat(c, z) : z === 'review' ? [...MEET_ORDER].reverse().find((s) => !s.owner) : z === 'done' ? SEATS.find((s) => s.kind === 'sofa' && !s.owner) : null;
   let target;
-  if (seat) { takeSeat(c, seat); target = v(seat.x, seat.z); } else target = (place === 'standup' && c.standSpot) || freeSpot(ZONES[z].wander, c);
+  if (seat) { takeSeat(c, seat); target = v(seat.x, seat.z); } else target = freeSpot(ZONES[z].wander, c);
   c.goal = target;
   if (teleport) { c.pos.copy(target); c.path = []; if (seat) { c.sitting = true; c.yaw = c.yawT = seat.yaw; } return; }
   c.path = route(prev, z, seat ? seat.via : [], target);
-  c.sitting = false; c.wait = rand(6, 12);
-}
-// Only people with nothing left to do drift around the pantry; everyone else stays where their work is.
-function wander(c) {
-  if (!c.seat && c.place === 'done') { c.path = [freeSpot(ZONES.done.wander, c)]; c.goal = c.path[0]; }
-  c.wait = rand(8, 16) * (reduceMotion ? 2 : 1);
+  c.sitting = false;
 }
 // ---- Errands: walk somewhere (a spot or another person), do something there, then go back to one's place ----
 // step: { to: Vector3 | target: person, via?, yaw?, say?, tone?, dur?, pose?: 'board'|'talk', card?: colour, onArrive? }
@@ -238,8 +220,7 @@ function stepChar(c, dt, time) {
     if ((c.errandT -= dt) <= 0) nextErrand(c);
   } else if (c.seat) { c.sitting = true; c.yawT = c.seat.yaw; c.card.visible = false; }
   else {
-    c.card.visible = false;
-    c.wait -= dt; if (c.wait <= 0) wander(c);
+    c.card.visible = false; // standing at their spot: nobody moves without a reason in the data
     if (ZONES[c.zone].face !== undefined) c.yawT = ZONES[c.zone].face;
   }
   c.yaw = lerpAngle(c.yaw, c.yawT, Math.min(1, dt * 10)); c.group.rotation.y = c.yaw;
@@ -263,10 +244,6 @@ function stepChar(c, dt, time) {
   } else if (c.errand && c.errandT !== null) {
     const p = c.errand.pose;
     if (p === 'board') armR = -2.7 + Math.sin(time * 4) * 0.1; // putting a card on the board
-    else if (p === 'exercise') { const j = Math.abs(Math.sin(time * 5 + c.phase)); armL = armR = -2.9 * j; bob = 0.18 * j; } // jumping jacks
-    else if (p === 'stretch') { armL = armR = -3 + Math.sin(time * 1.2 + c.phase) * 0.15; head = -0.25; turn = Math.sin(time * 0.8) * 0.3; }
-    else if (p === 'meditate') { armL = armR = -1.25; head = 0.3; bob = Math.sin(time * 1.1) * 0.02; } // hands together, breathing
-    else if (p === 'drink') { armR = -1.9 + Math.max(0, Math.sin(time * 0.9 + c.phase)) * 0.6; armL = -0.15; }
     else if (p === 'look') { turn = Math.sin(time * 0.5 + c.phase) * 0.6; head = -0.1; } // looking around, out of the window
     else { armR = -0.6 + Math.sin(time * 5 + c.phase) * 0.35; armL = -0.2; } // talking
   } else { const br = Math.sin(time * 1.6 + c.phase) * 0.04; armL = br; armR = -br; }

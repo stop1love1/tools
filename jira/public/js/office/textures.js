@@ -38,23 +38,7 @@ const CANVAS = {
     g.fillStyle = '#8d7259'; g.fillRect(0, 0, 64, 64);
     for (let s = 0; s < 4; s++) { let x = 2; while (x < 62) { const w = 3 + Math.floor(r() * 3), h = 11 + Math.floor(r() * 3); g.fillStyle = spines[Math.floor(r() * spines.length)]; g.fillRect(x, s * 16 + 15 - h, w, h); x += w + 1; } }
   }),
-  // Dev room whiteboard: a hand-drawn system sketch.
-  arch: makeCanvas(256, 96, (g) => {
-    g.fillStyle = '#fbfbf8'; g.fillRect(0, 0, 256, 96);
-    g.strokeStyle = '#3c6db0'; g.fillStyle = '#3c6db0'; g.lineWidth = 2; g.font = `600 11px ${FONT}`; g.textAlign = 'center';
-    const boxes = [['Web', 40, 24], ['Mobile', 40, 70], ['API', 128, 47], ['DB', 216, 24], ['Queue', 216, 70]];
-    for (const [t, x, y] of boxes) { g.strokeRect(x - 26, y - 12, 52, 24); g.fillText(t, x, y + 4); }
-    g.strokeStyle = '#7d8a96';
-    for (const [a, b] of [[0, 2], [1, 2], [2, 3], [2, 4]]) { g.beginPath(); g.moveTo(boxes[a][1] + 26, boxes[a][2]); g.lineTo(boxes[b][1] - 26, boxes[b][2]); g.stroke(); }
-  }),
 };
-function screenCanvas(seed) {
-  return makeCanvas(64, 32, (g) => {
-    const r = rng(seed), cols = ['#63a4fa', '#7fd1a4', '#c9d2dc', '#e2b86b'];
-    g.fillStyle = '#121a22'; g.fillRect(0, 0, 64, 32);
-    for (let y = 4; y < 30; y += 4) { let x = 4 + Math.floor(r() * 3) * 4; const end = 20 + Math.floor(r() * 40); while (x < end) { const w = 4 + Math.floor(r() * 10); g.fillStyle = cols[Math.floor(r() * cols.length)]; g.fillRect(x, y, Math.min(w, end - x), 2); x += w + 3; } }
-  });
-}
 
 // ---- Blocky people: flat-colour skins. 8px head faces, 8x12 body, 4x12 limbs. Box face order: +x, -x, +y, -y, +z (front), -z. ----
 const SKIN = ['#f1d3b8', '#e3b893', '#c99470', '#9a6848', '#734a31'];

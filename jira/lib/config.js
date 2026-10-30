@@ -79,11 +79,7 @@ function defaults() {
     office: {
       qaPeople: [],
       people: {}, // accountId → { gender, role }, set from the office's Team panel (savePerson)
-      order: [], // accountIds as dragged in the Team panel: meeting seats and standup turns (saveOrder)
-      hours: '08:30-17:30',
-      lunch: '12:00-13:00',
-      standup: '09:15',
-      retro: '16:00',
+      order: [], // accountIds as dragged in the Team panel: meeting seats and speaking turns (saveOrder)
     },
     server: {
       port: Number(env.PORT) || 4747,
@@ -135,10 +131,6 @@ const SCHEMA = [
   ] },
   { section: 'Overview 3D office', fields: [
     { key: 'office.qaPeople', label: 'QA people', type: 'lines', optional: true, help: 'Jira display names (or account ids), one per line. They sit in the QA room; everyone else in the Dev room. The Team panel in the office sets each person\'s role (Dev, QA, BA, PO, PM).' },
-    { key: 'office.hours', label: 'Office hours', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}-\\d{1,2}:\\d{2}$', help: 'Outside them (and at weekends) only people with a Jira update in the last hour stay in the office.' },
-    { key: 'office.lunch', label: 'Lunch break', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}-\\d{1,2}:\\d{2}$', help: 'Everyone goes to the pantry.' },
-    { key: 'office.standup', label: 'Daily standup', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}$', help: '15 minutes at the sprint board. On the sprint\'s first day: an hour of sprint planning in the meeting room instead.' },
-    { key: 'office.retro', label: 'Sprint review & retro', type: 'text', mono: true, pattern: '^\\d{1,2}:\\d{2}$', help: 'An hour in the meeting room on the sprint\'s last day.' },
   ] },
   { section: 'Server', fields: [
     { key: 'server.port', label: 'Port', type: 'number', min: 1024, max: 65535, restart: true },
