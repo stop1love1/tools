@@ -104,12 +104,14 @@ async function listHistory(jql, { fresh = false } = {}) {
   const hit = historyCache.get(jql);
   if (!fresh && hit && Date.now() - hit.at < HISTORY_TTL) return hit.data;
   const { storyPointsField } = config.get().jira;
-  const raw = await searchAll(jql, ['issuetype', 'status', 'created', 'updated', 'resolutiondate', 'duedate', storyPointsField], HISTORY_MAX);
+  const raw = await searchAll(jql, ['issuetype', 'status', 'created', 'updated', 'resolutiondate', 'duedate', 'parent', storyPointsField], HISTORY_MAX);
   const data = {
     truncated: raw.length >= HISTORY_MAX,
     issues: raw.map(({ key, fields: f }) => ({
       key,
-      type: { name: f.issuetype?.name || '' },
+      // subtask + parent: the Overview's weekly load counts like the task list (countable: no Story whose subtasks are there).
+      type: { name: f.issuetype?.name || '', subtask: !!f.issuetype?.subtask },
+      parent: f.parent ? { key: f.parent.key } : null,
       status: statusDto(f.status),
       created: f.created,
       updated: f.updated,

@@ -250,3 +250,29 @@ test('metricSummary compares the latest finished period with the average before 
   const late = [{ label: 'a', done: 0 }, { label: 'b', done: 0 }, { label: 'c', done: 4 }, { label: 'd', done: 6 }];
   assert.equal(O.metricSummary(late, 'done').avg, 4); // the empty periods before any work are not averaged in
 });
+
+test('weekly counts done / assigned per week like the task list: no Epics, Stories with subtasks or bugs, cancelled = done', () => {
+  // NOW is Wednesday 14/10/2026, so this week runs Mon 12/10 → Sun 18/10 and last week 5/10 → 11/10.
+  const story = issue({ created: at(-20), type: { name: 'Story' } });
+  const items = [
+    issue({ created: at(-20) }), // still open: on the plate both weeks
+    issue({ created: at(-20), category: 'done', resolved: at(-5) }), // done last week
+    issue({ created: at(-1), category: 'done', resolved: at(0) }), // new this week, done this week
+    issue({ created: at(-1) }), // new this week, open
+    issue({ created: at(-20), category: 'done', resolved: at(-15) }), // done before both weeks
+    issue({ created: at(-3), type: { name: 'Epic' } }),
+    // created Sunday of last week, cancelled this week: counts as done this week, as on the task list
+    issue({ created: at(-3), category: 'done', status: { name: 'Cancelled', category: 'done' }, resolved: at(0) }),
+    story, // a group header only: its subtask is the work
+    issue({ created: at(-20), type: { name: 'Sub-task', subtask: true }, parent: { key: story.key } }),
+    issue({ created: at(-1), type: { name: 'Bug' } }), // bugs are left out
+  ];
+  const weeks = O.weekly(items, NOW, 8);
+  assert.equal(weeks.length, 8);
+  const [last, cur] = weeks.slice(-2);
+  assert.equal(cur.start, day(-2));
+  assert.equal(cur.end, day(4));
+  assert.ok(cur.current && !last.current);
+  assert.deepEqual([cur.done, cur.total, cur.carried, cur.added, cur.open, cur.pct], [2, 5, 3, 2, 3, 40]);
+  assert.deepEqual([last.done, last.total, last.open], [1, 4, 3]);
+});

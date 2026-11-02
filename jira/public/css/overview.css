@@ -109,6 +109,92 @@
   color: var(--warn);
 }
 
+/* Weekly load: done / assigned per week */
+.ov-week {
+  display: grid;
+  gap: 10px;
+}
+.ov-week.is-loading {
+  opacity: 0.6;
+}
+.ov-week-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ov-week-head .icon-btn {
+  font-size: 18px;
+  line-height: 1;
+}
+.ov-week-head .icon-btn[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+.ov-week-range {
+  display: grid;
+  min-width: 130px;
+}
+.ov-week-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: auto;
+}
+.ov-week-value b {
+  font-size: 28px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.ov-weeks {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+.ov-weeks button {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ov-weeks button:hover {
+  background: var(--surface-2);
+}
+.ov-weeks button[aria-selected='true'] {
+  border-color: var(--done-dot);
+  background: var(--surface-2);
+}
+.ov-weeks-col {
+  display: flex;
+  align-items: flex-end;
+  width: 18px;
+  height: 48px;
+}
+.ov-weeks-total {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  min-height: 2px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--new-bg);
+}
+.ov-weeks-done {
+  width: 100%;
+  background: var(--done-dot);
+}
+.ov-weeks-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Main: attention list + side column */
 .ov-main {
   display: grid;

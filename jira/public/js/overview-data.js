@@ -215,6 +215,38 @@ const OverviewData = (() => {
     });
   }
 
+  // Weekly load: per week (Monday to Sunday, the last `weeks` of them up to the current one), what was on the user's
+  // plate and how much of it got done. "Assigned" for a week = tasks created before it ended and not already done
+  // before it began (open at some point in the week); "done" = closed within it. Counted as the task list counts
+  // (progress.js countable, renderProgress): no Epics, no Story whose subtasks are there, cancelled = done. Bugs are
+  // left out: this is the planned work handed out, not bug fixing.
+  function weekly(items, now, weeks = 8) {
+    const P = PERIODS.week;
+    const tasks = countable(items).filter((i) => !isBug(i));
+    let start = P.start(now);
+    const starts = [start];
+    for (let k = 1; k < weeks; k++) starts.unshift((start = addDays(start, -7)));
+    return starts.map((s) => {
+      const e = P.next(s);
+      const assigned = tasks.filter((i) => new Date(i.created) < e && !(isClosed(i) && doneAt(i) < s));
+      const done = assigned.filter((i) => isClosed(i) && doneAt(i) < e);
+      return {
+        start: isoDay(s),
+        end: isoDay(addDays(e, -1)),
+        label: P.label(s),
+        current: e > now,
+        total: assigned.length,
+        done: done.length,
+        open: assigned.length - done.length,
+        carried: assigned.filter((i) => new Date(i.created) < s).length,
+        added: assigned.filter((i) => new Date(i.created) >= s).length,
+        spTotal: sumSP(assigned),
+        spDone: sumSP(done),
+        pct: assigned.length ? Math.round((done.length / assigned.length) * 100) : null,
+      };
+    });
+  }
+
   // One trend tile: the latest finished period (or now, for a running total like open work) against the average
   // of the periods before it.
   function metricSummary(slots, key, { current = false } = {}) {
@@ -296,5 +328,5 @@ const OverviewData = (() => {
     return tips.sort((a, b) => order[a.level] - order[b.level]);
   }
 
-  return { scope, members, sprintView, bugStats, pickSprint, kpis, byEpic, burndown, progress, pace, paceStatus, lists, PERIODS, trend, metricSummary, insights, isOpen, isDone, isClosed, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
+  return { scope, members, sprintView, bugStats, pickSprint, kpis, byEpic, burndown, progress, pace, paceStatus, lists, PERIODS, trend, weekly, metricSummary, insights, isOpen, isDone, isClosed, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
 })();

@@ -55,6 +55,60 @@ function statCard(label, value, { sub, tone: t } = {}) {
   return h('div', { class: `ov-card ov-stat${t ? ` ${t}` : ''}` }, h('span', { class: 'ov-stat-label' }, label), h('b', { class: 'ov-stat-value' }, value), sub && h('span', { class: 'muted small' }, sub));
 }
 
+// Weekly load: the chosen week's done / assigned, with ‹ › to step weeks and one small column per week to jump to it.
+function weeklyCard(weeks, index, { onSelect, loading, error, truncated } = {}) {
+  const body = (() => {
+    if (error) return h('div', { class: 'error-box' }, h('strong', null, 'Could not load the weeks. '), error);
+    if (!weeks) return h('div', { class: 'ov-empty muted small' }, h('span', { class: 'spin' }, icon('refresh')), 'Loading…');
+    const w = weeks[index];
+    const pct = (n) => (w.total ? (n / w.total) * 100 : 0);
+    const range = `${fmtDay(w.start)} → ${fmtDay(w.end)}`;
+    const nav = (dir, label) =>
+      h('button', { class: 'btn icon-btn', 'aria-label': label, title: label, disabled: index + dir < 0 || index + dir >= weeks.length ? '' : null, onClick: () => onSelect(index + dir) }, dir < 0 ? '‹' : '›');
+    const top = Math.max(1, ...weeks.map((r) => r.total));
+    return h(
+      'div',
+      { class: `ov-week${loading ? ' is-loading' : ''}` },
+      h(
+        'div',
+        { class: 'ov-week-head' },
+        nav(-1, 'Previous week'),
+        h('div', { class: 'ov-week-range' }, h('b', null, w.current ? 'This week' : index === weeks.length - 2 ? 'Last week' : `Week of ${fmtDay(w.start)}`), h('span', { class: 'muted small' }, range)),
+        nav(1, 'Next week'),
+        h(
+          'div',
+          { class: 'ov-week-value' },
+          h('b', null, `${w.done} / ${w.total}`),
+          h('span', { class: 'muted small' }, `tasks done${w.pct != null ? ` · ${w.pct}%` : ''}${w.spTotal ? ` · ${fmtNum(w.spDone)} / ${fmtNum(w.spTotal)} SP` : ''}`),
+        ),
+      ),
+      h('div', { class: 'ov-bar', role: 'img', 'aria-label': `Done ${Math.round(pct(w.done))}%` }, h('span', { style: `width:${pct(w.done)}%;background:var(--done-dot)` })),
+      h(
+        'div',
+        { class: 'ov-legend' },
+        h('span', null, h('i', { style: 'background:var(--done-dot)' }), `Done ${w.done}`),
+        h('span', null, h('i', { style: 'background:var(--new-dot)' }), `${w.current ? 'Still open' : 'Not done that week'} ${w.open}`),
+        h('span', null, `${w.carried} carried in · ${w.added} new that week`),
+      ),
+      h(
+        'div',
+        { class: 'ov-weeks', role: 'tablist', 'aria-label': 'Pick a week' },
+        weeks.map((r, k) =>
+          h(
+            'button',
+            { role: 'tab', 'aria-selected': String(k === index), title: `${fmtDay(r.start)} → ${fmtDay(r.end)}: ${r.done} / ${r.total} done`, onClick: () => onSelect(k) },
+            h('span', { class: 'ov-weeks-col' }, h('span', { class: 'ov-weeks-total', style: `height:${(r.total / top) * 100}%` }, h('span', { class: 'ov-weeks-done', style: `height:${r.total ? (r.done / r.total) * 100 : 0}%` }))),
+            h('span', { class: 'ov-weeks-num' }, `${r.done}/${r.total}`),
+            h('span', { class: 'muted small' }, r.label),
+          ),
+        ),
+      ),
+      truncated && h('p', { class: 'muted small' }, 'Only the latest 2000 tasks were loaded: older weeks may be incomplete.'),
+    );
+  })();
+  return card('Weekly load', 'done / assigned per week · counted as on Tasks, bugs aside · assigned = open at some point that week · all sprints, ignores the JQL filter', body, { cls: 'ov-weekly' });
+}
+
 function taskRow(i, when) {
   return h(
     'li',

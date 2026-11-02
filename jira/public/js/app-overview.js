@@ -44,6 +44,7 @@ async function loadSprint({ fresh = false } = {}) {
 
 function load(opts) {
   loadHistory({ fresh: !!opts && !opts.silent });
+  loadWeeks({ fresh: !!opts && !opts.silent });
   const fresh = !!opts?.fresh;
   loadSprint({ fresh });
   return loadIssues(opts).then(render).then(() => allSprintTasks({ fresh }));
@@ -71,6 +72,43 @@ async function loadHistory({ fresh = false } = {}) {
     trendState.loading = false;
     render();
   }
+}
+
+// Weekly load: its own 12-week history (the trends may be grouped by month), shared with "By week" on the server.
+const WEEKS = 12;
+const weekState = { key: null, data: null, loading: false, error: null, index: WEEKS - 1 };
+
+async function loadWeeks({ fresh = false } = {}) {
+  const key = state.user || '';
+  if (!fresh && weekState.key === key && weekState.data) return;
+  if (weekState.key !== key) weekState.index = WEEKS - 1; // another person: back to this week
+  weekState.loading = true;
+  const params = new URLSearchParams({ days: String(WEEKS * 7) });
+  if (state.user) params.set('user', state.user);
+  if (fresh) params.set('fresh', '1');
+  try {
+    const data = await api(`/api/history?${params}`);
+    if (key !== (state.user || '')) return;
+    Object.assign(weekState, { key, data, error: null });
+  } catch (e) {
+    weekState.error = e.message;
+  } finally {
+    weekState.loading = false;
+    render();
+  }
+}
+
+function buildWeekly(now) {
+  const weeks = weekState.data ? OverviewData.weekly(weekState.data.issues, now, WEEKS) : null;
+  return weeklyCard(weeks, Math.min(weekState.index, WEEKS - 1), {
+    loading: weekState.loading,
+    error: !weekState.data && weekState.error,
+    truncated: weekState.data?.truncated,
+    onSelect: (k) => {
+      weekState.index = Math.max(0, Math.min(WEEKS - 1, k));
+      render();
+    },
+  });
 }
 
 function setMetric(id) {
@@ -220,6 +258,7 @@ function buildOverview() {
         : statCard('Overdue', k.overdue, { tone: k.overdue ? 'danger' : '', sub: k.dueSoon ? `+ ${k.dueSoon} due in 3 days` : 'open, past due date' }),
       statCard('Not estimated', lists.unplanned.length, { tone: lists.unplanned.length ? 'warn' : '', sub: 'open, no SP or sprint (bugs aside)' }),
     ),
+    buildWeekly(now),
     // Sprint first, then the history across sprints: nothing about this sprint sits below the trends.
     h(
       'div',
