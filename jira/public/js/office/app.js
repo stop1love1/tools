@@ -32,6 +32,17 @@ function focusChar(c, open) {
 
 // ---- Hover card ----
 const tip = $('#tip');
+function placeTip(x, y) {
+  const W = stage.clientWidth, H = stage.clientHeight, w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.transform = `translate(${Math.min(x + 16, W - w - 8)}px, ${Math.min(y + 16, H - h - 8)}px)`;
+}
+// A To Do stack on the sprint board room's floor: the Epic, whose, and its tasks.
+function showStackTip(st, x, y) {
+  const c = byId(st.who);
+  tip.innerHTML = `<b>${esc(st.name)}</b><span class="k">${c ? esc(short(c.u)) : ''} · ${st.tasks.length} to do · click for their tasks</span>
+    ${st.tasks.slice(0, 6).map((t) => `<span class="tiprow"><span class="k">${esc(t.k)}</span><span>${esc(trunc(t.s, 34))}</span></span>`).join('')}${st.tasks.length > 6 ? `<span class="k">+${st.tasks.length - 6} more</span>` : ''}`;
+  tip.hidden = false; placeTip(x, y);
+}
 function showTip(c, x, y) {
   if (!c) { tip.hidden = true; return; }
   const t = currentTask(c.u), sp = spOf(c.u);
@@ -141,6 +152,21 @@ function refreshRooms() {
     passed: all.filter((t) => !isOpen(t) && t.type === 'bug').length,
     board: boardFilter(all),
   });
+  // The floor of the sprint board room (countable: no Story twice): each person's To Do tasks, a stack per Epic, and
+  // the test pile. A box someone is on the way to take stays until they take it; one on its way there shows on arrival.
+  const byEpicStacks = (tasks) => {
+    const stacks = new Map();
+    for (const t of tasks) {
+      const k = t.epic?.key || '', s = stacks.get(k) || { key: k, name: t.epic?.summary || 'No Epic', tasks: [] };
+      s.tasks.push({ k: t.k, s: t.s, hidden: floorPending.get(t.k)?.kind === 'drop' }); stacks.set(k, s);
+    }
+    return [...stacks.values()].sort((a, b) => !a.key - !b.key || b.tasks.length - a.tasks.length);
+  };
+  const pend = (t, kind) => floorPending.get(t.k)?.kind === kind;
+  updateFloorItems(
+    ordered().map((c) => ({ id: c.u.id, name: baseName(c.u.name), stacks: byEpicStacks(countable(c.u.tasks).filter((t) => t.st === 'todo' || pend(t, 'pick'))) })).filter((r) => r.stacks.length),
+    byEpicStacks(chars.flatMap((c) => countable(c.u.tasks)).filter((t) => (waitsForTest(t) && !pend(t, 'pick')) || pend(t, 'pickTest') || pend(t, 'drop'))),
+  );
   if (roomOpen) renderRoomDrawer();
   if (rv.room) buildDetails();
 }
@@ -300,7 +326,7 @@ let focusRoom = null;
 const ROOM_SHOT = {
   urgent: { az: 0.3, center: [-14, -8.6], dist: 15, el: 0.5 }, // war-room screen on the back wall
   review: { az: 0.2, center: [16, -9.5], dist: 12, el: 0.42 }, // the screen above the head of the table
-  todo: { az: Math.PI / 2, center: [-19.5, 7], dist: 11, el: 0.48 }, // kanban board on the left wall, above people's heads
+  todo: { az: 1.25, center: [-15, 7.5], dist: 17, el: 0.62 }, // the board on the left wall, the To Do rows and the test pile on the floor
   qa: { az: 1.25, center: [-3, 6], dist: 16, el: 0.5 }, // the queue board and the device wall
   dev: { az: 0.15, center: [3, -9], dist: 16, el: 0.55 }, // the code review & CI board above the desks
 };
@@ -431,6 +457,43 @@ setInterval(() => {
   if (Date.now() - screenPinnedAt > 120_000) setScreenView(c.u.id); // the screen shows whoever is speaking
 }, 4500);
 
+// ---- Work moving through the sprint board room: To Do boxes taken to desks, finished work put on the test pile,
+// a tester taking it from there. From the differences between two loads; the box waits for whoever carries it. ----
+const floorPending = new Map(); // task key → { kind: 'pick' | 'drop' | 'pickTest' }
+let demoTester = 0;
+function floorMoves(list) {
+  const plans = [];
+  for (const [c, ch] of list) {
+    const t = ch.task;
+    if (ch.kind !== 'move') continue;
+    if (ch.was === 'todo' && t.st !== 'todo' && t.st !== 'done') plans.push({ kind: 'pick', who: c, t }); // started: fetch it
+    else if (waitsForTest(t) && ch.was === 'prog') plans.push({ kind: 'drop', who: c, t }); // done coding: to the test pile
+    else if (inTesting(t) && ch.was === 'review' && !TESTING_RE.test(ch.wasName || '')) plans.push({ kind: 'pickTest', who: null, t }); // a tester takes it
+  }
+  for (const p of plans) floorPending.set(p.t.k, { kind: p.kind });
+  if (!plans.length) return;
+  refreshRooms(); // the boxes in their before-state, with places for the ones on their way
+  for (const p of plans) carry(p, Date.now());
+}
+// The tester is whoever moved it on Jira (activity.js statusBy, from the changelog), asked for a while as the
+// activity loads on its own clock; the demo has no changelog and takes its testers in turn.
+function carry(p, since) {
+  const k = p.t.k, done = () => { if (floorPending.get(k)?.kind === p.kind) { floorPending.delete(k); refreshRooms(); } };
+  let c = p.who;
+  if (p.kind === 'pickTest') {
+    const by = statusBy.get(k);
+    c = byId(by?.actor) || null;
+    if (!c && DEMO) { const qas = chars.filter((x) => x.u.role === 'qa'); c = qas[demoTester++ % qas.length] || null; }
+    if (!c) return Date.now() - since < 45_000 ? setTimeout(() => carry(p, since), 5000) : done(); // nobody known: no made-up tester
+  }
+  const at = floorPos.get(k);
+  if (!at || !c || !c.group.visible || c.errand || meeting) return done();
+  const text = p.kind === 'drop' ? `${k} → test` : p.kind === 'pickTest' ? `Testing ${k}` : `Taking ${k}`;
+  setTimeout(done, 90_000); // whatever happens on the way, the floor catches up
+  if (p.kind === 'drop') runErrands(c, [{ to: at.stand, yaw: at.yaw, pose: 'board', card: at.color, say: text, dur: 1.4, onArrive: () => { c.card.visible = false; done(); } }]);
+  else runErrands(c, [{ to: at.stand, yaw: at.yaw, pose: 'board', say: text, dur: 1.4, onArrive: done }], at.color); // and carries it to their desk
+}
+
 // ---- Data: /api/team-sprint, polled; differences between two loads play as scenes ----
 const POLL_MS = 90_000;
 let loading = false, loadedOnce = false;
@@ -467,7 +530,7 @@ function applyData(data) {
   sprint = data.sprint || null; teamOrder = data.order || teamOrder;
   const first = !loadedOnce;
   loadedOnce = true;
-  const seen = new Set(), moves = [];
+  const seen = new Set(), moves = [], floor = [];
   for (const u of toPeople(data.members || [])) {
     seen.add(u.id);
     let c = byId(u.id);
@@ -484,6 +547,7 @@ function applyData(data) {
     const done = changes.find((ch) => ch.kind === 'move' && ch.task.st === 'done');
     updateTag(c, done ? `✓ ${done.task.k}` : ''); if (done) setTimeout(() => chars.includes(c) && updateTag(c), 2400);
     if (changes.length) moves.push([c, changes.find((ch) => ch.kind === 'move') || changes[0]]);
+    for (const ch of changes) floor.push([c, ch]);
     const mine = !DEMO && c.isPlayer && changes.find((ch) => ch.kind === 'new');
     if (mine) goBoard(c, mine.task.k); // created for you: no "assigned" in the changelog
   }
@@ -491,6 +555,7 @@ function applyData(data) {
   for (const c of chars) c.lastAct = lastAct.get(c.u.id) || 0;
   replan(first);
   // Live, the activity (activity.js) plays what happened, with who did it; the demo has only its task moves.
+  if (!first) floorMoves(floor);
   if (DEMO) enqueue(moves.map(([c, ch]) => demoEvent(c, ch)));
   else if (first) loadEvents();
   if (selected) renderDrawer();
@@ -540,7 +605,9 @@ function hit(x, y) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, viewCam);
   const h = ray.intersectObjects(pickables, false).find((x) => x.object.userData.char.group.visible);
-  return h ? { char: h.object.userData.char } : { floor: ray.intersectObject(floor)[0] };
+  if (h) return { char: h.object.userData.char };
+  const st = ray.intersectObjects(stackMeshes, false)[0];
+  return st ? { stack: st.object.userData } : { floor: ray.intersectObject(floor)[0] };
 }
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -569,6 +636,7 @@ function endPointer(e) {
     else if (overMeetButton(e.clientX, e.clientY)) setMeeting(!meeting);
     else if (overMeetScreen(e.clientX, e.clientY)) { if (rv.room === 'review') stepScreen(1); else viewRoom('review'); }
     else if (h.char) openDrawer(h.char);
+    else if (h.stack && byId(h.stack.who)) openDrawer(byId(h.stack.who)); // a To Do stack: whose it is
     else if (rv.room && !inRoom) exitRoom(); // clicking outside the room leaves it
   }
   if (pointers.size < 2) pinch = null;
@@ -668,12 +736,12 @@ function frame(now) {
   if (frameN % 10 === 0) markFocus();
   if (rv.room && frameN % 90 === 0) buildDetails(); // people come and go
   if ((frameN++ & 1) === 0) {
-    const h = mouse && !drag ? hit(mouse.x, mouse.y).char || null : null;
+    const hh = mouse && !drag ? hit(mouse.x, mouse.y) : {}, h = hh.char || null;
     hoverChar(h);
     const sign = mouse && !drag ? signAt(mouse.x, mouse.y) : null;
     if (!rv.room) hoverSign(sign);
-    canvas.classList.toggle('over', !!h || !!sign || (!!mouse && !drag && (overMeetButton(mouse.x, mouse.y) || overMeetScreen(mouse.x, mouse.y))));
-    showTip(h, mouse?.lx, mouse?.ly);
+    canvas.classList.toggle('over', !!h || !!hh.stack || !!sign || (!!mouse && !drag && (overMeetButton(mouse.x, mouse.y) || overMeetScreen(mouse.x, mouse.y))));
+    if (hh.stack) showStackTip(hh.stack, mouse.lx, mouse.ly); else showTip(h, mouse?.lx, mouse?.ly);
   }
 }
 requestAnimationFrame(frame);

@@ -8,6 +8,7 @@ const lastAct = new Map(); // accountId → ms of their latest event: who is rea
 let ciState = null; // 'success' | 'failed' | null (no GitLab)
 let ciRepos = null, openMrs = []; // the Dev room's board: each repo's latest pipeline, the open merge requests
 const approved = new Set(); // `${repo}:${iid}` approved today
+const statusBy = new Map(); // task key → { to, actor }: who last moved it on Jira (app.js: who takes it to test)
 let evQueue = [], evBusy = false, replaying = null; // replaying: { list, i, timer }
 
 const BOARD = (col) => v(-19.6, BOARD_COL_Z[col]);
@@ -31,8 +32,9 @@ function playEvent(e) {
   if (!a) return; // someone outside the team
   if (e.kind === 'status') {
     const col = evCol(e.to), text = `${key} → ${e.to}`;
-    if (t && t !== a) visit(a, t, text, { card: COL[col === 'done' ? 'done' : col === 'review' ? 'review' : col === 'todo' ? 'todo' : 'prog'], tone: col === 'done' ? 'ok' : '' });
-    else if (atWork(a) && !meeting) runErrands(a, [{ to: BOARD(col), yaw: -Math.PI / 2, pose: 'board', card: COL[col === 'todo' ? 'todo' : col], say: text, tone: col === 'done' ? 'ok' : '', dur: 1.6, onArrive: () => (a.card.visible = false) }]);
+    // Someone else's task: they go and tell its owner. One's own: the boxes in the sprint board room show it (app.js
+    // floorMoves); a word is enough here. A tester taking work does the walking there too.
+    if (t && t !== a && !(TESTING_RE.test(e.to || '') && a.u.role === 'qa')) visit(a, t, text, { card: COL[col === 'done' ? 'done' : col === 'review' ? 'review' : col === 'todo' ? 'todo' : 'prog'], tone: col === 'done' ? 'ok' : '' });
     else say(a, text, col === 'done' ? 'ok' : '');
   } else if (e.kind === 'comment') {
     const m = (e.mentions || []).map(byId).find((x) => x && x !== a);
@@ -84,6 +86,7 @@ function record(list) {
       const a = byId(e.actor?.id); if (a) { a.ciFail = e.status === 'failed' ? e.ref : null; deskOf(a) && setScreen(deskOf(a)); }
     }
     if (e.kind === 'mr-approve') approved.add(`${e.repo}:${e.iid}`);
+    if (e.kind === 'status' && e.key) statusBy.set(e.key, { to: e.to, actor: e.actor?.id || null });
   }
   if (list.some((e) => /^mr-/.test(e.kind))) drawDev();
 }

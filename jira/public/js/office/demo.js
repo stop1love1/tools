@@ -31,7 +31,7 @@ const OFFICE_DEMO = (() => {
       { accountId: 'd8', name: 'Tuan Kiet', role: 'dev', tasks: [T('Course suggestions', 'To Do'), T('Student FAQ page', 'To Do')] },
     ],
   };
-  const NEXT = { 'To Do': 'In Progress', 'In Progress': 'In Review', Selftest: 'In Review', 'In Review': 'Done', 'In Testing': 'Done' };
+  const NEXT = { 'To Do': 'In Progress', 'In Progress': 'Ready for Test', Selftest: 'Ready for Test', 'Ready for Test': 'In Testing', 'In Review': 'In Testing', 'In Testing': 'Done' };
   const NEW = ['Avatar upload fails', 'Filter by teacher', 'Attendance stats page', 'Deadline reminder email', 'Video will not play on Safari'];
   // One step of a believable sprint: mostly a task moves on (now and then back from review), sometimes a new one lands.
   function tick() {
@@ -43,7 +43,7 @@ const OFFICE_DEMO = (() => {
       p.tasks.push(T(NEW[Math.floor(Math.random() * NEW.length)], 'To Do', bug ? { type: 'Bug', priority: Math.random() < 0.3 ? 'Highest' : 'Medium' } : {}));
     } else {
       const t = open[Math.floor(Math.random() * open.length)];
-      const back = t.status.name === 'In Review' && Math.random() < 0.25;
+      const back = /Ready for Test|In Testing/.test(t.status.name) && Math.random() < 0.2; // now and then it goes back to the developer
       const name = back ? 'In Progress' : NEXT[t.status.name] || 'Done';
       t.status = { name, category: name === 'Done' ? 'done' : 'indeterminate' };
       t.updated = new Date().toISOString();

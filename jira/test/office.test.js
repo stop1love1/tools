@@ -87,6 +87,17 @@ test('short: drops the team suffix of a Jira display name', () => {
   assert.equal(short({ name: 'X', me: true }), 'You');
 });
 
+test('waitsForTest / inTesting: the test pile and the tester\'s desk', () => {
+  const waits = R('waitsForTest'), testing = R('inTesting');
+  const st = (name) => toTask(api({ status: { name, category: 'indeterminate' } }), NOW);
+  assert.equal(waits(st('Ready for Test')), true);
+  assert.equal(waits(st('In Review')), true);
+  assert.equal(waits(st('In Testing')), false);
+  assert.equal(testing(st('In Testing')), true);
+  assert.equal(waits(st('Ready for Production')), false);
+  assert.equal(waits(st('In Progress')), false);
+});
+
 test('diffTasks: new tasks and status moves', () => {
   const before = [toTask(api({ key: 'X-1' }), NOW), toTask(api({ key: 'X-2', status: { name: 'To Do', category: 'new' } }), NOW)];
   const after = [toTask(api({ key: 'X-1', status: { name: 'Done', category: 'done' } }), NOW), toTask(api({ key: 'X-2', status: { name: 'To Do', category: 'new' } }), NOW), toTask(api({ key: 'X-3' }), NOW)];

@@ -44,6 +44,10 @@ const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 // In-progress statuses that mean "waiting for someone else to look at it" (In Review, Ready for Test, In Testing,
 // Ready for Production…). "Selftest" is the developer still testing their own work: that is in progress.
 const REVIEW_RE = /review|\bqa\b|verif|uat|(in|ready for)\s+test|ready for prod/i;
+// Among those: being tested now (QA has it), and waiting for a tester (on the sprint board room's test pile).
+const TESTING_RE = /\btesting\b|\bin test\b|verif|\buat\b/i;
+const inTesting = (t) => t.st === 'review' && TESTING_RE.test(t.statusName);
+const waitsForTest = (t) => t.st === 'review' && !TESTING_RE.test(t.statusName) && !/prod/i.test(t.statusName);
 
 function toTask(t, now = new Date()) {
   const cat = t.status?.category;
@@ -133,7 +137,7 @@ function diffTasks(before, after) {
   for (const t of after) {
     const o = old.get(t.k);
     if (!o) out.push({ kind: 'new', task: t });
-    else if (o.st !== t.st) out.push({ kind: 'move', task: t, was: o.st });
+    else if (o.st !== t.st || o.statusName !== t.statusName) out.push({ kind: 'move', task: t, was: o.st, wasName: o.statusName });
   }
   return out;
 }

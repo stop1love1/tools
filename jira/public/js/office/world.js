@@ -25,7 +25,7 @@ let viewCam = cam;
 const camAz = () => (rv.room ? rv.az : view.az);
 function clipToRoom(z) {
   if (!z) { renderer.clippingPlanes = []; return; }
-  const [x0, x1, z0, z1] = ZONES[z].rect, m = 0.45;
+  const [x0, x1, z0, z1] = ZONES[z].rect, m = 0.1; // the walls, not what hangs on the next room's side
   renderer.clippingPlanes = [
     new THREE.Plane(new THREE.Vector3(1, 0, 0), -(x0 - m)), new THREE.Plane(new THREE.Vector3(-1, 0, 0), x1 + m),
     new THREE.Plane(new THREE.Vector3(0, 0, 1), -(z0 - m)), new THREE.Plane(new THREE.Vector3(0, 0, -1), z1 + m),
@@ -311,6 +311,55 @@ const boardScreen = screenAt(6.3, 1.7, 1024, 276, -20.9, 1.7, 7, Math.PI / 2, wL
 const BOARD_COL_Z = { todo: 4.45, prog: 6.05, review: 7.65, done: 9.25 };
 B(2.4, 0.45, 0.7, M.desk, -13, 0, 12, { solid: true }); B(2.4, 0.45, 0.7, M.desk, -17, 0, 12, { solid: true });
 plant(-7.6, 12.3, true);
+
+// The sprint board room's floor: a row per person (their name plate first) of their To Do tasks, a stack of boxes per
+// Epic, one box per task; and the test pile by the benches, a stack per Epic of the work waiting for a tester. Clear of
+// the way from the door to the board. rows: [{ id, name, stacks }], test: [stacks]; stack: { key, name, tasks: [{ k, s,
+// hidden }] } (a hidden task keeps its place for someone on their way to put it there). floorPos: task key → where to
+// stand to take or put it.
+const STACK_COLORS = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#14b8a6', '#6366f1', '#f97316', '#84cc16', '#ef4444'];
+const epicColor = (key) => (key ? STACK_COLORS[hash(key) % STACK_COLORS.length] : '#8a94a3');
+const floorItems = new THREE.Group(); scene.add(floorItems);
+const stackMeshes = []; // hover / click targets, userData: { who, name, key, tasks }
+const floorPos = new Map();
+const BOX = new THREE.BoxGeometry(0.4, 0.12, 0.34);
+const boxMats = new Map();
+const boxMat = (color) => boxMats.get(color) || boxMats.set(color, lam(color)).get(color);
+const TEST_Z = 10.75;
+let floorSig = '';
+function floorPlate(text, x, z, w = 1.5) {
+  const cv = makeCanvas(256, 44, (g) => { g.fillStyle = '#1b2430'; g.fillRect(0, 0, 256, 44); g.fillStyle = '#e6edf3'; g.font = `700 22px ${FONT}`; g.textBaseline = 'middle'; g.fillText(trunc(text, 18), 12, 23); });
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.26), new THREE.MeshBasicMaterial({ map: tex(cv) }));
+  plate.rotation.x = -Math.PI / 2; plate.position.set(x, 0.02, z); floorItems.add(plate);
+}
+// One row of stacks from x0, `max` at most (the rest merge into a last "+N more Epics"); people stand at standZ.
+function floorRow(who, stacks, x0, z, standZ, yaw, max) {
+  const list = stacks.length > max ? [...stacks.slice(0, max - 1), { key: '', name: `+${stacks.length - max + 1} more Epics`, tasks: stacks.slice(max - 1).flatMap((s) => s.tasks) }] : stacks;
+  list.forEach((s, j) => {
+    const x = x0 + j * 0.56, g = new THREE.Group(); g.position.set(x, 0, z); floorItems.add(g);
+    const mat = boxMat(epicColor(s.key)), shown = s.tasks.filter((t) => !t.hidden);
+    for (const t of s.tasks) floorPos.set(t.k, { stand: v(x, standZ), yaw, color: epicColor(s.key) });
+    for (let k = 0; k < Math.min(shown.length, 12); k++) {
+      const b = new THREE.Mesh(BOX, mat); b.position.y = 0.06 + k * 0.125; b.rotation.y = ((hash(s.key + k) % 7) - 3) * 0.03; // a little untidy, like real stacks
+      b.castShadow = true; b.receiveShadow = true; b.userData = { who, name: s.name, key: s.key, tasks: shown }; g.add(b); stackMeshes.push(b);
+    }
+  });
+}
+function updateFloorItems(rows, test = []) {
+  const sig = JSON.stringify([rows.map((r) => [r.id, r.name, r.stacks.map((s) => s.tasks.map((t) => t.k + (t.hidden ? '?' : '')))]), test.map((s) => s.tasks.map((t) => t.k + (t.hidden ? '?' : '')))]);
+  if (sig === floorSig) return;
+  floorSig = sig;
+  for (const o of [...floorItems.children]) { floorItems.remove(o); o.traverse((x) => { if (x.isMesh && x.geometry !== BOX) x.geometry.dispose(); if (x.material?.map) { x.material.map.dispose(); x.material.dispose(); } }); }
+  stackMeshes.length = 0; floorPos.clear();
+  const n = rows.length, step = n > 1 ? Math.min(0.75, 5.1 / (n - 1)) : 0;
+  rows.forEach((r, i) => {
+    const z = 4.7 + i * step;
+    floorPlate(r.name, -13.35, z);
+    floorRow(r.id, r.stacks, -12.2, z, z - 0.38, 0, 8);
+  });
+  floorPlate('Ready for test', -17.6, TEST_Z - 0.6, 1.9);
+  floorRow(null, test, -19.1, TEST_Z, TEST_Z + 0.48, Math.PI, 7);
+}
 
 // Pantry (Done)
 B(0.9, 0.9, 5, M.white, 20.45, 0, 6, { solid: true }); B(0.95, 0.05, 5.05, M.desk, 20.45, 0.9, 6);
