@@ -251,7 +251,8 @@ function buildOverview() {
     h(
       'div',
       { class: 'ov-stats' },
-      statCard('Done', `${pct(k.done, k.total)}%`, { sub: `${k.done} / ${k.total} tasks${k.sp.total ? ` · ${k.sp.done} / ${k.sp.total} SP` : ''}` }),
+      statCard('Dev done', `${pct(k.devDone, k.total)}%`, { sub: `${k.devDone} / ${k.total} tasks${k.sp.total ? ` · ${k.sp.devDone} / ${k.sp.total} SP` : ''} · ${k.inQa} with QA` }),
+      statCard('QA done', `${pct(k.done, k.total)}%`, { sub: `${k.done} / ${k.total} tasks${k.sp.total ? ` · ${k.sp.done} / ${k.sp.total} SP` : ''}` }),
       statCard(closed ? 'Bugs left open' : 'Open bugs', bugs.open, { tone: bugs.open ? 'warn' : '', sub: bugs.total || bugs.cancelled ? bugSub : 'no bugs' }),
       closed
         ? statCard('Carried over', lists.carriedOver.length, { tone: lists.carriedOver.length ? 'warn' : '', sub: 'not done when it closed' })

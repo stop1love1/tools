@@ -17,6 +17,10 @@ const OverviewData = (() => {
   const isDone = (i) => i.status.category === 'done' && !isCancelled(i);
   const isClosed = (i) => i.status.category === 'done';
   const doneAt = (i) => new Date(i.resolved || i.updated);
+  // workflow.js stageOf: todo / dev / qa (dev done, QA not) / done (QA done). Work a closed sprint carried over is
+  // read as still being coded: its status then is not known.
+  const stage = (i) => (i.carriedOver ? 'dev' : stageOf(i.status));
+  const isDevDoneI = (i) => stage(i) === 'qa' || stage(i) === 'done';
   const dueIn = (i, now) => (i.due ? daysBetween(now, new Date(i.due + 'T00:00:00')) : null);
   const idleDays = (i, now) => daysBetween(new Date(i.updated), now);
 
@@ -60,12 +64,15 @@ const OverviewData = (() => {
   function kpis(list, now) {
     const open = list.filter(isOpen);
     const done = list.filter(isClosed);
+    const devDone = list.filter(isDevDoneI);
     const due = open.filter((i) => dueIn(i, now) !== null);
     return {
       total: list.length,
       open: open.length,
       done: done.length,
-      sp: { done: sumSP(done), total: sumSP(list) },
+      devDone: devDone.length,
+      inQa: list.filter((i) => stage(i) === 'qa').length,
+      sp: { done: sumSP(done), devDone: sumSP(devDone), total: sumSP(list) },
       overdue: due.filter((i) => dueIn(i, now) < 0).length,
       dueSoon: due.filter((i) => dueIn(i, now) >= 0 && dueIn(i, now) <= 3).length,
       doneWeek: done.filter((i) => daysBetween(doneAt(i), now) <= 6).length,
@@ -76,9 +83,10 @@ const OverviewData = (() => {
     const rows = new Map();
     for (const i of list) {
       if (!i.epic) continue;
-      const r = rows.get(i.epic.key) || { key: i.epic.key, name: i.epic.summary, total: 0, done: 0, spTotal: 0, spDone: 0 };
+      const r = rows.get(i.epic.key) || { key: i.epic.key, name: i.epic.summary, total: 0, done: 0, devDone: 0, spTotal: 0, spDone: 0 };
       r.total++;
       r.spTotal += sp(i);
+      if (isDevDoneI(i)) r.devDone++;
       if (isClosed(i)) (r.done++, (r.spDone += sp(i)));
       rows.set(i.epic.key, r);
     }
@@ -108,17 +116,19 @@ const OverviewData = (() => {
     return { unit: useSP ? 'SP' : 'tasks', total, length, today, points };
   }
 
-  // How far the sprint (or the whole scope) is: work split by status category, in SP when anything is estimated.
+  // How far the sprint (or the whole scope) is: work split by stage, in SP when anything is estimated.
+  // done = QA done; qa = dev done, with QA; prog = being coded; todo = not started. Dev done = done + qa.
   function progress(list, sprint, now) {
     const useSP = sumSP(list) > 0;
     const weight = (i) => (useSP ? sp(i) : 1);
-    const sum = (cat) => list.filter((i) => i.status.category === cat).reduce((n, i) => n + weight(i), 0);
+    const sum = (st) => list.filter((i) => stage(i) === st).reduce((n, i) => n + weight(i), 0);
     const end = sprint?.endDate ? startOf(new Date(sprint.endDate)) : null;
     return {
       unit: useSP ? 'SP' : 'tasks',
       done: sum('done'),
-      prog: sum('indeterminate'),
-      todo: sum('new'),
+      qa: sum('qa'),
+      prog: sum('dev'),
+      todo: sum('todo'),
       total: list.reduce((n, i) => n + weight(i), 0),
       daysLeft: end ? Math.max(0, daysBetween(now, end)) : null,
       // Open work that weighs nothing in SP: the bar can read 100% while these are still left.
@@ -319,8 +329,13 @@ const OverviewData = (() => {
     else if (bugsOut >= bugsIn && bugsOut > 0) add('good', 'Bugs are fixed as fast as they come in', `${bugsOut} fixed vs ${bugsIn} reported over ${span}.`);
 
     const open = list.filter(isOpen);
-    const doing = open.filter((i) => i.status.category === 'indeterminate').length;
-    if (doing > 3) add('warn', 'Too much in progress at once', `${doing} tasks are in progress right now.`, 'Cap work in progress at 2–3: finish or park the rest so each one moves faster.');
+    // Being coded only: work waiting for or in test is no longer the developer's.
+    const doing = open.filter((i) => stage(i) === 'dev').length;
+    if (doing > 3) add('warn', 'Too much in progress at once', `${doing} tasks are being coded right now.`, 'Cap work in progress at 2–3: finish or park the rest so each one moves faster.');
+    const waiting = open.filter((i) => stage(i) === 'qa' && phaseOf(i.status.name) === 'testQueue');
+    const oldest = waiting.length ? Math.max(...waiting.map((i) => idleDays(i, now))) : 0;
+    if (waiting.length >= 5 || oldest > 3)
+      add('warn', 'Work waits for test', `${waiting.length} tasks are dev done and waiting for a tester${oldest ? `, the oldest untouched for ${oldest}d` : ''}.`, 'Test before starting new work, or move testers to the queue: dev done is not delivered until QA passes it.');
     const stale = open.filter((i) => idleDays(i, now) > 7).length;
     if (stale) add('warn', 'Tasks are stuck', `${stale} open tasks have not been updated in over 7 days.`, 'Close, re-plan or unblock them in the next stand-up.');
 
@@ -328,5 +343,5 @@ const OverviewData = (() => {
     return tips.sort((a, b) => order[a.level] - order[b.level]);
   }
 
-  return { scope, members, sprintView, bugStats, pickSprint, kpis, byEpic, burndown, progress, pace, paceStatus, lists, PERIODS, trend, weekly, metricSummary, insights, isOpen, isDone, isClosed, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
+  return { stage, isDevDone: isDevDoneI, scope, members, sprintView, bugStats, pickSprint, kpis, byEpic, burndown, progress, pace, paceStatus, lists, PERIODS, trend, weekly, metricSummary, insights, isOpen, isDone, isClosed, doneAt, dueIn, idleDays, sumSP, sp, startOf, addDays, daysBetween, isoDay, DAY };
 })();

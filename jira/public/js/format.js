@@ -5,32 +5,23 @@
 // ---------------------------------------------------------------------------
 // Formatting
 
-const CAT_ORDER = { new: 0, indeterminate: 1, done: 2 };
-const NAME_ORDER = [
-  'backlog', 'open', 'to do', 'todo', 'selected for development', 'in development', 'in progress',
-  'code review', 'in review', 'review', 'testing', 'in test', 'qa', 'ready for uat', 'uat', 'done', 'resolved', 'closed',
-];
-const rank = (name) => {
-  const i = NAME_ORDER.indexOf(name.toLowerCase());
-  return i < 0 ? 50 : i;
-};
+const rank = statusRank; // Settings → Workflow → Status order (workflow.js)
 
+// Colour of a status, from its stage (workflow.js stageOf): to do, being coded, dev done waiting on QA, QA done.
 function tone(status) {
   if (!status) return 'new';
-  if (status.category === 'done') {
-    // Distinguish real Done vs Cancelled/Rejected
-    if (/cancel|hủy|huỷ|reject|won.?t|invalid|duplicate/i.test(status.name)) return 'void';
-    return 'done';
-  }
-  if (status.category === 'new') return 'new';
-  return /review|test|qa|uat|verif/i.test(status.name) ? 'review' : 'prog';
+  const stage = stageOf(status);
+  if (stage === 'done') return /cancel|hủy|huỷ|reject|won.?t|invalid|duplicate/i.test(status.name) ? 'void' : 'done';
+  return stage === 'qa' ? 'review' : stage === 'dev' ? 'prog' : 'new';
 }
 
+// Statuses in workflow order: by stage first (so Test SIT Done sits after In Progress even if Jira files it under
+// To Do), then Settings → Workflow → Status order.
 function statusList(issues) {
   const m = new Map();
   for (const i of issues) if (!m.has(i.status.name)) m.set(i.status.name, i.status);
   return [...m.values()].sort(
-    (a, b) => (CAT_ORDER[a.category] ?? 1) - (CAT_ORDER[b.category] ?? 1) || rank(a.name) - rank(b.name) || a.name.localeCompare(b.name),
+    (a, b) => STAGE_ORDER[stageOf(a)] - STAGE_ORDER[stageOf(b)] || rank(a.name) - rank(b.name) || a.name.localeCompare(b.name),
   );
 }
 

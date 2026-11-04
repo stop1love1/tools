@@ -81,11 +81,14 @@ function renderProgress() {
   const sumSP = (list) => list.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
   // Cancelled work counts as done, as in the Done column of the Jira sprint board (and the Overview numbers).
   const cancelled = base.filter(isCancelled);
+  // QA done: Jira's Done category (Ready for Production on). Dev done: that, or in the test flow (workflow.js stageOf).
   const done = base.filter((i) => i.status.category === 'done');
+  const devDone = base.filter((i) => isDevDone(i.status));
   const counted = base.length;
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const countedSP = sumSP(base);
   const doneSP = sumSP(done);
+  const devDoneSP = sumSP(devDone);
 
   // Cancelled-like statuses last, so the done segments sit together.
   const statuses = statusList(base).sort((a, b) => (tone(a) === 'void') - (tone(b) === 'void'));
@@ -110,10 +113,24 @@ function renderProgress() {
       state.sprintTasksLoading
         ? h('span', { class: 'muted', title: "The sprints' older tasks are still loading" }, h('span', { class: 'spin' }, icon('refresh')), ' Loading sprint tasks…')
         : [
-            h('b', null, `${done.length}/${counted}`),
-            ' done ',
-            h('span', { class: 'pct' }, `${pct(done.length, counted)}%`),
-            countedSP > 0 && [h('span', { class: 'sep' }, '·'), h('b', null, `${doneSP}/${countedSP}`), ' SP ', h('span', { class: 'pct' }, `${pct(doneSP, countedSP)}%`)],
+            h(
+              'span',
+              { title: `Dev done: code finished, in the test flow or QA done${countedSP > 0 ? ` · ${devDoneSP}/${countedSP} SP` : ''}` },
+              'Dev ',
+              h('b', null, `${devDone.length}/${counted}`),
+              ' ',
+              h('span', { class: 'pct' }, `${pct(devDone.length, counted)}%`),
+            ),
+            h('span', { class: 'sep' }, '·'),
+            h(
+              'span',
+              { title: 'QA done: Jira Done category (Ready for Production, Done, Cancelled)' },
+              'QA ',
+              h('b', null, `${done.length}/${counted}`),
+              ' ',
+              h('span', { class: 'pct' }, `${pct(done.length, counted)}%`),
+            ),
+            countedSP > 0 && [h('span', { class: 'sep' }, '·'), h('b', null, `${doneSP}/${countedSP}`), ' SP QA done ', h('span', { class: 'pct' }, `${pct(doneSP, countedSP)}%`)],
           ],
     ),
   );

@@ -14,7 +14,7 @@ const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f
 function load() {
   const state = { issues: [], type: 'all', q: '', sprint: null };
   const ctx = vm.createContext({ h: () => ({}), recentlyTransitioned: new Map(), HOLD_MS: 6000, HOLD_PENDING_MS: 30000, NO_SPRINT: -1, state, Intl, Date, URL });
-  for (const f of ['format.js', 'progress.js', 'overview-data.js']) vm.runInContext(read(f), ctx);
+  for (const f of ['workflow.js', 'format.js', 'progress.js', 'overview-data.js']) vm.runInContext(read(f), ctx);
   return vm.runInContext('OverviewData', ctx);
 }
 
@@ -86,7 +86,7 @@ test('kpis count overdue, due soon, story points and what finished this week', (
   assert.equal(k.total, 6);
   assert.equal(k.open, 4);
   assert.equal(k.done, 2);
-  assert.deepEqual({ ...k.sp }, { done: 7, total: 10 });
+  assert.deepEqual({ ...k.sp }, { done: 7, devDone: 7, total: 10 });
   assert.equal(k.overdue, 1);
   assert.equal(k.dueSoon, 2);
   assert.equal(k.doneWeek, 1);
@@ -100,7 +100,7 @@ test('byEpic groups tasks under their Epic and counts the done ones', () => {
   const epic = { key: 'E-1', summary: 'Epic one' };
   const rows = O.byEpic([issue({ epic, storyPoints: 2 }), issue({ epic, category: 'done', storyPoints: 3 }), issue()]);
   assert.equal(rows.length, 1);
-  assert.deepEqual({ ...rows[0] }, { key: 'E-1', name: 'Epic one', total: 2, done: 1, spTotal: 5, spDone: 3 });
+  assert.deepEqual({ ...rows[0] }, { key: 'E-1', name: 'Epic one', total: 2, done: 1, devDone: 1, spTotal: 5, spDone: 3 });
 });
 
 test('burndown starts at the full total and ends at the planned scope; actual stops at today', () => {
@@ -143,9 +143,43 @@ test('lists put each open task in one group: overdue, due soon, then idle', () =
 test('progress splits the work by status category and counts the days left', () => {
   const list = [issue({ storyPoints: 3 }), issue({ category: 'indeterminate', storyPoints: 2 }), issue({ category: 'done', storyPoints: 5 })];
   const p = O.progress(list, sprint, NOW);
-  assert.deepEqual({ ...p }, { unit: 'SP', done: 5, prog: 2, todo: 3, total: 10, daysLeft: 5, unestimated: 0 });
+  assert.deepEqual({ ...p }, { unit: 'SP', done: 5, qa: 0, prog: 2, todo: 3, total: 10, daysLeft: 5, unestimated: 0 });
   assert.equal(O.progress([issue(), issue()], null, NOW).unit, 'tasks');
   assert.equal(O.progress([issue()], null, NOW).daysLeft, null);
+});
+
+test('dev done vs QA done: the test flow counts as dev done, Jira Done category as QA done', () => {
+  const st = (name, category, storyPoints) => issue({ status: { name, category }, storyPoints });
+  const list = [
+    st('To Do', 'new', 1),
+    st('In Progress', 'indeterminate', 2),
+    st('Selftest', 'indeterminate', 2),
+    st('READY FOR SIT', 'indeterminate', 3),
+    st('Test SIT Done', 'new', 3), // a To Do-category status on the board: still dev done
+    st('Ready for UAT', 'indeterminate', 3),
+    st('Ready for Production', 'done', 5),
+    st('Cancelled', 'done', 1),
+  ];
+  const p = O.progress(list, sprint, NOW);
+  assert.deepEqual({ done: p.done, qa: p.qa, prog: p.prog, todo: p.todo }, { done: 6, qa: 9, prog: 4, todo: 1 });
+  const k = O.kpis(list, NOW);
+  assert.deepEqual({ devDone: k.devDone, done: k.done, inQa: k.inQa }, { devDone: 5, done: 2, inQa: 3 });
+  assert.deepEqual({ ...k.sp }, { done: 6, devDone: 15, total: 20 });
+});
+
+test('dev WIP counts only work being coded; a long test queue is flagged', () => {
+  const st = (name, category, patch = {}) => issue({ status: { name, category }, ...patch });
+  const ready = Array.from({ length: 5 }, () => st('Ready for SIT', 'indeterminate'));
+  const tips = O.insights([{ created: 0, done: 0, backlog: 0, withDue: 0 }], [...ready, st('In Progress', 'indeterminate')], NOW, 'week');
+  assert.ok(!tips.some((t) => t.title === 'Too much in progress at once'));
+  assert.ok(tips.some((t) => t.title === 'Work waits for test'));
+});
+
+test('a task a closed sprint carried over counts as being coded, whatever its status now', () => {
+  const closed = { id: 9, name: 'S9', state: 'closed', startDate: at(-20), endDate: at(-6), completeDate: at(-5) };
+  const t = issue({ status: { name: 'Ready for Production', category: 'done' }, resolved: at(-1), sprint: closed, sprintIds: [9], sprints: [closed] });
+  const [v] = O.sprintView([t], closed);
+  assert.equal(O.stage(v), 'dev');
 });
 
 test('progress counts the open tasks that weigh nothing in SP', () => {

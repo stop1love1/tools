@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { httpError, safeJson } = require('./util');
+const { WORKFLOW_DEFAULTS, workflowLineError, setWorkflow } = require('../public/js/workflow.js');
 
 const FILE = process.env.DASHBOARD_CONFIG_FILE || path.join(__dirname, '..', 'config.json');
 
@@ -76,11 +77,7 @@ function defaults() {
     agent: {
       extraInstructions: [],
     },
-    office: {
-      qaPeople: [],
-      people: {}, // accountId → { gender, role }, set from the office's Team panel (savePerson)
-      order: [], // accountIds as dragged in the Team panel: meeting seats and speaking turns (saveOrder)
-    },
+    workflow: JSON.parse(JSON.stringify(WORKFLOW_DEFAULTS)),
     server: {
       port: Number(env.PORT) || 4747,
       mcpUrl: env.MCP_SERVER_URL || 'https://mcp.atlassian.com/v1/mcp',
@@ -129,8 +126,11 @@ const SCHEMA = [
   { section: 'Start with Claude', fields: [
     { key: 'agent.extraInstructions', label: 'Extra instructions in every prompt', type: 'lines', optional: true, help: 'Team conventions, commands to run before committing…' },
   ] },
-  { section: 'Overview 3D office', fields: [
-    { key: 'office.qaPeople', label: 'QA people', type: 'lines', optional: true, help: 'Jira display names (or account ids), one per line. They sit in the QA room; everyone else in the Dev room. The Team panel in the office sets each person\'s role (Dev, QA, BA, PO, PM).' },
+  { section: 'Workflow (test flow)', fields: [
+    { key: 'workflow.testQueue', label: 'Waiting for test', type: 'lines', mono: true, statuses: true, optional: true, help: 'Dev done, waiting for a tester: the status testers filter by (e.g. Ready for SIT). A task in any of these three lists counts as dev done. One status per line, as Jira names it (any case), or a /regex/.' },
+    { key: 'workflow.testing', label: 'Being tested', type: 'lines', mono: true, statuses: true, optional: true, help: 'A tester has it now (e.g. Ready for UAT). One status per line, as Jira names it (any case), or a /regex/.' },
+    { key: 'workflow.tested', label: 'Tested, waiting for deploy / release', type: 'lines', mono: true, statuses: true, optional: true, help: 'Nobody is testing it, nor coding it (e.g. Test SIT Done). A status in the Jira Done category (Ready for Production, Done, Cancelled) is QA done whatever these lists say. One status per line, as Jira names it (any case), or a /regex/. Any other in-progress status counts as still with the developer.' },
+    { key: 'workflow.statusOrder', label: 'Status order', type: 'lines', optional: true, help: 'Order of the status filters and progress bar segments, within To Do / In progress / Done.' },
   ] },
   { section: 'Server', fields: [
     { key: 'server.port', label: 'Port', type: 'number', min: 1024, max: 65535, restart: true },
@@ -162,8 +162,7 @@ function load() {
     const v = getAt(overrides, f.key);
     if (v !== undefined && !validate(f, v)) setAt(base, f.key, v);
   }
-  base.office.people = cleanPeople(overrides.office?.people);
-  base.office.order = cleanOrder(overrides.office?.order);
+  setWorkflow(base.workflow); // the server's own phaseOf, as the pages will see it
   current = base;
   startup ??= Object.fromEntries(FIELDS.filter((f) => f.restart).map((f) => [f.key, getAt(base, f.key)]));
   return current;
@@ -193,7 +192,8 @@ function validate(f, v) {
     case 'lines':
       if (f.optional && Array.isArray(v) && !v.length) return '';
       if (!Array.isArray(v) || !v.length || v.length > 50 || !v.every((x) => str(x) && x.trim())) return 'needs 1–50 non-empty lines';
-      return re && !v.every((x) => re.test(x)) ? `each line must match ${f.pattern}` : '';
+      if (re && !v.every((x) => re.test(x))) return `each line must match ${f.pattern}`;
+      return (f.statuses && v.map(workflowLineError).find(Boolean)) || '';
     case 'presets':
       return Array.isArray(v) && v.length <= 8 && v.every((p) => p && str(p.label) && p.label.trim() && str(p.jql) && p.jql.trim()) ? '' : 'up to 8 filters, each with a label and a JQL';
     case 'repos': {
@@ -236,60 +236,6 @@ function write(next) {
   for (const fn of listeners) fn(current);
 }
 
-// The office's people: gender (the character's look) and role (which room they work in).
-const PERSON = {
-  gender: ['male', 'female'],
-  role: ['dev', 'qa', 'ba', 'po', 'pm'],
-};
-const ACCOUNT_RE = /^[A-Za-z0-9:_-]{1,128}$/;
-const GITLAB_RE = /^[A-Za-z0-9._-]{1,64}$/; // their GitLab username, when the office can't match it from their name
-// Keeps the known values only; a person with nothing set is dropped.
-function cleanPerson(p) {
-  const out = {};
-  for (const [k, allowed] of Object.entries(PERSON)) if (allowed.includes(p?.[k])) out[k] = p[k];
-  const gl = typeof p?.gitlab === 'string' ? p.gitlab.trim().replace(/^@/, '') : '';
-  if (GITLAB_RE.test(gl)) out.gitlab = gl;
-  return Object.keys(out).length ? out : null;
-}
-function cleanPeople(v) {
-  const out = {};
-  if (!v || typeof v !== 'object') return out;
-  for (const [id, p] of Object.entries(v).slice(0, 500)) {
-    const c = ACCOUNT_RE.test(id) && cleanPerson(p);
-    if (c) out[id] = c;
-  }
-  return out;
-}
-// Sets one person's profile (unknown or empty values clear that field) and returns everyone's.
-function savePerson(id, profile) {
-  if (!ACCOUNT_RE.test(id || '')) throw httpError(400, 'Invalid accountId');
-  for (const [k, allowed] of Object.entries(PERSON)) {
-    const val = profile?.[k];
-    if (val != null && val !== '' && !allowed.includes(val)) throw httpError(400, `Unknown ${k}: ${val}`);
-  }
-  const gl = typeof profile?.gitlab === 'string' ? profile.gitlab.trim().replace(/^@/, '') : '';
-  if (gl && !GITLAB_RE.test(gl)) throw httpError(400, `Not a GitLab username: ${gl}`);
-  get(); // overrides are read on first use
-  const next = JSON.parse(JSON.stringify(overrides));
-  const people = cleanPeople(next.office?.people);
-  const p = cleanPerson(profile);
-  if (p) people[id] = p; else delete people[id];
-  if (Object.keys(people).length) setAt(next, 'office.people', people); else deleteAt(next, 'office.people');
-  write(next);
-  return current.office.people;
-}
-const cleanOrder = (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => typeof id === 'string' && ACCOUNT_RE.test(id)))].slice(0, 500) : []);
-// The Team panel's order, top first.
-function saveOrder(ids) {
-  if (!Array.isArray(ids)) throw httpError(400, 'order must be a list of accountIds');
-  get(); // overrides are read on first use
-  const next = JSON.parse(JSON.stringify(overrides));
-  const order = cleanOrder(ids);
-  if (order.length) setAt(next, 'office.order', order); else deleteAt(next, 'office.order');
-  write(next);
-  return current.office.order;
-}
-
 function deleteAt(obj, key) {
   const parts = key.split('.');
   const last = parts.pop();
@@ -313,8 +259,9 @@ function view() {
 
 // The subset the browser uses at runtime (no local paths).
 function client() {
-  const { jira, git, mcp } = get();
+  const { jira, git, mcp, workflow } = get();
   return {
+    workflow,
     agent: { mcp: mcp.enabled, writes: mcp.allowWrites },
     jira: { defaultJql: jira.defaultJql, presets: jira.presets, autoRefreshMinutes: jira.autoRefreshMinutes },
     git: {
@@ -333,4 +280,4 @@ function client() {
 const listeners = [];
 const onChange = (fn) => listeners.push(fn);
 
-module.exports = { get, load, save, savePerson, saveOrder, view, client, onChange, startupValue: (key) => (get(), startup[key]) };
+module.exports = { get, load, save, view, client, onChange, startupValue: (key) => (get(), startup[key]) };
