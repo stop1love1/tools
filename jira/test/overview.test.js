@@ -86,7 +86,7 @@ test('kpis count overdue, due soon, story points and what finished this week', (
   assert.equal(k.total, 6);
   assert.equal(k.open, 4);
   assert.equal(k.done, 2);
-  assert.deepEqual({ ...k.sp }, { done: 7, devDone: 7, total: 10 });
+  assert.deepEqual({ ...k.sp }, { done: 7, total: 10 });
   assert.equal(k.overdue, 1);
   assert.equal(k.dueSoon, 2);
   assert.equal(k.doneWeek, 1);
@@ -100,7 +100,7 @@ test('byEpic groups tasks under their Epic and counts the done ones', () => {
   const epic = { key: 'E-1', summary: 'Epic one' };
   const rows = O.byEpic([issue({ epic, storyPoints: 2 }), issue({ epic, category: 'done', storyPoints: 3 }), issue()]);
   assert.equal(rows.length, 1);
-  assert.deepEqual({ ...rows[0] }, { key: 'E-1', name: 'Epic one', total: 2, done: 1, devDone: 1, spTotal: 5, spDone: 3 });
+  assert.deepEqual({ ...rows[0] }, { key: 'E-1', name: 'Epic one', total: 2, done: 1, spTotal: 5, spDone: 3 });
 });
 
 test('burndown starts at the full total and ends at the planned scope; actual stops at today', () => {
@@ -143,12 +143,12 @@ test('lists put each open task in one group: overdue, due soon, then idle', () =
 test('progress splits the work by status category and counts the days left', () => {
   const list = [issue({ storyPoints: 3 }), issue({ category: 'indeterminate', storyPoints: 2 }), issue({ category: 'done', storyPoints: 5 })];
   const p = O.progress(list, sprint, NOW);
-  assert.deepEqual({ ...p }, { unit: 'SP', done: 5, qa: 0, prog: 2, todo: 3, total: 10, daysLeft: 5, unestimated: 0 });
+  assert.deepEqual({ ...p }, { unit: 'SP', done: 5, prog: 2, todo: 3, total: 10, daysLeft: 5, unestimated: 0 });
   assert.equal(O.progress([issue(), issue()], null, NOW).unit, 'tasks');
   assert.equal(O.progress([issue()], null, NOW).daysLeft, null);
 });
 
-test('dev done vs QA done: the test flow counts as dev done, Jira Done category as QA done', () => {
+test('done = dev done: the test flow counts as done, whatever its Jira category', () => {
   const st = (name, category, storyPoints) => issue({ status: { name, category }, storyPoints });
   const list = [
     st('To Do', 'new', 1),
@@ -161,10 +161,21 @@ test('dev done vs QA done: the test flow counts as dev done, Jira Done category 
     st('Cancelled', 'done', 1),
   ];
   const p = O.progress(list, sprint, NOW);
-  assert.deepEqual({ done: p.done, qa: p.qa, prog: p.prog, todo: p.todo }, { done: 6, qa: 9, prog: 4, todo: 1 });
+  assert.deepEqual({ done: p.done, prog: p.prog, todo: p.todo }, { done: 15, prog: 4, todo: 1 });
   const k = O.kpis(list, NOW);
-  assert.deepEqual({ devDone: k.devDone, done: k.done, inQa: k.inQa }, { devDone: 5, done: 2, inQa: 3 });
-  assert.deepEqual({ ...k.sp }, { done: 6, devDone: 15, total: 20 });
+  assert.equal(k.done, 5);
+  assert.deepEqual({ ...k.sp }, { done: 15, total: 20 });
+  const epic = { key: 'E-1', summary: 'Epic one' };
+  const [r] = O.byEpic(list.map((i) => ({ ...i, epic })));
+  assert.deepEqual({ done: r.done, spDone: r.spDone }, { done: 5, spDone: 15 });
+});
+
+test('burndown and weekly load burn dev done work, dated by its last update while with QA', () => {
+  const sit = issue({ sprint, storyPoints: 5, status: { name: 'Ready for SIT', category: 'indeterminate' }, updated: at(-1), created: at(-30) });
+  const b = O.burndown([sit, issue({ sprint, storyPoints: 5 })], sprint, NOW);
+  assert.equal(b.points[b.today].actual, 5);
+  const [w] = O.weekly([sit], NOW, 1);
+  assert.equal(w.done, 1); // updated yesterday (NOW is a Wednesday): done this week
 });
 
 test('dev WIP counts only work being coded; a long test queue is flagged', () => {

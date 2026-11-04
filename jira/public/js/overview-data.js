@@ -17,8 +17,8 @@ const OverviewData = (() => {
   const isDone = (i) => i.status.category === 'done' && !isCancelled(i);
   const isClosed = (i) => i.status.category === 'done';
   const doneAt = (i) => new Date(i.resolved || i.updated);
-  // workflow.js stageOf: todo / dev / qa (dev done, QA not) / done (QA done). Work a closed sprint carried over is
-  // read as still being coded: its status then is not known.
+  // workflow.js stageOf: todo / dev / qa (dev done, QA not) / done (QA done). The sprint numbers count dev done as
+  // done. Work a closed sprint carried over is read as still being coded: its status then is not known.
   const stage = (i) => (i.carriedOver ? 'dev' : stageOf(i.status));
   const isDevDoneI = (i) => stage(i) === 'qa' || stage(i) === 'done';
   const dueIn = (i, now) => (i.due ? daysBetween(now, new Date(i.due + 'T00:00:00')) : null);
@@ -69,10 +69,8 @@ const OverviewData = (() => {
     return {
       total: list.length,
       open: open.length,
-      done: done.length,
-      devDone: devDone.length,
-      inQa: list.filter((i) => stage(i) === 'qa').length,
-      sp: { done: sumSP(done), devDone: sumSP(devDone), total: sumSP(list) },
+      done: devDone.length, // dev done
+      sp: { done: sumSP(devDone), total: sumSP(list) },
       overdue: due.filter((i) => dueIn(i, now) < 0).length,
       dueSoon: due.filter((i) => dueIn(i, now) >= 0 && dueIn(i, now) <= 3).length,
       doneWeek: done.filter((i) => daysBetween(doneAt(i), now) <= 6).length,
@@ -83,11 +81,10 @@ const OverviewData = (() => {
     const rows = new Map();
     for (const i of list) {
       if (!i.epic) continue;
-      const r = rows.get(i.epic.key) || { key: i.epic.key, name: i.epic.summary, total: 0, done: 0, devDone: 0, spTotal: 0, spDone: 0 };
+      const r = rows.get(i.epic.key) || { key: i.epic.key, name: i.epic.summary, total: 0, done: 0, spTotal: 0, spDone: 0 };
       r.total++;
       r.spTotal += sp(i);
-      if (isDevDoneI(i)) r.devDone++;
-      if (isClosed(i)) (r.done++, (r.spDone += sp(i)));
+      if (isDevDoneI(i)) (r.done++, (r.spDone += sp(i))); // dev done
       rows.set(i.epic.key, r);
     }
     return [...rows.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
@@ -102,7 +99,7 @@ const OverviewData = (() => {
     const useSP = sumSP(all) > 0;
     const weight = (i) => (useSP ? sp(i) : 1);
     const total = all.reduce((sum, i) => sum + weight(i), 0);
-    const done = all.filter(isClosed);
+    const done = all.filter(isDevDoneI); // dev done, as the numbers above it
     const burnedBy = (day) => done.filter((i) => daysBetween(startOf(doneAt(i)), day) >= 0).reduce((sum, i) => sum + weight(i), 0);
     // Same total as the numbers above it; work already done when the sprint began (carried in with its parent) is
     // burned from day 0, so the ideal line starts from what was left then.
@@ -117,7 +114,7 @@ const OverviewData = (() => {
   }
 
   // How far the sprint (or the whole scope) is: work split by stage, in SP when anything is estimated.
-  // done = QA done; qa = dev done, with QA; prog = being coded; todo = not started. Dev done = done + qa.
+  // done = dev done (with QA or QA done); prog = being coded; todo = not started.
   function progress(list, sprint, now) {
     const useSP = sumSP(list) > 0;
     const weight = (i) => (useSP ? sp(i) : 1);
@@ -125,8 +122,7 @@ const OverviewData = (() => {
     const end = sprint?.endDate ? startOf(new Date(sprint.endDate)) : null;
     return {
       unit: useSP ? 'SP' : 'tasks',
-      done: sum('done'),
-      qa: sum('qa'),
+      done: sum('done') + sum('qa'),
       prog: sum('dev'),
       todo: sum('todo'),
       total: list.reduce((n, i) => n + weight(i), 0),
@@ -238,8 +234,9 @@ const OverviewData = (() => {
     for (let k = 1; k < weeks; k++) starts.unshift((start = addDays(start, -7)));
     return starts.map((s) => {
       const e = P.next(s);
-      const assigned = tasks.filter((i) => new Date(i.created) < e && !(isClosed(i) && doneAt(i) < s));
-      const done = assigned.filter((i) => isClosed(i) && doneAt(i) < e);
+      // Done = dev done, dated by doneAt: resolved, or last updated while with QA (Jira keeps no date for Ready for SIT).
+      const assigned = tasks.filter((i) => new Date(i.created) < e && !(isDevDoneI(i) && doneAt(i) < s));
+      const done = assigned.filter((i) => isDevDoneI(i) && doneAt(i) < e);
       return {
         start: isoDay(s),
         end: isoDay(addDays(e, -1)),

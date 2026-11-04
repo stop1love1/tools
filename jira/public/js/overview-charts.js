@@ -19,8 +19,7 @@ function emptyChart(text = 'Nothing to show') {
   return h('div', { class: 'ov-empty muted small' }, text);
 }
 
-// Top strip: sprint name and dates, days left, one bar split into QA done / with QA / being coded / to do, and the
-// verdict. Dev done = QA done + with QA.
+// Top strip: sprint name and dates, days left, one bar split into done (dev done) / in progress / to do, and the verdict.
 function sprintCard(sprint, p, status, taskCount) {
   const pct = (n) => (p.total ? (n / p.total) * 100 : 0);
   const dates = sprint?.startDate && sprint?.endDate ? `${fmtDay(sprint.startDate.slice(0, 10))} → ${fmtDay(sprint.endDate.slice(0, 10))} · ` : '';
@@ -37,23 +36,16 @@ function sprintCard(sprint, p, status, taskCount) {
     p.daysLeft != null && sprint?.state !== 'closed' && h('div', { class: 'ov-days-left' }, h('b', null, p.daysLeft), h('span', { class: 'muted small' }, p.daysLeft === 1 ? 'day left' : 'days left')),
     h(
       'div',
-      {
-        class: 'ov-bar',
-        role: 'img',
-        'aria-label': `QA done ${Math.round(pct(p.done))}%, with QA ${Math.round(pct(p.qa))}%, in dev ${Math.round(pct(p.prog))}%, to do ${Math.round(pct(p.todo))}%`,
-      },
-      h('span', { style: `width:${pct(p.done)}%;background:var(--done-dot)`, title: 'QA done' }),
-      h('span', { style: `width:${pct(p.qa)}%;background:var(--review-dot)`, title: 'Dev done, with QA' }),
-      h('span', { style: `width:${pct(p.prog)}%;background:var(--prog-dot)`, title: 'In dev' }),
+      { class: 'ov-bar', role: 'img', 'aria-label': `Done ${Math.round(pct(p.done))}%, in progress ${Math.round(pct(p.prog))}%, to do ${Math.round(pct(p.todo))}%` },
+      h('span', { style: `width:${pct(p.done)}%;background:var(--done-dot)` }),
+      h('span', { style: `width:${pct(p.prog)}%;background:var(--prog-dot)` }),
     ),
     h(
       'div',
       { class: 'ov-legend' },
-      legend('done', 'QA done', p.done),
-      legend('review', 'With QA', p.qa),
-      legend('prog', 'In dev', p.prog),
+      legend('done', 'Done', p.done),
+      legend('prog', 'In progress', p.prog),
       legend('new', 'To do', p.todo),
-      h('span', { class: 'muted', title: 'QA done + with QA' }, `Dev done ${fmtNum(p.done + p.qa)} ${p.unit} · ${Math.round(pct(p.done + p.qa))}%`),
       status && h('span', { class: 'ov-pace' }, h('b', { class: status.tone, title: p.unestimated ? 'Open tasks without story points do not move the SP bar or the burndown' : null }, status.text)),
     ),
   );
@@ -197,7 +189,7 @@ function epicsCard(rows, { href, limit = 6 } = {}) {
           'li',
           null,
           h('a', { class: 'ov-epic-name', href: href(r), title: `${r.key} ${r.name}` }, r.name),
-          h('b', { title: `QA done ${r.done}/${r.total} · dev done ${r.devDone}/${r.total}${r.spTotal ? ` · ${r.spDone}/${r.spTotal} SP QA done` : ''}` }, `${r.done} / ${r.total}`),
+          h('b', { title: r.spTotal ? `${r.spDone}/${r.spTotal} SP` : 'No story points' }, `${r.done} / ${r.total}`),
           h('span', { class: 'ov-track' }, h('span', { style: `width:${pct(r.done, r.total)}%` })),
         ),
       ),
