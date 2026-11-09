@@ -117,6 +117,7 @@ function applyClientConfig(c) {
   CFG.agent = c.agent || { model: '', mcp: true };
   Object.assign(CFG.jira, c.jira);
   Object.assign(CFG.git, c.git);
+  if (c.daily) CFG.daily = { ...CFG.daily, ...c.daily };
   if (c.workflow && typeof setWorkflow === 'function') setWorkflow(c.workflow);
 }
 

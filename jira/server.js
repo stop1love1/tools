@@ -21,6 +21,8 @@ const mcp = require('./lib/mcp');
 const issues = require('./lib/issues');
 const attachments = require('./lib/attachments');
 const notifications = require('./lib/notifications');
+const dailyReport = require('./lib/daily-report');
+const dailyNotifier = require('./lib/daily-notifier');
 const { listUsers } = require('./lib/users');
 
 // Values of the user filter that are not an accountId: every assignee / tasks nobody is assigned to.
@@ -118,6 +120,18 @@ async function api(req, res, url) {
     if (url.searchParams.has('fresh')) notifications.invalidate();
     return send(res, 200, await notifications.listNotifications());
   }
+
+  // Daily report text for the team chat (lib/daily-report.js).
+  // ?user=<accountId> (the header's user filter): that person's report. One person only: All / Unassigned have none.
+  if (route === 'GET /api/daily-report') {
+    const user = url.searchParams.get('user') || '';
+    if (user === ALL_USERS || user === UNASSIGNED) return send(res, 400, { error: 'Pick one person in the user filter to build their daily report.' });
+    return send(res, 200, await dailyReport.buildDailyReport(new Date(), await forUserMapper()));
+  }
+  // The desktop app shows the reminder itself while it polls this (lib/daily-notifier.js).
+  if (route === 'POST /api/daily-report/poll') return send(res, 200, dailyNotifier.poll());
+  // Settings → Daily report "Send a test notification".
+  if (route === 'POST /api/daily-report/test') return send(res, 200, { shownBy: await dailyNotifier.test() });
 
   // Viewing someone else: the same JQL with currentUser() swapped for their account id.
   async function forUserMapper() {
@@ -256,6 +270,7 @@ server.listen(PORT, HOST, () => {
   getToken();
   console.log(`MCP write tools need "Authorization: Bearer <token>" — token file: ${tokenFile}`);
   mcp.warmUp();
+  dailyNotifier.start({ port: PORT, buildReport: () => dailyReport.buildDailyReport() });
   if (DEV) startLiveReloadServer();
 });
 

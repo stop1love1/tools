@@ -7,6 +7,10 @@ contextBridge.exposeInMainWorld('electron', {
     get: () => ipcRenderer.invoke('autostart:get'),
     set: (on) => ipcRenderer.invoke('autostart:set', on),
   },
+  // Daily report reminder (electron-main.js dailyTick): the main process schedules it and asks the page to open it.
+  daily: {
+    onOpen: (cb) => ipcRenderer.on('daily-report:open', () => cb()),
+  },
 });
 
 // Linux: the window buttons sit over the right end of the top bar (titleBarOverlay in electron-main.js).

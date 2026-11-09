@@ -116,6 +116,7 @@ function buildSettings(data) {
         inputs.set(f.key, { ...field, row, reset, err });
         return row;
       }),
+      sec.section === 'Daily report' && window.dailySettingsExtra?.(),
     ),
   );
 
@@ -157,6 +158,24 @@ function fieldInput(f, value, onChange) {
     const set = (v) => ((box.checked = !!v), sync());
     set(value);
     return { el: h('label', { class: 'set-switch' }, box, text), set, read: () => box.checked };
+  }
+  if (f.type === 'time') {
+    const input = h('input', { class: 'gin mono set-time', type: 'time', step: '60', onInput: onChange, onChange });
+    const set = (v) => (input.value = v);
+    set(value);
+    return { el: input, set, read: () => input.value };
+  }
+  if (f.type === 'weekdays') {
+    // Monday first, as the week is shown here; stored as Date#getDay numbers (0 = Sunday).
+    const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
+    const boxes = DAYS.map(([d, label]) => {
+      const box = h('input', { type: 'checkbox', value: String(d), 'aria-label': label });
+      box.addEventListener('change', onChange);
+      return [d, box, h('label', { class: 'set-day' }, box, label)];
+    });
+    const set = (v) => boxes.forEach(([d, box]) => (box.checked = v.includes(d)));
+    set(value);
+    return { el: h('div', { class: 'set-days' }, boxes.map(([, , l]) => l)), set, read: () => boxes.filter(([, box]) => box.checked).map(([d]) => d).sort((a, b) => a - b) };
   }
   if (f.type === 'presets') return listInput(value, onChange, [['label', 'Label', 'set-col-s'], ['jql', 'JQL', 'mono']], { label: '', jql: '' }, 'Add filter');
   if (f.type === 'repos') return listInput(value, onChange, [['id', 'id', 'mono set-col-xs'], ['label', 'Label', 'set-col-s'], ['dir', 'Folder', 'mono']], { id: '', label: '', dir: '' }, 'Add repo');

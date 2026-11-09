@@ -350,6 +350,7 @@ async function init() {
   $('#login').title = 'Sign in to Atlassian once to give the dashboard its own session, independent of Claude Code tokens';
   $('#settings-btn').append(h('span', { class: 'theme-icon' }, icon('gear')), h('span', { class: 'theme-label' }, 'Settings'));
   setupAutoStartOption();
+  setupDailyReport();
   if (window.PAGE === 'settings') $('#settings-btn').setAttribute('aria-current', 'page');
   else {
     $('#settings-btn').addEventListener('click', (e) => {

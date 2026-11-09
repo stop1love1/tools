@@ -78,6 +78,15 @@ function defaults() {
       extraInstructions: [],
     },
     workflow: JSON.parse(JSON.stringify(WORKFLOW_DEFAULTS)),
+    // Daily report reminder (lib/daily-report.js builds the text; electron-main.js / daily-report.js notify).
+    daily: {
+      enabled: true,
+      time: '17:00',
+      days: [1, 2, 3, 4, 5], // Date#getDay(): 0 = Sunday … 6 = Saturday
+      issueTypes: ['Story', 'Bug'], // what QC tests; subtasks are always left out
+      testerField: 'customfield_16481', // "Tester" user picker: its people get "cc @name" in the report
+      teamsUrl: 'https://teams.live.com/v2/',
+    },
     server: {
       port: Number(env.PORT) || 4747,
       mcpUrl: env.MCP_SERVER_URL || 'https://mcp.atlassian.com/v1/mcp',
@@ -87,7 +96,8 @@ function defaults() {
   };
 }
 
-// What the Settings page shows and what a save may change. Types: text, url, number, bool, path, lines, presets, repos.
+// What the Settings page shows and what a save may change. Types: text, url, number, bool, path, lines, presets, repos,
+// time ('HH:MM'), weekdays (Date#getDay numbers).
 const SCHEMA = [
   { section: 'Jira', fields: [
     { key: 'jira.siteUrl', label: 'Jira site URL', type: 'url', restart: true },
@@ -125,6 +135,14 @@ const SCHEMA = [
   ] },
   { section: 'Start with Claude', fields: [
     { key: 'agent.extraInstructions', label: 'Extra instructions in every prompt', type: 'lines', optional: true, help: 'Team conventions, commands to run before committing…' },
+  ] },
+  { section: 'Daily report', fields: [
+    { key: 'daily.enabled', label: 'Remind me to send the daily report', type: 'bool', help: 'A desktop notification at the time below opens the report, filled in from Jira, ready to copy into Teams.' },
+    { key: 'daily.time', label: 'Reminder time', type: 'time' },
+    { key: 'daily.days', label: 'Remind on', type: 'weekdays', help: 'The days of the week the reminder shows.' },
+    { key: 'daily.issueTypes', label: 'Ticket types in the report', type: 'lines', help: 'The ones QC tests, one per line as Jira names them. Subtasks are always left out: their story stands for them.' },
+    { key: 'daily.testerField', label: 'Tester field', type: 'text', mono: true, optional: true, pattern: '^customfield_\\d+$', help: 'The Jira field of the QC assigned to a ticket: each line gets "cc @<tester>". Empty = no cc.' },
+    { key: 'daily.teamsUrl', label: 'Teams link', type: 'url', help: 'Opened by "Copy & open Teams".' },
   ] },
   { section: 'Workflow (test flow)', fields: [
     { key: 'workflow.testQueue', label: 'Waiting for test', type: 'lines', mono: true, statuses: true, optional: true, help: 'Dev done, waiting for a tester: the status testers filter by (e.g. Ready for SIT). A task in any of these three lists counts as dev done. One status per line, as Jira names it (any case), or a /regex/.' },
@@ -194,6 +212,12 @@ function validate(f, v) {
       if (!Array.isArray(v) || !v.length || v.length > 50 || !v.every((x) => str(x) && x.trim())) return 'needs 1–50 non-empty lines';
       if (re && !v.every((x) => re.test(x))) return `each line must match ${f.pattern}`;
       return (f.statuses && v.map(workflowLineError).find(Boolean)) || '';
+    case 'time':
+      return typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? '' : 'must be a time like 17:00';
+    case 'weekdays':
+      return Array.isArray(v) && v.length >= 1 && v.every((d) => Number.isInteger(d) && d >= 0 && d <= 6) && new Set(v).size === v.length
+        ? ''
+        : 'needs at least one day (turn the reminder off instead)';
     case 'presets':
       return Array.isArray(v) && v.length <= 8 && v.every((p) => p && str(p.label) && p.label.trim() && str(p.jql) && p.jql.trim()) ? '' : 'up to 8 filters, each with a label and a JQL';
     case 'repos': {
@@ -259,9 +283,10 @@ function view() {
 
 // The subset the browser uses at runtime (no local paths).
 function client() {
-  const { jira, git, mcp, workflow } = get();
+  const { jira, git, mcp, workflow, daily } = get();
   return {
     workflow,
+    daily,
     agent: { mcp: mcp.enabled, writes: mcp.allowWrites },
     jira: { defaultJql: jira.defaultJql, presets: jira.presets, autoRefreshMinutes: jira.autoRefreshMinutes },
     git: {

@@ -7,7 +7,7 @@
 // the launcher's icon. Launching `electron electron-main.js` (a bare file) skips package.json and names the
 // app "Electron", so we set it explicitly here as well.
 
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, utilityProcess } = require('electron');
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeTheme, shell, utilityProcess } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -58,7 +58,7 @@ function showWindow() {
   mainWindow.focus();
 }
 
-function createWindow() {
+function createWindow(hash = '') {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -72,7 +72,12 @@ function createWindow() {
     },
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
-  mainWindow.loadURL(BASE_URL + readLastPage());
+  mainWindow.loadURL(BASE_URL + readLastPage() + hash);
+  // target=_blank links and window.open (e.g. "Copy & open Teams") go to the system browser, not a bare Electron window.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
 
   // The pages keep their filters in the query string (history.replaceState), so remember the last page + query
   // and reopen it on the next start, the way a browser tab would.
@@ -184,11 +189,68 @@ function updateTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Open Jira Dashboard', click: () => showWindow() },
+      { label: 'Daily report', click: () => openDailyReport() },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() },
     ]),
   );
   tray.on('click', () => showWindow());
+}
+
+// ---------------------------------------------------------------------------
+// Daily report reminder: the server schedules it (lib/daily-notifier.js), for the browser as well. While this app
+// polls the server it shows the reminder itself, as a native notification that opens the report dialog
+// (public/js/daily-report.js) in this window, instead of the server's notify-send one that opens a browser.
+
+const DAILY_POLL_MS = 15_000;
+let dailyNotification = null; // held so it is not garbage-collected before it is clicked
+
+function request(method, p, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(BASE_URL + p, { method, headers: { 'X-Dashboard': '1' } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          res.statusCode === 200 ? resolve(data) : reject(new Error(data.error || `HTTP ${res.statusCode}`));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
+    req.end();
+  });
+}
+
+async function dailyPoll() {
+  let due;
+  try {
+    due = await request('POST', '/api/daily-report/poll');
+  } catch {
+    return; // server busy, restarting or older than this app: try again next poll
+  }
+  if (!due.due) return;
+  let body = 'Click to open the report, filled in from Jira, then paste it into Teams.';
+  try {
+    const report = await request('GET', '/api/daily-report', 30_000);
+    body = `${report.handedOver.length} handed over · ${report.pending.length} in progress — click to copy it for Teams.`;
+  } catch {
+    // Jira slow or signed out: the dialog shows the error and a retry.
+  }
+  if (!Notification.isSupported()) return openDailyReport();
+  dailyNotification = new Notification({ title: due.title || 'Daily report', body, icon: ICON, urgency: 'critical' });
+  dailyNotification.on('click', () => openDailyReport());
+  dailyNotification.show();
+}
+
+function openDailyReport() {
+  if (!mainWindow) return createWindow('#daily-report');
+  showWindow();
+  mainWindow.webContents.send('daily-report:open');
 }
 
 function ping() {
@@ -217,6 +279,7 @@ function serverEnv() {
     env.DASHBOARD_CONFIG_FILE ??= path.join(data, 'config.json');
     env.DASHBOARD_OAUTH_FILE ??= path.join(data, '.oauth.json');
     env.DASHBOARD_MCP_TOKEN_FILE ??= path.join(data, '.mcp-token');
+    env.DASHBOARD_DAILY_STATE_FILE ??= path.join(data, '.daily-report-state.json');
   }
   return env;
 }
@@ -260,6 +323,8 @@ async function init() {
     await startServer();
     updateTray();
     if (!START_HIDDEN) createWindow();
+    dailyPoll();
+    setInterval(dailyPoll, DAILY_POLL_MS);
   } catch (err) {
     console.error('Failed to initialize:', err);
     dialog.showErrorBox('Jira Dashboard', err.message);
