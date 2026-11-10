@@ -72,8 +72,8 @@ async function openDailyReport({ mine = false } = {}) {
   const info = h('div', { class: 'muted small daily-info', role: 'status' });
   const headingIn = h('input', { class: 'gin daily-heading', 'aria-label': 'Report heading', spellcheck: 'false' });
   const sections = [
-    { id: 'handed', label: 'Đã bàn giao', hint: 'status you moved today to a tester, or done' },
-    { id: 'pending', label: 'Đã làm nhưng chưa bàn giao', hint: 'in progress, in review, waiting for SIT' },
+    { id: 'handed', label: 'Đã bàn giao', hint: 'moved today to Ready for SIT / UAT or later, or done' },
+    { id: 'pending', label: 'Đã làm nhưng chưa bàn giao', hint: 'in progress, selftest, in review' },
   ].map((sec) => ({ ...sec, list: h('div', { class: 'daily-list' }), count: h('span', { class: 'muted small' }) }));
   let site = '';
 
@@ -92,12 +92,142 @@ async function openDailyReport({ mine = false } = {}) {
     info.textContent = `${total} ticket${total === 1 ? '' : 's'} will be copied. Ticket keys paste into Teams as links to Jira, each ticket as a list item.`;
   };
 
-  function row(line, { checked = true, key = '' } = {}) {
+  // Drag and drop: a row is dragged by its grip, within its section or into the other one. The grip also moves it
+  // with the keyboard (↑ / ↓, across sections at the edges).
+  let dragged = null;
+  const sectionOfRow = (el) => sections.find((s) => s.list === el.parentElement);
+  // A ticket line moved to another section takes that section's format, unless it was edited by hand.
+  const moved = (el, from) => {
+    const to = sectionOfRow(el);
+    const input = el.querySelector('.daily-line');
+    if (to && from && to !== from && el._lines && input.value === el._lines[from.id]) input.value = el._lines[to.id];
+    refresh();
+  };
+  const rowAfter = (list, y) =>
+    rowsOf({ list }).find((r) => r !== dragged && y < r.getBoundingClientRect().top + r.offsetHeight / 2) || null;
+  function dropTarget(sec, el) {
+    el.addEventListener('dragover', (e) => {
+      if (!dragged) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const next = rowAfter(sec.list, e.clientY);
+      if (dragged.nextSibling !== next || dragged.parentElement !== sec.list) sec.list.insertBefore(dragged, next);
+    });
+    el.addEventListener('drop', (e) => dragged && e.preventDefault());
+  }
+
+  // "+ Add line" suggestions: my stories / bugs from the server (candidates), minus those already in the dialog.
+  // Typing filters them by key or title; picking one fills the line in the section's format.
+  let candidates = [];
+  const suggest = { menu: null, items: [], active: 0, input: null };
+  const closeSuggest = () => {
+    suggest.menu?.remove();
+    Object.assign(suggest, { menu: null, items: [], active: 0, input: null });
+  };
+  function openSuggest(el, input) {
+    const listed = new Set(sections.flatMap(rowsOf).map((r) => r._key).filter(Boolean));
+    const words = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const items = candidates
+      .filter((t) => !listed.has(t.key))
+      .filter((t) => words.every((w) => `${t.key} ${t.summary} ${t.status}`.toLowerCase().includes(w)))
+      .slice(0, 8);
+    if (!items.length) return closeSuggest();
+    if (suggest.input !== input) closeSuggest();
+    suggest.menu ??= h('div', { class: 'daily-suggest', role: 'listbox', 'aria-label': 'Your stories and bugs' });
+    Object.assign(suggest, { items, input, active: Math.min(suggest.active, items.length - 1) });
+    const pick = (t) => {
+      const sec = sectionOfRow(el);
+      el._setTicket(t, sec?.id || 'pending');
+      closeSuggest();
+      refresh();
+    };
+    suggest.menu.replaceChildren(
+      ...items.map((t, i) =>
+        h(
+          'div',
+          { class: `daily-suggest-item${i === suggest.active ? ' active' : ''}`, role: 'option', 'aria-selected': String(i === suggest.active), onMousedown: (e) => (e.preventDefault(), pick(t)) },
+          h('b', null, t.key),
+          h('span', { class: 'daily-suggest-title' }, t.summary),
+          h('span', { class: 'muted small' }, t.status),
+        ),
+      ),
+    );
+    suggest.pick = () => pick(items[suggest.active]);
+    // Fixed to the viewport: the dialog body scrolls and would clip it.
+    const r = input.getBoundingClientRect();
+    const below = innerHeight - r.bottom > 260 || r.top < 260;
+    Object.assign(suggest.menu.style, { left: `${r.left}px`, width: `${r.width}px`, top: below ? `${r.bottom + 4}px` : '', bottom: below ? '' : `${innerHeight - r.top + 4}px` });
+    if (!suggest.menu.isConnected) modal.append(suggest.menu);
+  }
+
+  function row(line, { checked = true, key = '', lines = null } = {}) {
     const box = h('input', { type: 'checkbox', 'aria-label': `Include ${key || 'this line'}` });
     box.checked = checked;
-    const input = h('input', { class: 'gin daily-line', value: line, spellcheck: 'false', 'aria-label': key ? `${key} line` : 'Line' });
+    const input = h('input', { class: 'gin daily-line', value: line, spellcheck: 'false', autocomplete: 'off', 'aria-label': key ? `${key} line` : 'Line' });
     const del = h('button', { class: 'icon-btn sm', title: 'Remove this line', 'aria-label': 'Remove this line', onClick: () => (el.remove(), refresh()) }, icon('trash'));
-    const el = h('div', { class: 'daily-item' }, box, input, key && h('a', { class: 'icon-btn sm', href: `${site}/browse/${key}`, target: '_blank', rel: 'noopener', title: `Open ${key} in Jira`, 'aria-label': `Open ${key} in Jira` }, icon('ext')), del);
+    const grip = h('button', { class: 'icon-btn sm daily-grip', title: 'Drag to move (or ↑ / ↓)', 'aria-label': `Move ${key || 'this line'}` }, icon('grip'));
+    const link = h('a', { class: 'icon-btn sm', target: '_blank', rel: 'noopener' }, icon('ext'));
+    const el = h('div', { class: 'daily-item' }, grip, box, input, link, del);
+    const setKey = (k) => {
+      el._key = k;
+      link.hidden = !k;
+      if (k) Object.assign(link, { href: `${site}/browse/${k}`, title: `Open ${k} in Jira` }), link.setAttribute('aria-label', `Open ${k} in Jira`);
+    };
+    setKey(key);
+    el._lines = lines;
+    el._setTicket = (t, sectionId) => {
+      setKey(t.key);
+      el._lines = t.lines;
+      input.value = t.lines?.[sectionId] || t.line;
+      box.checked = true;
+    };
+    // A line typed by hand (no ticket yet) suggests my stories / bugs as you type.
+    input.addEventListener('focus', () => !el._key && openSuggest(el, input));
+    input.addEventListener('input', () => (el._key ? null : openSuggest(el, input)));
+    input.addEventListener('blur', () => suggest.input === input && closeSuggest());
+    input.addEventListener('keydown', (e) => {
+      if (suggest.input !== input) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        suggest.active = (suggest.active + (e.key === 'ArrowDown' ? 1 : -1) + suggest.items.length) % suggest.items.length;
+        openSuggest(el, input);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (e.key === 'Enter' || input.value.trim()) e.preventDefault(), suggest.pick();
+      }
+    });
+    // Only the grip starts a drag, so text in the line can still be selected with the mouse.
+    let from = null;
+    grip.addEventListener('pointerdown', () => (el.draggable = true));
+    el.addEventListener('dragstart', (e) => {
+      if (!el.draggable) return e.preventDefault();
+      dragged = el;
+      from = sectionOfRow(el);
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', input.value);
+      requestAnimationFrame(() => el.classList.add('dragging'));
+    });
+    el.addEventListener('dragend', () => {
+      el.draggable = false;
+      el.classList.remove('dragging');
+      dragged = null;
+      moved(el, from);
+    });
+    grip.addEventListener('pointerup', () => (el.draggable = false));
+    grip.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const src = sectionOfRow(el);
+      const up = e.key === 'ArrowUp';
+      const sib = up ? el.previousElementSibling : el.nextElementSibling;
+      if (sib) up ? sib.before(el) : sib.after(el);
+      else {
+        const other = sections[sections.indexOf(src) + (up ? -1 : 1)];
+        if (!other) return;
+        up ? other.list.append(el) : other.list.prepend(el);
+      }
+      moved(el, src);
+      grip.focus();
+    });
     box.addEventListener('change', refresh);
     input.addEventListener('input', refresh);
     // Typing in a line ticks it: an edited line is one you want to send.
@@ -108,13 +238,16 @@ async function openDailyReport({ mine = false } = {}) {
   }
 
   const close = () => {
+    closeSuggest();
     modal.remove();
     document.removeEventListener('keydown', onKey, true);
   };
   const onKey = (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();
-      close();
+      // Esc closes the suggestions first, then the dialog.
+      if (suggest.menu) closeSuggest();
+      else close();
     }
   };
   const copy = () => copyDailyReport(reportText(), site);
@@ -136,8 +269,8 @@ async function openDailyReport({ mine = false } = {}) {
     'div',
     { class: 'daily-body' },
     headingIn,
-    sections.map((sec) =>
-      h(
+    sections.map((sec) => {
+      const el = h(
         'section',
         { class: 'daily-section' },
         h('div', { class: 'daily-section-head' }, h('b', null, `- ${sec.label}`), h('span', { class: 'muted small' }, sec.hint), h('span', { class: 'spacer' }), sec.count),
@@ -148,9 +281,14 @@ async function openDailyReport({ mine = false } = {}) {
           r.querySelector('.daily-line').focus();
           refresh();
         } }, '+ Add line'),
-      ),
-    ),
+      );
+      // The whole section takes a drop, so an empty section can still receive a row.
+      dropTarget(sec, el);
+      return el;
+    }),
   );
+  // The suggestions are fixed to the viewport: scrolling the body would leave them behind.
+  body.addEventListener('scroll', closeSuggest);
 
   async function load() {
     copyBtn.disabled = teamsBtn.disabled = regen.disabled = true;
@@ -159,9 +297,10 @@ async function openDailyReport({ mine = false } = {}) {
     try {
       const r = await api(`/api/daily-report${user ? `?user=${encodeURIComponent(user)}` : ''}`);
       site = r.site || '';
+      candidates = r.candidates || [];
       headingIn.value = r.heading || '';
-      sections[0].list.replaceChildren(...r.handedOver.map((t) => row(t.line, { key: t.key })));
-      sections[1].list.replaceChildren(...r.pending.map((t) => row(t.line, { key: t.key })));
+      sections[0].list.replaceChildren(...r.handedOver.map((t) => row(t.line, { key: t.key, lines: t.lines })));
+      sections[1].list.replaceChildren(...r.pending.map((t) => row(t.line, { key: t.key, lines: t.lines })));
       copyBtn.disabled = teamsBtn.disabled = false;
       refresh();
     } catch (e) {

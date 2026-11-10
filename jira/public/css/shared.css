@@ -218,6 +218,54 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+.daily-item .daily-grip {
+  flex: 0 0 auto;
+  cursor: grab;
+  color: var(--muted);
+  touch-action: none;
+}
+.daily-item .daily-grip:active {
+  cursor: grabbing;
+}
+.daily-item.dragging {
+  opacity: 0.4;
+}
+.daily-list {
+  min-height: 4px;
+}
+.daily-item a[hidden] {
+  display: none;
+}
+.daily-suggest {
+  position: fixed;
+  z-index: 1001;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.daily-suggest-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.daily-suggest-item:hover,
+.daily-suggest-item.active {
+  background: var(--surface-2);
+}
+.daily-suggest-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .daily-item.off .daily-line {
   color: var(--muted);
   text-decoration: line-through;

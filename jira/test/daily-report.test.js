@@ -80,13 +80,14 @@ test('build: sorts tasks into handed over / pending by the workflow settings', a
         issue('VLEARN-10', st('Ready for UAT')), // a tester has it → handed over
         issue('VLEARN-11', st('Test SIT Done', 'new')), // tested → handed over
         issue('VLEARN-12', st('Done', 'done')), // done → handed over
-        issue('VLEARN-13', st('Ready for SIT')), // waiting for a tester → not handed over
+        issue('VLEARN-13', st('Ready for SIT')), // waiting for a tester → handed over
         issue('VLEARN-14', st('In Progress')), // still coding
+        issue('VLEARN-20', st('In Review')), // code review → not handed over
       ];
     }
     return [
       issue('VLEARN-10', st('Ready for UAT')), // already counted as handed over
-      issue('VLEARN-13', st('Ready for SIT'), '2026-11-12'),
+      issue('VLEARN-13', st('Ready for SIT'), '2026-11-12'), // already counted as handed over
       issue('VLEARN-14', st('In Progress')),
       issue('VLEARN-15', st('In Review')),
       issue('VLEARN-16', st('In Testing')), // a tester has it, not changed today: in neither list
@@ -96,12 +97,11 @@ test('build: sorts tasks into handed over / pending by the workflow settings', a
     ];
   });
   const r = await buildDailyReport(MON);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3); // changed today, in progress, "+ Add line" suggestions
   assert.ok(calls.every((c) => /assignee = currentUser\(\)/.test(c.jql)));
   assert.ok(calls.every((c) => c.fields.includes('updated')));
-  assert.deepEqual(r.handedOver.map((t) => t.key), ['VLEARN-10', 'VLEARN-11', 'VLEARN-12']);
+  assert.deepEqual(r.handedOver.map((t) => t.key), ['VLEARN-10', 'VLEARN-11', 'VLEARN-12', 'VLEARN-13']);
   assert.deepEqual(r.pending.map((t) => [t.key, t.expected]), [
-    ['VLEARN-13', '2026-11-12'],
     ['VLEARN-14', '2026-11-10'],
     ['VLEARN-15', '2026-11-10'],
     ['VLEARN-19', '2026-11-10'],
@@ -110,8 +110,23 @@ test('build: sorts tasks into handed over / pending by the workflow settings', a
   assert.equal(r.site, 'https://vin3s.atlassian.net'); // the dialog links ticket keys to <site>/browse/<key>
   assert.match(
     r.text,
-    /^Ngày 09\/11\/2026\n- Đã bàn giao:\n\n• VLEARN-10: Summary VLEARN-10 \(Ready for UAT\)\n• VLEARN-11: Summary VLEARN-11 \(Test SIT Done\)\n• VLEARN-12: Summary VLEARN-12 \(Done\)\n\n- Đã làm nhưng chưa bàn giao:\n\n• VLEARN-13: Summary VLEARN-13 \(Ready for SIT - 12\/11\)\n/,
+    /^Ngày 09\/11\/2026\n- Đã bàn giao:\n\n• VLEARN-10: Summary VLEARN-10 \(Ready for UAT\)\n• VLEARN-11: Summary VLEARN-11 \(Test SIT Done\)\n• VLEARN-12: Summary VLEARN-12 \(Done\)\n• VLEARN-13: Summary VLEARN-13 \(Ready for SIT\)\n\n- Đã làm nhưng chưa bàn giao:\n\n• VLEARN-14: Summary VLEARN-14 \(In Progress - 10\/11\)\n/,
   );
+});
+
+test('build: "+ Add line" suggestions — my stories / bugs, each once, with the line for both sections', async () => {
+  const { buildDailyReport } = loadWith(async (jql) => {
+    if (/CHANGED BY currentUser/.test(jql)) return [issue('VLEARN-1', st('Ready for SIT'))];
+    if (/statusCategory = "In Progress"/.test(jql)) return [issue('VLEARN-2', st('In Progress'), '2026-11-12')];
+    return [
+      issue('VLEARN-2', st('In Progress'), '2026-11-12'), // already found: listed once
+      issue('VLEARN-3', st('To Do', 'new')),
+      issue('VLEARN-4', st('To Do', 'new'), null, TODAY, SUBTASK, { key: 'VLEARN-3' }), // subtask → left out
+    ];
+  });
+  const r = await buildDailyReport(MON);
+  assert.deepEqual(r.candidates.map((t) => t.key), ['VLEARN-1', 'VLEARN-2', 'VLEARN-3']);
+  assert.deepEqual(r.candidates[1].lines, { handed: 'VLEARN-2: Summary VLEARN-2 (In Progress)', pending: 'VLEARN-2: Summary VLEARN-2 (In Progress - 12/11)' });
 });
 
 test('format: "KEY: title (status - date) cc @tester", title trimmed, key alone when there is no title', () => {
@@ -147,19 +162,19 @@ test('build: only stories and bugs — subtasks and tasks left out; a story coun
       ];
     }
     return [
-      issue('VLEARN-5800', st('READY FOR SIT'), null, LAST_WEEK), // its subtask 5845 was done today → touched
+      issue('VLEARN-5800', st('READY FOR SIT'), null, LAST_WEEK), // handed over before, not moved today → left out
       issue('VLEARN-5799', st('In Review'), null, LAST_WEEK), // its subtask 5853 is in review today → touched
       issue('VLEARN-5853', st('In Review'), null, TODAY, SUBTASK, { key: 'VLEARN-5799' }),
       issue('VLEARN-5797', st('In Progress')),
       issue('VLEARN-5868', st('In Progress'), null, TODAY, SUBTASK, { key: 'VLEARN-5797' }),
-      issue('VLEARN-2386', st('READY FOR SIT'), null, TODAY, { name: 'Bug', subtask: false }),
+      issue('VLEARN-2386', st('In Review'), null, TODAY, { name: 'Bug', subtask: false }),
       issue('VLEARN-40', st('In Progress'), null, TODAY, { name: 'Task', subtask: false }), // task → left out
-      issue('VLEARN-41', st('READY FOR SIT'), null, LAST_WEEK), // no subtask touched today → left out
+      issue('VLEARN-41', st('In Review'), null, LAST_WEEK), // no subtask touched today → left out
     ];
   });
   const r = await buildDailyReport(MON);
   assert.deepEqual(r.handedOver.map((t) => t.key), ['VLEARN-4914', 'VLEARN-31']);
-  assert.deepEqual(r.pending.map((t) => t.key), ['VLEARN-5800', 'VLEARN-5799', 'VLEARN-5797', 'VLEARN-2386']);
+  assert.deepEqual(r.pending.map((t) => t.key), ['VLEARN-5799', 'VLEARN-5797', 'VLEARN-2386']);
 });
 
 test('build: ticket types come from Settings', async () => {
@@ -282,11 +297,11 @@ test('tester cc: the build asks Jira for the Tester field and fills it in', asyn
   assert.match(r.text, /VLEARN-5 \(In Progress - 10\/11\) cc @Nguyễn Thị Phượng$/);
 });
 
-test('user filter: both searches run for the person the header shows', async () => {
+test('user filter: every search runs for the person the header shows', async () => {
   const jqls = [];
   const { buildDailyReport } = loadWith(async (jql) => (jqls.push(jql), []));
   await buildDailyReport(MON, (jql) => jql.replace(/currentUser\(\)/g, '"acc-123"'));
-  assert.equal(jqls.length, 2);
+  assert.equal(jqls.length, 3);
   assert.ok(jqls.every((j) => !/currentUser\(\)/.test(j) && /assignee = "acc-123"/.test(j)));
   assert.match(jqls[0], /status CHANGED BY "acc-123" AFTER startOfDay\(\)/);
 });
