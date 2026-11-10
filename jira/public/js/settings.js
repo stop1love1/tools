@@ -80,7 +80,8 @@ function buildSettings(data) {
     }
   }
 
-  const sections = data.schema.map((sec) =>
+  // Sections marked `dialog` are edited where they are used (the daily report dialog's Settings tab).
+  const sections = data.schema.filter((sec) => !sec.dialog).map((sec) =>
     h(
       'section',
       { class: 'set-card' },
@@ -116,7 +117,6 @@ function buildSettings(data) {
         inputs.set(f.key, { ...field, row, reset, err });
         return row;
       }),
-      sec.section === 'Daily report' && window.dailySettingsExtra?.(),
     ),
   );
 
@@ -131,6 +131,13 @@ function buildSettings(data) {
     ),
     data.pendingRestart.length > 0 && h('div', { class: 'gconflict ghint' }, 'Restart the server (npm start) to apply: ', data.pendingRestart.map((k) => h('code', { class: 'gcode' }, k))),
     sections,
+    h(
+      'section',
+      { class: 'set-card' },
+      h('h3', null, 'Daily report'),
+      h('p', { class: 'muted small' }, 'The report template, its tickets and the reminder are set in the daily report itself, under its Settings tab.'),
+      h('p', null, h('button', { class: 'btn sm', onClick: () => openDailyReport({ tab: 'settings' }) }, icon('doc'), 'Open daily report settings')),
+    ),
     mcpConnectCard(data),
     h('div', { class: 'set-bar' }, status, saveBtn),
   );

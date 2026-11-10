@@ -2,7 +2,7 @@
 
 // Daily report reminder, run by the server so it works the same with the desktop app and with a browser:
 //
-// - At Settings → Daily report time (on the chosen days), once a day, also when the server starts late (up to
+// - At the reminder time (daily report dialog → Settings tab) (on the chosen days), once a day, also when the server starts late (up to
 //   LATE_MS after the time). The day it last fired is kept on disk, so a restart does not fire it again.
 // - The desktop app (electron-main.js) polls POST /api/daily-report/poll: while it does, it shows the reminder
 //   itself (a native notification that opens the app window).

@@ -7,7 +7,7 @@ const LATE_MS = 6 * 60 * 60 * 1000; // still fire when the app starts up to this
 
 const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-// cfg: Settings → Daily report ({ enabled, time: 'HH:MM', days: [Date#getDay numbers] }); last: dayKey of the day
+// cfg: the daily report dialog → Settings tab ({ enabled, time: 'HH:MM', days: [Date#getDay numbers] }); last: dayKey of the day
 // it last fired.
 function dailyDue(cfg, now, last) {
   const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(cfg?.time || '');

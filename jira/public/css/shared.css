@@ -182,8 +182,15 @@
   opacity: 0.55;
   pointer-events: none;
 }
-.daily-heading {
+.daily-text {
+  resize: none;
+  overflow: hidden;
+  font: inherit;
   font-weight: 600;
+  line-height: 1.45;
+}
+.daily-text[hidden] {
+  display: none;
 }
 .daily-section {
   display: flex;
@@ -203,20 +210,75 @@
 }
 .daily-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
+}
+.daily-item > .icon-btn {
+  margin-top: 2px;
 }
 .daily-item input[type='checkbox'] {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
-  margin: 0;
+  margin: 8px 0 0;
   accent-color: var(--accent);
   cursor: pointer;
 }
 .daily-item .daily-line {
   flex: 1 1 auto;
   min-width: 0;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.45;
+  font: inherit;
+}
+.daily-tabs {
+  display: inline-flex;
+  margin: 0 12px 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.daily-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.daily-tabs button + button {
+  border-left: 1px solid var(--border);
+}
+.daily-tabs button[aria-selected='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.daily-tabs svg {
+  width: 14px;
+  height: 14px;
+}
+.daily-content > [hidden] {
+  display: none;
+}
+.daily-settings {
+  gap: 4px;
+  padding-right: 4px;
+}
+.daily-set-section h3 {
+  margin: 10px 0 2px;
+  font-size: 14px;
+}
+.daily-set-section > p {
+  margin: 0 0 4px;
+}
+.daily-set-section h3 + .set-row,
+.daily-set-section > p + .set-row {
+  border-top: 0;
 }
 .daily-item .daily-grip {
   flex: 0 0 auto;
@@ -282,4 +344,114 @@
 .daily-who {
   font-weight: 400;
   font-size: 14px;
+}
+.daily-settings .set-input {
+  align-content: start;
+}
+
+/* Daily report template editor: a transparent textarea over a layer with the same text, highlighted. */
+.daily-tpl {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.daily-tpl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.daily-tpl-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--accent);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.daily-tpl-chip:hover {
+  border-color: var(--accent);
+}
+.daily-tpl-chip.block {
+  color: var(--text);
+  font-family: inherit;
+}
+.daily-tpl-edit {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.daily-tpl-edit:focus-within {
+  border-color: var(--accent);
+}
+.daily-tpl-marks,
+.daily-tpl-input {
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+.daily-tpl-marks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+.daily-tpl-input {
+  position: relative;
+  display: block;
+  width: 100%;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--text);
+  caret-color: var(--text);
+  outline: none;
+}
+.daily-tpl-var {
+  border-radius: 3px;
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.daily-tpl-unknown {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+.daily-tpl-block {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warn, #d29922) 22%, transparent);
+}
+.daily-tpl-help p {
+  margin: 4px 0;
+}
+.daily-tpl-help summary {
+  cursor: pointer;
+}
+.daily-tpl-preview {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.daily-tpl-preview.stale {
+  opacity: 0.45;
+}
+.daily-settings .set-row:has(.daily-tpl) {
+  grid-template-columns: 1fr;
 }

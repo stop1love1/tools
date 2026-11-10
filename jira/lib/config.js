@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { httpError, safeJson } = require('./util');
 const { WORKFLOW_DEFAULTS, workflowLineError, setWorkflow } = require('../public/js/workflow.js');
+const { DAILY_TEMPLATE_DEFAULT, dailyTemplateError } = require('../public/js/daily-template.js');
 
 const FILE = process.env.DASHBOARD_CONFIG_FILE || path.join(__dirname, '..', 'config.json');
 
@@ -86,6 +87,9 @@ function defaults() {
       issueTypes: ['Story', 'Bug'], // what QC tests; subtasks are always left out
       testerField: 'customfield_16481', // "Tester" user picker: its people get "cc @name" in the report
       teamsUrl: 'https://teams.live.com/v2/',
+      // The report's layout: one text with {placeholders} and {#handed} / {#pending} blocks (public/js/daily-template.js).
+      template: DAILY_TEMPLATE_DEFAULT,
+      expectedTime: '17:00', // what {expectedTime} shows: Jira due dates have no time
     },
     server: {
       port: Number(env.PORT) || 4747,
@@ -136,13 +140,20 @@ const SCHEMA = [
   { section: 'Start with Claude', fields: [
     { key: 'agent.extraInstructions', label: 'Extra instructions in every prompt', type: 'lines', optional: true, help: 'Team conventions, commands to run before committing…' },
   ] },
-  { section: 'Daily report', fields: [
+  // `dialog`: edited in the daily report dialog's Settings tab (public/js/daily-report.js), not on the Settings page.
+  { section: 'Daily report: template', dialog: 'daily', fields: [
+    { key: 'daily.template', label: 'Report template', type: 'template', help: 'The whole message as it is sent. Click a variable to insert it at the cursor.' },
+    { key: 'daily.expectedTime', label: 'Expected hand-over time', type: 'time', help: 'What {expectedTime} shows. Jira due dates have no time.' },
+  ] },
+  { section: 'Daily report: tickets', dialog: 'daily', fields: [
+    { key: 'daily.issueTypes', label: 'Ticket types in the report', type: 'lines', help: 'The ones QC tests, one per line as Jira names them. Subtasks are always left out: their story stands for them.' },
+    { key: 'daily.testerField', label: 'Tester field', type: 'text', mono: true, optional: true, pattern: '^customfield_\\d+$', help: 'The Jira field of the QC assigned to a ticket, for {testers}. Empty = no tester.' },
+    { key: 'daily.teamsUrl', label: 'Teams link', type: 'url', help: 'Opened by "Copy & open Teams".' },
+  ] },
+  { section: 'Daily report: reminder', dialog: 'daily', fields: [
     { key: 'daily.enabled', label: 'Remind me to send the daily report', type: 'bool', help: 'A desktop notification at the time below opens the report, filled in from Jira, ready to copy into Teams.' },
     { key: 'daily.time', label: 'Reminder time', type: 'time' },
     { key: 'daily.days', label: 'Remind on', type: 'weekdays', help: 'The days of the week the reminder shows.' },
-    { key: 'daily.issueTypes', label: 'Ticket types in the report', type: 'lines', help: 'The ones QC tests, one per line as Jira names them. Subtasks are always left out: their story stands for them.' },
-    { key: 'daily.testerField', label: 'Tester field', type: 'text', mono: true, optional: true, pattern: '^customfield_\\d+$', help: 'The Jira field of the QC assigned to a ticket: each line gets "cc @<tester>". Empty = no cc.' },
-    { key: 'daily.teamsUrl', label: 'Teams link', type: 'url', help: 'Opened by "Copy & open Teams".' },
   ] },
   { section: 'Workflow (test flow)', fields: [
     { key: 'workflow.testQueue', label: 'Waiting for test', type: 'lines', mono: true, statuses: true, optional: true, help: 'Dev done, waiting for a tester: the status testers filter by (e.g. Ready for SIT). A task in any of these three lists counts as dev done. One status per line, as Jira names it (any case), or a /regex/.' },
@@ -212,6 +223,9 @@ function validate(f, v) {
       if (!Array.isArray(v) || !v.length || v.length > 50 || !v.every((x) => str(x) && x.trim())) return 'needs 1–50 non-empty lines';
       if (re && !v.every((x) => re.test(x))) return `each line must match ${f.pattern}`;
       return (f.statuses && v.map(workflowLineError).find(Boolean)) || '';
+    case 'template':
+      if (typeof v !== 'string' || v.length > 5000) return 'must be a text of at most 5000 characters';
+      return dailyTemplateError(v) ? `is not valid: ${dailyTemplateError(v)}` : '';
     case 'time':
       return typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? '' : 'must be a time like 17:00';
     case 'weekdays':

@@ -33,6 +33,11 @@ const issue = (key, status, duedate = null, updated = TODAY, issuetype = { name:
 });
 const SUBTASK = { name: 'Subtask', subtask: true };
 
+// The default template (lib/config.js daily.template).
+const HEAD = '📢 BÁO CÁO CÔNG VIỆC HÀNG NGÀY - 09/11/2026';
+const HANDED = '✅ DANH SÁCH TICKET ĐÃ BÀN GIAO';
+const PENDING = '⏳ DANH SÁCH CHƯA BÀN GIAO (ĐANG TRIỂN KHAI)';
+
 // Monday 09/11/2026, 17:05 local time.
 const MON = new Date(2026, 10, 9, 17, 5);
 
@@ -49,14 +54,19 @@ test('format: nothing handed over, matches the message sent in Teams', () => {
   });
   assert.equal(
     text,
-    ['Ngày 09/11/2026', '- Đã bàn giao: 0', '- Đã làm nhưng chưa bàn giao:', '', '• VLEARN-5800 (Ready for SIT - 10/11)', '• VLEARN-5799 (In review - 10/11)', '• VLEARN-5797 (In progress - 10/11)'].join('\n'),
+    [
+      HEAD, HANDED, 'Không có', '', PENDING,
+      '• [VLEARN-5800]', '  Trạng thái: Ready for SIT', '  Dự kiến bàn giao: 17:00 - 10/11',
+      '• [VLEARN-5799]', '  Trạng thái: In review', '  Dự kiến bàn giao: 17:00 - 10/11',
+      '• [VLEARN-5797]', '  Trạng thái: In progress', '  Dự kiến bàn giao: 17:00 - 10/11',
+    ].join('\n'),
   );
 });
 
 test('format: handed-over list and an empty pending list', () => {
   const { formatReport } = loadWith(async () => []);
   const text = formatReport({ now: MON, handedOver: [{ key: 'VLEARN-1', status: 'Ready for UAT' }], pending: [] });
-  assert.equal(text, ['Ngày 09/11/2026', '- Đã bàn giao:', '', '• VLEARN-1 (Ready for UAT)', '', '- Đã làm nhưng chưa bàn giao: 0'].join('\n'));
+  assert.equal(text, [HEAD, HANDED, '• [VLEARN-1]', '', PENDING, 'Không có'].join('\n'));
 });
 
 test('expected date: due date when today or later, else the next working day', () => {
@@ -108,10 +118,22 @@ test('build: sorts tasks into handed over / pending by the workflow settings', a
   ]);
   assert.equal(r.date, '2026-11-09');
   assert.equal(r.site, 'https://vin3s.atlassian.net'); // the dialog links ticket keys to <site>/browse/<key>
-  assert.match(
+  assert.ok(
+    r.text.startsWith(
+      [
+        HEAD, HANDED,
+        '• [VLEARN-10] Summary VLEARN-10', '• [VLEARN-11] Summary VLEARN-11', '• [VLEARN-12] Summary VLEARN-12', '• [VLEARN-13] Summary VLEARN-13',
+        '', PENDING,
+        '• [VLEARN-14] Summary VLEARN-14', '  Trạng thái: In Progress', '  Dự kiến bàn giao: 17:00 - 10/11', '',
+      ].join('\n'),
+    ),
     r.text,
-    /^Ngày 09\/11\/2026\n- Đã bàn giao:\n\n• VLEARN-10: Summary VLEARN-10 \(Ready for UAT\)\n• VLEARN-11: Summary VLEARN-11 \(Test SIT Done\)\n• VLEARN-12: Summary VLEARN-12 \(Done\)\n• VLEARN-13: Summary VLEARN-13 \(Ready for SIT\)\n\n- Đã làm nhưng chưa bàn giao:\n\n• VLEARN-14: Summary VLEARN-14 \(In Progress - 10\/11\)\n/,
   );
+  // The dialog lays out the template's own text around its two lists.
+  assert.deepEqual(r.layout, {
+    texts: [`${HEAD}\n${HANDED}`, `\n${PENDING}`, null],
+    sections: [{ id: 'handed', empty: 'Không có' }, { id: 'pending', empty: 'Không có' }],
+  });
 });
 
 test('build: "+ Add line" suggestions — my stories / bugs, each once, with the line for both sections', async () => {
@@ -126,14 +148,17 @@ test('build: "+ Add line" suggestions — my stories / bugs, each once, with the
   });
   const r = await buildDailyReport(MON);
   assert.deepEqual(r.candidates.map((t) => t.key), ['VLEARN-1', 'VLEARN-2', 'VLEARN-3']);
-  assert.deepEqual(r.candidates[1].lines, { handed: 'VLEARN-2: Summary VLEARN-2 (In Progress)', pending: 'VLEARN-2: Summary VLEARN-2 (In Progress - 12/11)' });
+  assert.deepEqual(r.candidates[1].lines, { handed: '[VLEARN-2] Summary VLEARN-2', pending: '[VLEARN-2] Summary VLEARN-2\nTrạng thái: In Progress\nDự kiến bàn giao: 17:00 - 12/11' });
 });
 
-test('format: "KEY: title (status - date) cc @tester", title trimmed, key alone when there is no title', () => {
+test('format: the default template, title trimmed, key alone when there is no title, no arrow without a tester', () => {
   const { formatReport } = loadWith(async () => []);
   const text = formatReport({
     now: MON,
-    handedOver: [{ key: 'VLEARN-4914', summary: '  [Admin] Đưa entrypoint Xuất hồ sơ lớp học vào màn Xuất báo cáo ', status: 'Done', testers: [] }],
+    handedOver: [
+      { key: 'VLEARN-4914', summary: '  [Admin] Đưa entrypoint Xuất hồ sơ lớp học vào màn Xuất báo cáo ', status: 'Done', testers: [] },
+      { key: 'VLEARN-4915', summary: 'Xuất báo cáo', status: 'Ready for SIT', testers: ['Nguyễn Thị Phượng', 'Vũ Vui'] },
+    ],
     pending: [
       { key: 'VLEARN-5800', summary: '[BE] Hợp nhất user_rewards thành user_certificates', status: 'READY FOR SIT', expected: new Date(2026, 10, 10), testers: ['Nguyễn Thị Phượng'] },
       { key: 'VLEARN-9', summary: '', status: 'In Progress', expected: new Date(2026, 10, 10) },
@@ -142,11 +167,12 @@ test('format: "KEY: title (status - date) cc @tester", title trimmed, key alone 
   assert.equal(
     text,
     [
-      'Ngày 09/11/2026', '- Đã bàn giao:', '',
-      '• VLEARN-4914: [Admin] Đưa entrypoint Xuất hồ sơ lớp học vào màn Xuất báo cáo (Done)', '',
-      '- Đã làm nhưng chưa bàn giao:', '',
-      '• VLEARN-5800: [BE] Hợp nhất user_rewards thành user_certificates (READY FOR SIT - 10/11) cc @Nguyễn Thị Phượng',
-      '• VLEARN-9 (In Progress - 10/11)',
+      HEAD, HANDED,
+      '• [VLEARN-4914] [Admin] Đưa entrypoint Xuất hồ sơ lớp học vào màn Xuất báo cáo',
+      '• [VLEARN-4915] Xuất báo cáo ➡️ @Nguyễn Thị Phượng @Vũ Vui', '',
+      PENDING,
+      '• [VLEARN-5800] [BE] Hợp nhất user_rewards thành user_certificates', '  Trạng thái: READY FOR SIT', '  Dự kiến bàn giao: 17:00 - 10/11',
+      '• [VLEARN-9]', '  Trạng thái: In Progress', '  Dự kiến bàn giao: 17:00 - 10/11',
     ].join('\n'),
   );
 });
@@ -193,7 +219,7 @@ test('build: ticket types come from Settings', async () => {
 test('build: no tasks at all', async () => {
   const { buildDailyReport } = loadWith(async () => []);
   const r = await buildDailyReport(MON);
-  assert.equal(r.text, 'Ngày 09/11/2026\n- Đã bàn giao: 0\n- Đã làm nhưng chưa bàn giao: 0');
+  assert.equal(r.text, [HEAD, HANDED, 'Không có', '', PENDING, 'Không có'].join('\n'));
 });
 
 test('build: a Jira error reaches the caller (the dialog shows it)', async () => {
@@ -238,7 +264,22 @@ test('settings: defaults, validation, and the browser gets them', () => {
   const libDir = path.resolve(__dirname, '..', 'lib') + path.sep;
   for (const k of Object.keys(require.cache)) if (k.startsWith(libDir)) delete require.cache[k];
   const config = require('../lib/config');
-  assert.deepEqual(config.client().daily, { enabled: true, time: '17:00', days: [1, 2, 3, 4, 5], issueTypes: ['Story', 'Bug'], testerField: 'customfield_16481', teamsUrl: 'https://teams.live.com/v2/' });
+  assert.deepEqual(config.client().daily, {
+    enabled: true,
+    time: '17:00',
+    days: [1, 2, 3, 4, 5],
+    issueTypes: ['Story', 'Bug'],
+    testerField: 'customfield_16481',
+    teamsUrl: 'https://teams.live.com/v2/',
+    template: [
+      '📢 BÁO CÁO CÔNG VIỆC HÀNG NGÀY - {date}', HANDED, '{#handed}', '[{key}] {title} ➡️ {testers}', '{else}', 'Không có', '{/handed}', '',
+      PENDING, '{#pending}', '[{key}] {title}', 'Trạng thái: {status}', 'Dự kiến bàn giao: {expectedTime} - {expectedDate}', '{else}', 'Không có', '{/pending}',
+    ].join('\n'),
+    expectedTime: '17:00',
+  });
+  // The daily sections are edited in the report dialog's Settings tab, not on the Settings page.
+  const dailySections = config.view().schema.filter((sec) => sec.fields.some((f) => f.key.startsWith('daily.')));
+  assert.ok(dailySections.length && dailySections.every((sec) => sec.dialog === 'daily'));
   assert.throws(() => config.save({ 'daily.time': '5pm' }), /Reminder time/);
   assert.throws(() => config.save({ 'daily.time': '7:00' }), /Reminder time/);
   assert.throws(() => config.save({ 'daily.time': '24:00' }), /Reminder time/);
@@ -279,8 +320,9 @@ test('tester cc: names from the Tester field, without the "- username" suffix', 
   assert.equal(
     text,
     [
-      'Ngày 09/11/2026', '- Đã bàn giao:', '', '• VLEARN-1 (Ready for UAT) cc @Nguyễn Thị Phượng', '',
-      '- Đã làm nhưng chưa bàn giao:', '', '• VLEARN-5800 (READY FOR SIT - 10/11) cc @Nguyễn Thị Phượng @Vũ Vui', '• VLEARN-5797 (In Progress - 10/11)',
+      HEAD, HANDED, '• [VLEARN-1] ➡️ @Nguyễn Thị Phượng', '', PENDING,
+      '• [VLEARN-5800]', '  Trạng thái: READY FOR SIT', '  Dự kiến bàn giao: 17:00 - 10/11',
+      '• [VLEARN-5797]', '  Trạng thái: In Progress', '  Dự kiến bàn giao: 17:00 - 10/11',
     ].join('\n'),
   );
 });
@@ -289,12 +331,13 @@ test('tester cc: the build asks Jira for the Tester field and fills it in', asyn
   const seen = [];
   const { buildDailyReport } = loadWith(async (jql, fields) => {
     seen.push(fields);
-    return /CHANGED BY/.test(jql) ? [] : [{ key: 'VLEARN-5', fields: { status: st('In Progress'), issuetype: { name: 'Story' }, updated: TODAY, customfield_16481: [{ displayName: 'Nguyễn Thị Phượng - phuongnt425' }] } }];
+    const five = { key: 'VLEARN-5', fields: { status: st('Ready for SIT'), issuetype: { name: 'Story' }, updated: TODAY, customfield_16481: [{ displayName: 'Nguyễn Thị Phượng - phuongnt425' }] } };
+    return /CHANGED BY/.test(jql) ? [five] : [];
   });
   const r = await buildDailyReport(MON);
   assert.ok(seen.every((f) => f.includes('customfield_16481')));
-  assert.deepEqual(r.pending[0].testers, ['Nguyễn Thị Phượng']);
-  assert.match(r.text, /VLEARN-5 \(In Progress - 10\/11\) cc @Nguyễn Thị Phượng$/);
+  assert.deepEqual(r.handedOver[0].testers, ['Nguyễn Thị Phượng']);
+  assert.match(r.text, /• \[VLEARN-5\] ➡️ @Nguyễn Thị Phượng\n/);
 });
 
 test('user filter: every search runs for the person the header shows', async () => {
@@ -304,4 +347,52 @@ test('user filter: every search runs for the person the header shows', async () 
   assert.equal(jqls.length, 3);
   assert.ok(jqls.every((j) => !/currentUser\(\)/.test(j) && /assignee = "acc-123"/.test(j)));
   assert.match(jqls[0], /status CHANGED BY "acc-123" AFTER startOfDay\(\)/);
+});
+
+test('template: one text, edited in the dialog, saved in config.json, used by the next report', async () => {
+  const { buildDailyReport } = loadWith(async (jql) =>
+    /CHANGED BY/.test(jql) ? [issue('VLEARN-1', st('Ready for SIT'))] : /"In Progress"/.test(jql) ? [issue('VLEARN-2', st('In Progress'), '2026-11-12')] : [],
+  );
+  const config = require('../lib/config');
+  // Pending first, a footer, an unknown {placeholder}, a block with no {else}.
+  const custom = {
+    'daily.template': ['Daily {date} {unknown}', 'Doing:', '{#pending}', '{key}: {title}', 'ETA {expectedDate} {expectedTime}', '{/pending}', 'Done:', '{#handed}', '{key} - {title} ({status}) | {testers}', '{/handed}', '-- end'].join('\n'),
+    'daily.expectedTime': '11:30',
+  };
+  config.save(custom);
+  try {
+    const r = await buildDailyReport(MON);
+    assert.equal(
+      r.text,
+      // No tester: the " | " before it goes too.
+      ['Daily 09/11/2026 {unknown}', 'Doing:', '• VLEARN-2: Summary VLEARN-2', '  ETA 12/11 11:30', 'Done:', '• VLEARN-1 - Summary VLEARN-1 (Ready for SIT)', '-- end'].join('\n'),
+    );
+    assert.deepEqual(r.layout.sections.map((x) => x.id), ['pending', 'handed']);
+    assert.deepEqual(r.layout.texts, ['Daily 09/11/2026 {unknown}\nDoing:', 'Done:', '-- end']);
+    const { formatReport } = require('../lib/daily-report');
+    // A block with no {else}: an empty section is nothing at all.
+    assert.equal(formatReport({ now: MON, handedOver: [], pending: [] }), ['Daily 09/11/2026 {unknown}', 'Doing:', 'Done:', '-- end'].join('\n'));
+    assert.throws(() => config.save({ 'daily.expectedTime': '5pm' }), /hand-over time/);
+  } finally {
+    const d = config.view().defaults;
+    config.save(Object.fromEntries(Object.keys(custom).map((k) => [k, d[k]])));
+  }
+  assert.equal(JSON.parse(fs.readFileSync(process.env.DASHBOARD_CONFIG_FILE, 'utf8')).daily, undefined);
+});
+
+test('template: bad blocks are refused on save, with the line', () => {
+  const libDir = path.resolve(__dirname, '..', 'lib') + path.sep;
+  for (const k of Object.keys(require.cache)) if (k.startsWith(libDir)) delete require.cache[k];
+  const config = require('../lib/config');
+  const bad = (tpl, re) => assert.throws(() => config.save({ 'daily.template': tpl }), re);
+  bad('{#handed}\n{key}\n{/handed}', /needs a \{#pending\}/);
+  bad('{#handed}\n{key}\n{#pending}\n{key}\n{/pending}\n{/handed}', /line 3: \{#pending\} inside \{#handed\}/);
+  bad('{#handed}\n{key}\n{/handed}\n{#pending}\n{key}', /\{#pending\} is not closed/);
+  bad('{#handed}\n{key}\n{/handed}\n{#handed}\n{key}\n{/handed}\n{#pending}\n{key}\n{/pending}', /line 4: \{#handed\} appears twice/);
+  bad('{#todo}\n{key}\n{/todo}', /unknown block \{#todo\}/);
+  bad('{#handed}\n{else}\nnone\n{/handed}\n{#pending}\n{key}\n{/pending}', /\{#handed\} has no line for its tickets/);
+  bad('{/pending}', /line 1: \{\/pending\} without its \{#pending\}/);
+  // Block tags may carry spaces and sit in any order; CRLF line ends are fine.
+  config.save({ 'daily.template': 'H\r\n{ #pending }\r\n{key}\r\n{ /pending }\r\n{#handed}\r\n{key}\r\n{/handed}' });
+  config.save({ 'daily.template': config.view().defaults['daily.template'] });
 });
