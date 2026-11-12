@@ -111,6 +111,9 @@
 .seg-prog {
   --dot: var(--prog-dot);
 }
+.seg-cr {
+  --dot: var(--cr-dot);
+}
 .seg-review {
   --dot: var(--review-dot);
 }

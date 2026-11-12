@@ -6,7 +6,7 @@
   .row,
   .list-head,
   .group {
-    grid-template-columns: 140px minmax(0, 1fr) 160px 76px 88px 28px;
+    grid-template-columns: 160px minmax(0, 1fr) 160px 76px 88px 28px;
     grid-template-areas: 'key sum status docs upd act';
   }
   .c-prio,

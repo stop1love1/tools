@@ -7,8 +7,13 @@ var PAGE_SHORTCUTS = [
   ['/', 'Focus search box'],
   ['r', 'Refresh data'],
   ['1-9', 'Switch to saved filter 1-9'],
-  ['j / k', 'Navigate down / up in list'],
-  ['Enter', 'Open focused issue'],
+  ['j / k', 'Move down / up the list (tasks, stories, epics)'],
+  ['Enter', 'Open the task, or fold / unfold the group'],
+  ['x', 'Select / unselect the task, turning Select on (Shift+click a checkbox: range)'],
+  ['s', 'Change status: of the selected tasks, else of the focused one'],
+  ['e', 'Fold / unfold the group of the focused row'],
+  ['h', 'Hide / show done tasks'],
+  ['Esc', 'Untick all, then leave Select'],
   ['Click issue', 'Open detail drawer'],
 ];
 window.PAGE_SHORTCUTS = PAGE_SHORTCUTS;
@@ -33,6 +38,9 @@ function render() {
   renderProgress();
   renderFocus();
   renderStats();
+  renderHideDone();
+  renderSelectMode();
+  renderBulk();
   syncUrl();
 
   const main = $('#main');
@@ -56,7 +64,8 @@ function render() {
     main.replaceChildren(h('div', { class: 'empty-state' }, 'No tasks match this JQL.'));
     return;
   }
-  main.replaceChildren(renderList(list));
+  main.replaceChildren(...[viewingBanner(), renderList(list)].filter(Boolean));
+  markKbFocus();
   if (state.openKey) refreshDrawerStatus();
 }
 
@@ -100,26 +109,58 @@ window.onShortcutExtra = (e, typing) => {
   } else if (!typing && e.key === '/') {
     e.preventDefault();
     $('#search').focus();
-  } else if (!typing && (e.key === 'j' || e.key === 'k') && !state.openKey) {
+  } else if (typing || state.openKey || e.metaKey || e.ctrlKey || e.altKey || $('.shortcuts-modal')) {
+    // the shortcuts below act on the list only
+  } else if (e.key === 'j' || e.key === 'k') {
     e.preventDefault();
-    const list = $('.list');
-    if (!list) return;
-    const rows = [...list.querySelectorAll('.row:not(.child)')];
+    const rows = navRows();
     if (!rows.length) return;
-    const current = rows.findIndex((r) => r.classList.contains('keyboard-focus'));
-    let nextIdx;
-    if (e.key === 'j') nextIdx = current < 0 ? 0 : Math.min(current + 1, rows.length - 1);
-    else nextIdx = current < 0 ? 0 : Math.max(current - 1, 0);
-    rows.forEach((r) => r.classList.remove('keyboard-focus'));
-    rows[nextIdx].classList.add('keyboard-focus');
-    rows[nextIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  } else if (!typing && e.key === 'Enter' && !state.openKey) {
-    const list = $('.list');
-    if (!list) return;
-    const focused = list.querySelector('.row.keyboard-focus');
-    if (focused) focused.click();
+    const cur = rows.findIndex((r) => r.dataset.nav === state.kbNav);
+    const next = cur < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, cur + (e.key === 'j' ? 1 : -1)));
+    state.kbNav = rows[next].dataset.nav;
+    markKbFocus(true);
+  } else if (e.key === 'Enter' && !state.menu) {
+    const el = kbFocused();
+    if (!el) return;
+    e.preventDefault();
+    el.classList.contains('row') ? openDetail(el.dataset.key) : el.click();
+  } else if (e.key === 'x') {
+    const el = kbFocused();
+    if (!el) return state.selectMode || setSelectMode(true);
+    if (!state.selectMode) {
+      state.selectMode = true;
+      render();
+    }
+    kbFocused()?.querySelector('input.sel')?.click();
+  } else if (e.key === 's') {
+    e.preventDefault();
+    if (state.selected.size) return $('#bulk-status') && openBulkMenu($('#bulk-status'));
+    const btn = kbFocused()?.querySelector('button.status');
+    const issue = btn && (state.issues.find((i) => i.key === btn.dataset.key) || null);
+    if (btn) openStatusMenu(btn, issue || { key: btn.dataset.key, status: { name: btn.textContent } });
+  } else if (e.key === 'e') {
+    let el = kbFocused();
+    while (el && !el.matches('.group[data-nav]')) el = el.previousElementSibling;
+    if (!el) return;
+    state.kbNav = el.dataset.nav;
+    el.click();
+  } else if (e.key === 'h') {
+    toggleHideDone();
   }
 };
+
+// j/k move over task rows and the group rows (story, epic, completed epics).
+const navRows = () => $$('#main .list .row[data-nav], #main .list .group[data-nav]');
+const kbFocused = () => (state.kbNav ? navRows().find((r) => r.dataset.nav === state.kbNav) : null);
+// The list is rebuilt on every render: put the keyboard focus back on the same row.
+function markKbFocus(scroll) {
+  for (const r of $$('#main .keyboard-focus')) r.classList.remove('keyboard-focus');
+  const el = kbFocused();
+  if (!el) return;
+  el.classList.add('keyboard-focus');
+  if (scroll) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+window.onEscape = () => clearSelection();
 
 async function initPage() {
   renderPresets();
@@ -138,6 +179,8 @@ async function initPage() {
     render();
   });
   $('#scrim').addEventListener('click', closeDrawer);
+  $('#hide-done').addEventListener('click', toggleHideDone);
+  $('#select-mode').addEventListener('click', () => setSelectMode(!state.selectMode));
   $('#type-filter').addEventListener('change', (e) => {
     state.type = e.target.value;
     syncUrl();

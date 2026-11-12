@@ -280,6 +280,12 @@ function renderSprintLeft() {
   else if (days === 1) [text, tone] = ['1 day left', 'warn'];
   else if (days === 0) [text, tone] = ['Ends today', 'warn'];
   else [text, tone] = [`Ended ${-days} day${days === -1 ? '' : 's'} ago`, 'over'];
+  // Task list: what is still to do in the sprint, in story points (tasks when nothing is estimated).
+  if (window.PAGE === 'list' && typeof countedBySprint === 'function' && !state.sprintTasksLoading && days >= 0) {
+    const open = countedBySprint().filter((i) => !isDevDone(i.status));
+    const sp = open.reduce((s, i) => s + (i.storyPoints || 0), 0);
+    if (open.length) text += sp ? ` · ${sp} SP to go` : ` · ${open.length} task${open.length > 1 ? 's' : ''} to go`;
+  }
   el.textContent = text;
   el.dataset.tone = tone;
   el.title = `${sprint.name} ends ${end.toLocaleDateString('en-US', { dateStyle: 'medium' })}`;
@@ -413,6 +419,7 @@ async function init() {
       else if ($('#recent')?.hidden === false) toggleRecent(false);
       else if (state.openKey) window.closeDrawer?.();
       else if (typing) document.activeElement.blur();
+      else window.onEscape?.();
     } else if (!typing && e.key === '?') {
       e.preventDefault();
       showKeyboardShortcuts();

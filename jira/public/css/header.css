@@ -268,6 +268,11 @@
   --pill-bg: var(--prog-bg);
   --pill-fg: var(--prog-fg);
 }
+.tone-cr {
+  --dot: var(--cr-dot);
+  --pill-bg: var(--cr-bg);
+  --pill-fg: var(--cr-fg);
+}
 .tone-review {
   --dot: var(--review-dot);
   --pill-bg: var(--review-bg);

@@ -48,6 +48,11 @@ const state = {
   menu: null,
   wide: LS.get('wide', false),
   closedGroups: new Set(LS.get('groupFold', [])),
+  // task list: hide Jira's Done category. The URL (?hideDone=1) wins, so a reload or a shared link keeps it.
+  hideDone: initParams.has('hideDone') ? initParams.get('hideDone') === '1' : LS.get('hideDone', false),
+  selectMode: false, // task list: the Select button is on, rows show a checkbox
+  selected: new Set(), // task list: keys picked for a bulk status change
+  kbNav: null, // task list: data-nav of the row j/k is on, kept across re-renders
   notif: { events: [], days: 7, loaded: false, error: null, seen: LS.get('notifSeen', 0), seenBefore: 0, open: false },
   recentlyViewed: LS.get('recentlyViewed', []),
   theme: LS.get('theme', 'auto'),
@@ -91,6 +96,7 @@ function syncUrl() {
   if (state.urgentOnly) params.set('urgent', '1');
   if (state.user) params.set('user', state.user);
   if (state.sprint) params.set('sprint', String(state.sprint));
+  if (state.hideDone && window.PAGE === 'list') params.set('hideDone', '1');
   if (state.docsQ) params.set('docsQ', state.docsQ);
   if (state.docsKind !== 'all') params.set('docsKind', state.docsKind);
   if (state.docsSort !== 'date') params.set('docsSort', state.docsSort);

@@ -64,8 +64,10 @@ function isSprintTask(i, id) {
 }
 
 // A row whose status just changed (heldMove) stays under the filter it was in, so it does not vanish at once.
+// Hide done drops Jira's Done category, unless a status pill is picked (that choice wins).
 function filtered() {
-  return scopedBySprint().filter((i) => (!state.status || i.status.name === state.status || heldMove(i.key)?.from.name === state.status) && (!state.urgentOnly || isUrgent(i)));
+  const hidden = (i) => state.hideDone && !state.status && stageOf(heldMove(i.key)?.from || i.status) === 'done';
+  return scopedBySprint().filter((i) => (!state.status || i.status.name === state.status || heldMove(i.key)?.from.name === state.status) && (!state.urgentOnly || isUrgent(i)) && !hidden(i));
 }
 
 // ---------------------------------------------------------------------------

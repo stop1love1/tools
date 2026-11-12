@@ -159,16 +159,175 @@ function docBadges(issue) {
   ];
 }
 
+// --- hide done / selection ---
+
+// The status a row is placed by: a just-moved task keeps its previous one for a moment (heldMove), so its group and
+// epic do not jump away under the user.
+const placedStatus = (i) => heldMove(i.key)?.from || i.status;
+
+// "Hide done" toggle in the sub bar: hides Jira's Done category (QA done, cancelled) unless a status pill is picked.
+function renderHideDone() {
+  const btn = $('#hide-done');
+  if (!btn) return;
+  const n = countedBySprint().filter((i) => stageOf(i.status) === 'done').length;
+  btn.hidden = !n && !state.hideDone;
+  btn.setAttribute('aria-pressed', String(state.hideDone));
+  btn.title = state.status ? 'Not applied while a status is picked' : state.hideDone ? 'Show done tasks again' : 'Hide done and cancelled tasks';
+  btn.classList.toggle('inactive', !!state.status);
+  btn.replaceChildren(icon(state.hideDone ? 'check' : 'list'), 'Hide done', h('b', null, state.sprintTasksLoading ? '…' : n));
+}
+
+function toggleHideDone() {
+  state.hideDone = !state.hideDone;
+  LS.set('hideDone', state.hideDone);
+  syncUrl();
+  render();
+}
+
+// Selection for bulk status changes. The Select button (or x) turns it on: then each row has a checkbox (Shift+click:
+// range) and each group one for all its tasks. Turning it off drops the selection.
+let lastPicked = null;
+function renderSelectMode() {
+  const btn = $('#select-mode');
+  if (!btn) return;
+  btn.setAttribute('aria-pressed', String(state.selectMode));
+  btn.replaceChildren(icon('check'), state.selectMode ? 'Selecting' : 'Select', state.selectMode && state.selected.size ? h('b', null, state.selected.size) : '');
+}
+function setSelectMode(on) {
+  state.selectMode = on;
+  if (!on) state.selected.clear();
+  render();
+}
+function setSelected(keys, on) {
+  for (const k of keys) on ? state.selected.add(k) : state.selected.delete(k);
+  render();
+}
+function pickRange(toKey) {
+  const keys = $$('.list .row[data-key]').map((r) => r.dataset.key);
+  const a = keys.indexOf(lastPicked), b = keys.indexOf(toKey);
+  if (a < 0 || b < 0) return false;
+  setSelected(keys.slice(Math.min(a, b), Math.max(a, b) + 1), true);
+  return true;
+}
+function selectBox(keys, label) {
+  if (!state.selectMode) return null;
+  const on = keys.length > 0 && keys.every((k) => state.selected.has(k));
+  const box = h('input', {
+    type: 'checkbox',
+    class: 'sel',
+    'aria-label': label,
+    title: keys.length > 1 ? `Select its ${keys.length} tasks` : 'Select (Shift+click: range, x)',
+    onClick: (e) => {
+      e.stopPropagation();
+      if (e.shiftKey && keys.length === 1 && lastPicked && pickRange(keys[0])) return (lastPicked = keys[0]);
+      if (keys.length === 1) lastPicked = keys[0];
+      setSelected(keys, e.currentTarget.checked);
+    },
+  });
+  box.checked = on;
+  box.indeterminate = !on && keys.some((k) => state.selected.has(k));
+  return box;
+}
+
+// The bar at the bottom while tasks are selected: how many, change all their statuses at once, clear.
+function renderBulk() {
+  const shown = new Set(filtered().map((i) => i.key));
+  for (const k of [...state.selected]) if (!shown.has(k)) state.selected.delete(k); // filtered out: not acted on unseen
+  let bar = $('#bulk-bar');
+  if (!state.selectMode) return bar?.remove();
+  if (!bar) document.body.append((bar = h('div', { id: 'bulk-bar', class: 'bulk-bar', role: 'toolbar', 'aria-label': 'Selected tasks' })));
+  const n = state.selected.size;
+  bar.replaceChildren(
+    h('b', null, n ? `${n} selected` : 'Tick tasks to change their status together'),
+    n > 0 && h('button', { class: 'btn primary sm', id: 'bulk-status', onClick: (e) => (e.stopPropagation(), openBulkMenu(e.currentTarget)) }, 'Change status', icon('chev')),
+    n > 0 && h('button', { class: 'btn sm', title: 'Untick all', onClick: () => (state.selected.clear(), render()) }, 'Clear'),
+    h('button', { class: 'btn sm', title: 'Stop selecting (Esc)', onClick: () => setSelectMode(false) }, 'Done'),
+  );
+}
+// Esc: untick all first, then leave select mode.
+function clearSelection() {
+  if (state.selected.size) return (state.selected.clear(), render(), true);
+  if (state.selectMode) return (setSelectMode(false), true);
+  return false;
+}
+
+// One menu for every selected task: the target statuses their transitions lead to, with how many of them can go there.
+async function openBulkMenu(anchor) {
+  closeMenu();
+  const issues = [...state.selected].map((k) => state.issues.find((i) => i.key === k)).filter(Boolean);
+  const menu = h('div', { class: 'menu', role: 'menu' }, h('div', { class: 'menu-note' }, `Loading transitions of ${issues.length} tasks…`));
+  document.body.append(menu);
+  state.menu = menu;
+  placeMenu(menu, anchor);
+  try {
+    const all = await Promise.all(issues.map((i) => getTransitions(i.key).then((ts) => [i, ts])));
+    if (state.menu !== menu) return;
+    const targets = new Map(); // status name → { to, moves: [[issue, transition]] }
+    for (const [i, ts] of all) {
+      for (const t of ts) {
+        if (t.to.name === i.status.name) continue;
+        if (!targets.has(t.to.name)) targets.set(t.to.name, { to: t.to, moves: [] });
+        const tg = targets.get(t.to.name);
+        if (!tg.moves.some(([x]) => x.key === i.key)) tg.moves.push([i, t]);
+      }
+    }
+    const list = [...targets.values()].sort((a, b) => b.moves.length - a.moves.length || STAGE_ORDER[stageOf(a.to)] - STAGE_ORDER[stageOf(b.to)] || rank(a.to.name) - rank(b.to.name));
+    menu.replaceChildren(
+      ...(list.length
+        ? list.map((tg) =>
+            h(
+              'button',
+              { class: 'menu-item', role: 'menuitem', onClick: () => (closeMenu(), bulkMove(tg)) },
+              h('span', { class: `dot tone-${tone(tg.to)}` }),
+              h('span', null, tg.to.name),
+              h('span', { class: 'muted small' }, tg.moves.length === issues.length ? `all ${issues.length}` : `${tg.moves.length} of ${issues.length}`),
+            ),
+          )
+        : [h('div', { class: 'menu-note' }, 'No transition shared by these tasks.')]),
+    );
+    placeMenu(menu, anchor);
+    menu.querySelector('button')?.focus();
+  } catch (e) {
+    if (state.menu === menu) menu.replaceChildren(h('div', { class: 'menu-note err' }, e.message));
+  }
+}
+
+// One task at a time, so Jira is not hit with a burst and each row moves visibly in turn.
+async function bulkMove(tg) {
+  state.selected.clear();
+  for (const [issue, t] of tg.moves) await transition(state.issues.find((i) => i.key === issue.key) || issue, t);
+}
+
+// Progress of a parent: tasks dev done (the rule of the progress strip, workflow.js isDevDone).
+function miniProgress(items, noun = 'tasks') {
+  const n = items.length, done = items.filter((i) => isDevDone(i.status)).length;
+  const wait = state.sprintTasksLoading;
+  return [
+    h('span', { class: 'mini-prog', title: wait ? 'Loading…' : `${done} of ${n} ${noun} dev done (Ready for SIT on)` }, h('i', { style: `width:${n && !wait ? Math.round((done / n) * 100) : 0}%` })),
+    h('span', { class: 'muted small nowrap' }, wait ? '…' : `${done}/${n}`),
+  ];
+}
+
 // --- list (grouped by parent; parents fold/unfold on click) ---
 
 // Epic → Story/Task → Sub-task, the same levels as the git flow (epic branch → task branch).
 function renderList(list) {
-  if (!list.length) return h('div', { class: 'empty-state' }, 'No tasks match this filter.');
+  if (!list.length) return h('div', { class: 'empty-state' }, state.hideDone && !state.status ? 'Nothing left here: every task is done.' : 'No tasks match this filter.');
   const byKey = new Map(state.issues.map((i) => [i.key, i]));
   const isEpicIssue = (i) => /epic/i.test(i.type?.name || '');
   const top = (g) => Math.max(...g.items.map((i) => sortUrgency(i).score));
   const latest = (g) => Math.max(...g.items.map((i) => Date.parse(i.updated)));
   const byGroupUrgency = (a, b) => top(b) - top(a) || latest(b) - latest(a);
+
+  // Every task of the sprint under each parent, whatever the status filter / Hide done: a parent's progress is about
+  // all its work, not just the rows shown.
+  const scope = scopedBySprint();
+  const underEpic = new Map(), underParent = new Map();
+  for (const i of scope) {
+    if (i.epic?.key) (underEpic.get(i.epic.key) || underEpic.set(i.epic.key, []).get(i.epic.key)).push(i);
+    if (i.parent?.key) (underParent.get(i.parent.key) || underParent.set(i.parent.key, []).get(i.parent.key)).push(i);
+  }
+  const epicTasks = (key) => countable(underEpic.get(key) || [], state.issues);
 
   // Epic buckets; an Epic that is itself in the list becomes its bucket's header.
   // An Epic that is not (e.g. assigned to someone else) is still the header, from the stub on its tasks.
@@ -203,14 +362,22 @@ function renderList(list) {
     // The outline flash plays once per move: render() rebuilds every row, which would restart it each time.
     const flash = moved && !moved.flashed;
     if (flash) moved.flashed = true;
+    const stale = staleDays(i);
+    const picked = state.selected.has(i.key);
     return h(
       'div',
       {
-        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${loose ? ' loose' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}${moved ? ' moved' : ''}${flash ? ' moved-flash' : ''}`,
+        class: `row lvl-${u.level || 'none'}${child ? ' child' : ''}${deep ? ' deep' : ''}${loose ? ' loose' : ''}${i.pending ? ' pending' : ''}${isDone ? ' done' : ''}${moved ? ' moved' : ''}${flash ? ' moved-flash' : ''}${picked ? ' picked' : ''}`,
         'data-key': i.key,
-        onClick: (e) => !e.target.closest('a,button') && openDetail(i.key),
+        'data-nav': 'row:' + i.key,
+        // While selecting, a click anywhere on the row ticks it (the key link still opens the detail).
+        onClick: (e) => {
+          if (e.target.closest('a,button,input')) return;
+          if (state.selectMode) e.currentTarget.querySelector('input.sel')?.click();
+          else openDetail(i.key);
+        },
       },
-      h('div', { class: 'c-key' }, typeBadge(i.type.name), keyLink(i)),
+      h('div', { class: 'c-key' }, selectBox([i.key], `Select ${i.key}`), typeBadge(i.type.name), keyLink(i)),
       h(
         'div',
         { class: 'c-sum' },
@@ -221,58 +388,47 @@ function renderList(list) {
       h('div', { class: 'c-status' }, statusButton(i)),
       h('div', { class: 'c-prio' }, prio(i.priority), ' ', i.priority || ''),
       h('div', { class: 'c-docs' }, docBadges(i)),
-      h('div', { class: 'c-upd muted small', title: fmtDate(i.updated) }, rel(i.updated)),
+      h(
+        'div',
+        { class: `c-upd small${stale ? (stale >= 7 ? ' stale very' : ' stale') : ' muted'}`, title: stale ? `${fmtDate(i.updated)} — no change for ${stale} days while in ${i.status.name}` : fmtDate(i.updated) },
+        rel(i.updated),
+      ),
       h('div', { class: 'c-act' }, claudeButton(i)),
     );
   };
 
   // Groups whose subtasks are all finished (Done or Cancelled) start collapsed; everything else starts expanded.
+  // A just-moved task counts with its previous status, so its group does not fold away under the user.
+  // An override (the user's click) flips whatever the auto default would be.
   const isClosed = (parent, items) => {
-    // Check if all subtasks in this group are done (including cancelled)
-    // A just-moved task counts with its previous status, so its group does not fold away under the user.
-    const allDone = items.every((i) => (heldMove(i.key)?.from || i.status).category === 'done');
-    const override = state.closedGroups.has(parent.key);
-    // An override flips whatever the auto default would be.
-    const result = override ? !allDone : allDone;
-    return result;
+    const allDone = items.every((i) => placedStatus(i).category === 'done');
+    return state.closedGroups.has(parent.key) ? !allDone : allDone;
+  };
+  const foldToggle = (key) => () => {
+    state.closedGroups.has(key) ? state.closedGroups.delete(key) : state.closedGroups.add(key);
+    LS.set('groupFold', [...state.closedGroups]);
+    render();
   };
 
   const groupRow = (parent, items, nested) => {
     const mine = parent.url ? parent : null; // full issue DTO when the parent is also assigned to me
     const closed = isClosed(parent, items);
-    const toggle = () => {
-      // Any click flips the current state; store/remove the override accordingly
-      state.closedGroups.has(parent.key) ? state.closedGroups.delete(parent.key) : state.closedGroups.add(parent.key);
-      LS.set('groupFold', [...state.closedGroups]);
-      render();
-    };
-    
+    const toggle = foldToggle(parent.key);
+    const children = underParent.get(parent.key) || items;
+
     const typeCounts = new Map();
-    for (const i of items) {
-      const typeName = i.type.name.toLowerCase();
-      let category = 'other';
-      if (typeName.includes('task')) category = 'task';
-      else if (typeName.includes('bug')) category = 'bug';
-      else if (typeName.includes('story')) category = 'story';
-      typeCounts.set(category, (typeCounts.get(category) || 0) + 1);
+    for (const i of children) {
+      const n = i.type.name.toLowerCase();
+      const c = n.includes('task') ? 'task' : n.includes('bug') ? 'bug' : n.includes('story') ? 'story' : 'other';
+      typeCounts.set(c, (typeCounts.get(c) || 0) + 1);
     }
-    
-    const parts = [];
-    const taskCount = typeCounts.get('task') || 0;
-    const bugCount = typeCounts.get('bug') || 0;
-    const storyCount = typeCounts.get('story') || 0;
-    const otherCount = typeCounts.get('other') || 0;
-    
-    if (taskCount > 0) parts.push(`${taskCount} task${taskCount > 1 ? 's' : ''}`);
-    if (bugCount > 0) parts.push(`${bugCount} bug${bugCount > 1 ? 's' : ''}`);
-    if (storyCount > 0) parts.push(`${storyCount} stor${storyCount > 1 ? 'ies' : 'y'}`);
-    if (otherCount > 0) parts.push(`${otherCount} other`);
-    
+    const plural = { task: 'tasks', bug: 'bugs', story: 'stories', other: 'other' };
+    const parts = [...typeCounts].map(([c, n]) => `${n} ${n > 1 ? plural[c] : c}`);
+    const lastUpd = Math.max(...[...children, mine].filter(Boolean).map((i) => Date.parse(i.updated) || 0));
+
     // Same flow as a regular item's Claude button: the Start dialog (task_brief/MCP builds the context
-    // server-side) for a Task/Story parent, or straight to Cursor for an Epic parent. The Start dialog only
-    // needs key/summary/type, which the parent stub always has even when it's not one of my own issues —
-    // only an Epic parent that's a stub (no url/docs) can't safely use the "open straight in Cursor" path,
-    // so that one case keeps the plain combined-text fallback.
+    // server-side) for a Task/Story parent, or straight to Cursor for an Epic parent. Only an Epic parent that's a
+    // stub (no url/docs) can't safely use the "open straight in Cursor" path, so it keeps the combined-text fallback.
     const isEpicParent = /epic/i.test(parent.type?.name || parent.type || '');
     const claudeGroupButton =
       mine || !isEpicParent
@@ -290,7 +446,7 @@ function renderList(list) {
             },
             icon('ai'),
           );
-    
+
     return h(
       'div',
       {
@@ -298,28 +454,36 @@ function renderList(list) {
         role: 'button',
         tabindex: '0',
         'aria-expanded': String(!closed),
+        'data-nav': 'group:' + parent.key,
         title: closed ? 'Expand' : 'Collapse',
-        onClick: (e) => !e.target.closest('a,button') && toggle(),
+        onClick: (e) => !e.target.closest('a,button,input') && toggle(),
         onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
       },
-      // c-key: fold icon + type badge + key
-      h('div', { class: 'c-key' }, 
+      h(
+        'div',
+        { class: 'c-key' },
         h('span', { class: 'fold-icon' }, icon('chevRight')),
+        selectBox(items.map((i) => i.key), `Select the tasks of ${parent.key}`),
         typeBadge(parent.type?.name || parent.type),
-        mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key)
+        mine ? keyLink(mine) : h('a', { class: 'key', href: '#' + parent.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(parent.key)) }, parent.key),
       ),
-      h('div', { class: 'c-sum' }, h('span', { class: 'group-title' }, parent.summary), h('span', { class: 'muted small nowrap' }, parts.join(', '))),
+      h(
+        'div',
+        { class: 'c-sum', title: parts.join(', ') },
+        h('span', { class: 'group-title', title: parent.summary }, parent.summary),
+        miniProgress(children, parts.length === 1 ? plural[[...typeCounts.keys()][0]] : 'tasks'),
+      ),
       h('div', { class: 'c-status' }, statusButton(mine || parent)),
-      h('div', { class: 'c-prio' }),
-      h('div', { class: 'c-docs' }),
-      h('div', { class: 'c-upd' }),
+      h('div', { class: 'c-prio' }, mine?.priority && [prio(mine.priority), ' ', mine.priority]),
+      h('div', { class: 'c-docs' }, mine && docBadges(mine)),
+      h('div', { class: 'c-upd muted small', title: lastUpd ? `Last change in this story: ${fmtDate(new Date(lastUpd).toISOString())}` : null }, lastUpd ? rel(new Date(lastUpd).toISOString()) : ''),
       h('div', { class: 'c-act' }, claudeGroupButton),
     );
   };
 
   const out = h(
     'div',
-    { class: 'list' },
+    { class: `list${state.selectMode ? ' selecting' : ''}` },
     h('div', { class: 'list-head' }, ['Key', 'Summary', 'Status', 'Priority', 'Docs', 'Updated', ''].map((t, idx) => h('div', { class: idx === 3 ? 'h-prio' : null }, t))),
   );
   const appendBucket = (items, epicKey, nested) => {
@@ -330,11 +494,50 @@ function renderList(list) {
     }
     out.append(...loose.map((i) => row(i, nested, false, groups.length > 0 || nested)));
   };
+  const appendEpic = (b) => {
+    const tasks = epicTasks(b.epic.key);
+    const foldKey = 'epic:' + b.epic.key;
+    const closed = isClosed({ key: foldKey }, b.items.length ? b.items : [b.epic]);
+    out.append(epicRow(b.epic, b.items, tasks, closed, foldToggle(foldKey)));
+    if (!closed) appendBucket(b.items, b.epic.key, true);
+  };
 
-  const epics = [...buckets.entries()].filter(([k]) => k).map(([, b]) => b).sort(byGroupUrgency);
-  for (const b of epics) {
-    out.append(epicRow(b.epic, b.items, isClosed));
-    if (!isClosed({ key: 'epic:' + b.epic.key }, b.items.length ? b.items : [b.epic])) appendBucket(b.items, b.epic.key, true);
+  // Epics with work left first, the most left on top; an epic whose tasks are all QA done goes into one folded
+  // "completed" row at the end, so finished work does not push the open work down.
+  const left = (b) => epicTasks(b.epic.key).filter((i) => !isDevDone(placedStatus(i))).length;
+  const finished = (b) => {
+    const t = epicTasks(b.epic.key);
+    return t.length > 0 && t.every((i) => stageOf(placedStatus(i)) === 'done');
+  };
+  const epics = [...buckets.entries()].filter(([k]) => k).map(([, b]) => b);
+  const openEpics = epics.filter((b) => !finished(b)).sort((a, b) => left(b) - left(a) || byGroupUrgency(a, b));
+  const doneEpics = epics.filter(finished).sort(byGroupUrgency);
+  openEpics.forEach(appendEpic);
+  if (doneEpics.length) {
+    const shown = LS.get('doneEpicsOpen', false);
+    const toggle = () => (LS.set('doneEpicsOpen', !shown), render());
+    out.append(
+      h(
+        'div',
+        {
+          class: `group done-epics${shown ? '' : ' closed'}`,
+          role: 'button',
+          tabindex: '0',
+          'aria-expanded': String(shown),
+          'data-nav': 'done-epics',
+          onClick: toggle,
+          onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
+        },
+        h('div', { class: 'c-key' }, h('span', { class: 'fold-icon' }, icon('chevRight')), icon('check')),
+        h(
+          'div',
+          { class: 'c-sum' },
+          h('span', { class: 'group-title' }, `${doneEpics.length} completed epic${doneEpics.length > 1 ? 's' : ''}`),
+          h('span', { class: 'muted small nowrap' }, doneEpics.map((b) => b.epic.key).join(', ')),
+        ),
+      ),
+    );
+    if (shown) doneEpics.forEach(appendEpic);
   }
   const noEpic = buckets.get(null);
   if (noEpic?.items.length) {
@@ -344,19 +547,10 @@ function renderList(list) {
   return out;
 }
 
-// Epic header: folds everything under it; shows progress and the epic branch the tasks merge into.
-function epicRow(epic, items, isClosed) {
+// Epic header: folds everything under it; shows progress (dev done, as the progress strip).
+// items: its rows shown; tasks: all its tasks of the sprint (countable), whatever the filters.
+function epicRow(epic, items, tasks, closed, toggle) {
   const mine = epic.url ? epic : null;
-  const foldKey = 'epic:' + epic.key;
-  const closed = isClosed({ key: foldKey }, items.length ? items : [epic]);
-  const toggle = () => {
-    state.closedGroups.has(foldKey) ? state.closedGroups.delete(foldKey) : state.closedGroups.add(foldKey);
-    LS.set('groupFold', [...state.closedGroups]);
-    render();
-  };
-  // The same tasks and rule as the pills: no Story whose subtasks are listed, cancelled work counted as done.
-  const counted = countable(items, state.issues);
-  const done = counted.filter((i) => i.status.category === 'done').length;
   return h(
     'div',
     {
@@ -364,14 +558,16 @@ function epicRow(epic, items, isClosed) {
       role: 'button',
       tabindex: '0',
       'aria-expanded': String(!closed),
+      'data-nav': 'epic:' + epic.key,
       title: closed ? 'Expand' : 'Collapse',
-      onClick: (e) => !e.target.closest('a,button') && toggle(),
+      onClick: (e) => !e.target.closest('a,button,input') && toggle(),
       onKeydown: (e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle()),
     },
     h(
       'div',
       { class: 'c-key' },
       h('span', { class: 'fold-icon' }, icon('chevRight')),
+      selectBox(items.map((i) => i.key), `Select the tasks of ${epic.key}`),
       typeBadge('Epic'),
       h('a', { class: 'key', href: '#' + epic.key, title: 'Open detail', onClick: (e) => (e.preventDefault(), openDetail(epic.key)) }, epic.key),
     ),
@@ -379,14 +575,36 @@ function epicRow(epic, items, isClosed) {
       'div',
       { class: 'c-sum' },
       h('span', { class: 'group-title', title: epic.summary }, epic.summary || 'Epic'),
-      // Not final while the sprints' older tasks load (an empty bar and "…", like the pills).
-      h('span', { class: 'mini-prog', title: state.sprintTasksLoading ? 'Loading…' : `${done} of ${counted.length} done` }, h('i', { style: `width:${counted.length && !state.sprintTasksLoading ? Math.round((done / counted.length) * 100) : 0}%` })),
-      h('span', { class: 'muted small nowrap' }, state.sprintTasksLoading ? '…' : `${done}/${counted.length}`),
+      miniProgress(tasks),
     ),
     h('div', { class: 'c-status' }, statusButton(mine || epic)),
     h('div', { class: 'c-prio' }),
     h('div', { class: 'c-docs' }),
     h('div', { class: 'c-upd' }),
     h('div', { class: 'c-act' }),
+  );
+}
+
+// Above the list when looking at someone else's tasks: whose, and the way back.
+function viewingBanner() {
+  if (!state.user) return null;
+  return h(
+    'div',
+    { class: 'viewing-banner', role: 'status' },
+    h('span', null, 'Viewing the tasks of ', h('b', null, viewedUserName())),
+    h(
+      'button',
+      {
+        class: 'btn sm',
+        onClick: () => {
+          state.user = '';
+          LS.set('user', '');
+          const sel = $('#user-filter');
+          if (sel) sel.value = '';
+          window.onUserFilterChange?.();
+        },
+      },
+      'Back to my tasks',
+    ),
   );
 }

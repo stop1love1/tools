@@ -28,6 +28,9 @@
   --review-bg: #f0e8ff;
   --review-fg: #6b2fd6;
   --review-dot: #8b5cf6;
+  --cr-bg: #fff1d6;
+  --cr-fg: #8f5400;
+  --cr-dot: #e09a00;
   --done-bg: #dcf4e5;
   --done-fg: #146c36;
   --done-dot: #22a052;
@@ -71,6 +74,9 @@
   --review-bg: #281d45;
   --review-fg: #c9aeff;
   --review-dot: #a07cff;
+  --cr-bg: #33260c;
+  --cr-fg: #f5c66b;
+  --cr-dot: #e5a93a;
   --done-bg: #11301f;
   --done-fg: #7de0a4;
   --done-dot: #34c46c;
@@ -114,6 +120,9 @@
     --review-bg: #281d45;
     --review-fg: #c9aeff;
     --review-dot: #a07cff;
+    --cr-bg: #33260c;
+    --cr-fg: #f5c66b;
+    --cr-dot: #e5a93a;
     --done-bg: #11301f;
     --done-fg: #7de0a4;
     --done-dot: #34c46c;

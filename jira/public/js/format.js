@@ -7,12 +7,23 @@
 
 const rank = statusRank; // Settings → Workflow → Status order (workflow.js)
 
-// Colour of a status, from its stage (workflow.js stageOf): to do, being coded, dev done waiting on QA, QA done.
+// Colour of a status, from its stage (workflow.js stageOf): to do, being coded, in code review (still dev, its own
+// colour so it stands out from coding), dev done waiting on QA, QA done.
+const isCodeReview = (status) => /review/i.test(status?.name || '');
 function tone(status) {
   if (!status) return 'new';
   const stage = stageOf(status);
   if (stage === 'done') return /cancel|hủy|huỷ|reject|won.?t|invalid|duplicate/i.test(status.name) ? 'void' : 'done';
-  return stage === 'qa' ? 'review' : stage === 'dev' ? 'prog' : 'new';
+  if (stage === 'dev') return isCodeReview(status) ? 'cr' : 'prog';
+  return stage === 'qa' ? 'review' : 'new';
+}
+
+// Days since a task last changed, when that is long for one still being coded (stage 'dev'): 0 when not stale.
+const STALE_DAYS = 3;
+function staleDays(i) {
+  if (stageOf(i.status) !== 'dev' || !i.updated) return 0;
+  const d = Math.floor((Date.now() - Date.parse(i.updated)) / 86400000);
+  return d >= STALE_DAYS ? d : 0;
 }
 
 // Statuses in workflow order: by stage first (so Test SIT Done sits after In Progress even if Jira files it under
@@ -103,7 +114,7 @@ function urgency(i) {
   // Whole labels only: "data-gap" or "non-urgent" must not count as urgent.
   if (i.labels.some((l) => URGENT_LABELS.has(l.trim().toLowerCase()))) (score += 40), reasons.push({ level: 'warn', label: 'Urgent label' });
   const t = tone(i.status);
-  score += t === 'prog' ? 8 : t === 'review' ? 4 : 0;
+  score += t === 'prog' || t === 'cr' ? 8 : t === 'review' ? 4 : 0;
   const idle = Math.floor((Date.now() - Date.parse(i.updated)) / 86400000);
   if (t === 'prog' && idle >= 7) (score += 5), reasons.push({ level: 'info', label: `${idle}d since update` });
   const level = reasons.some((r) => r.level === 'danger') ? 'danger' : reasons.some((r) => r.level === 'warn') ? 'warn' : null;
