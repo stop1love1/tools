@@ -44,7 +44,7 @@ function expectedDate(due, now) {
   return nextWorkingDay(now);
 }
 
-// Code review is still with the developers, though it sits in the Workflow test-queue list ("In Review").
+// Code review is still with the developers (stage 'dev'), unless a hand-edited Workflow list puts it in the test flow.
 const isReview = (status) => /review/i.test(status?.name || '');
 // Handed over: Ready for SIT / Ready for UAT and everything after it (testing, tested, done); not code review.
 const isHandedOver = (status) => stageOf(status) === 'done' || (stageOf(status) === 'qa' && !isReview(status));
@@ -126,7 +126,7 @@ async function buildDailyReport(now = new Date(), forUser = (jql) => jql) {
   const touchedToday = (i) => updatedToday(i) || parentsTouched.has(i.key);
   const pending = inProgress
     .filter((i) => reported(i) && !handed.has(i.key) && isPending(statusOf(i.fields?.status)))
-    .filter((i) => stageOf(statusOf(i.fields.status)) === 'dev' || touchedToday(i))
+    .filter((i) => !isReview(statusOf(i.fields.status)) || touchedToday(i))
     .map(ticket);
   const seen = new Set();
   const candidates = [...changedToday, ...inProgress, ...recent]

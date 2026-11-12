@@ -21,7 +21,8 @@ test('defaults: the VLEARN test flow, and common names of other teams', () => {
   assert.equal(phaseOf('Test SIT Done'), 'tested'); // the dev deploys it to uat
   assert.equal(phaseOf('Ready for UAT'), 'testing'); // on uat: the tester checks it
   assert.equal(phaseOf('Ready for Production'), ''); // Jira Done category: QA done, not in the lists
-  for (const name of ['Ready for Test', 'Ready for QA', 'Code Review', 'In Review']) assert.equal(phaseOf(name), 'testQueue', name);
+  for (const name of ['Ready for Test', 'Ready for QA']) assert.equal(phaseOf(name), 'testQueue', name);
+  for (const name of ['Code Review', 'In Review']) assert.equal(phaseOf(name), '', name); // code review: still dev
   assert.equal(phaseOf('In Testing'), 'testing');
   for (const name of ['In Progress', 'Selftest', '']) assert.equal(phaseOf(name), '', name); // still with the developer
   assert.ok(statusRank('In Progress') < statusRank('Ready for SIT'));

@@ -6,8 +6,9 @@
 // patterns the lists are tried tested, testing, then test queue.
 
 const WORKFLOW_DEFAULTS = {
-  // Done coding, waiting for a tester (the test pile; the status testers filter by).
-  testQueue: ['Ready for SIT', 'Ready for Test', 'Ready for QA', '/review|\\bqa\\b/'],
+  // Done coding, waiting for a tester (the test pile; the status testers filter by). Code review (In Review, Code
+  // Review) is not here: it is still with the developers, so it is not dev done.
+  testQueue: ['Ready for SIT', 'Ready for Test', 'Ready for QA', '/\\bqa\\b/'],
   // A tester has it now.
   testing: ['Ready for UAT', 'In Testing', '/\\btesting\\b|\\bin test\\b|verif|\\buat\\b/'],
   // Tested, waiting for a deploy (no one is testing it). Ready for Production is in Jira's Done category: QA done.
