@@ -36,7 +36,8 @@
     <div class="page-loader" id="page-loader" role="status" aria-label="Loading"><span class="page-loader-spin"></span></div>
     <header class="topbar">
       <div class="bar">
-        <input id="search" type="search" placeholder="Search key, title, parent… ( / )" aria-label="Search" />
+        <!-- Auto Claude (auto-claude.js) and the "?q=" filter chip; the list has no search box. -->
+        <div class="bar-start" id="auto-claude-slot"></div>
         <div class="bar-actions">
           <select id="user-filter" aria-label="View tasks of" title="View tasks of"><option value="">Mine</option></select>
           <select id="sprint-filter" aria-label="Filter by sprint" hidden></select>
@@ -127,6 +128,7 @@
     <script src="/js/git/epic.js"></script>
     <script src="/js/git/workspace.js"></script>
     <script src="/js/agent.js"></script>
+    <script src="/js/auto-claude.js"></script>
     <script src="/js/settings.js"></script>
     <script src="/js/daily-template.js"></script>
     <script src="/js/daily-report.js"></script>

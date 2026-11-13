@@ -305,3 +305,469 @@ main {
 .electron-wco .topbar .bar * {
   -webkit-app-region: no-drag;
 }
+
+/* Auto Claude: the switch, the task it is on, its settings. */
+.auto-claude {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ac-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 6px 0 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ac-switch svg {
+  width: 14px;
+  height: 14px;
+}
+.ac-knob {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.ac-knob::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform 0.15s;
+}
+.ac-switch.on {
+  color: var(--text);
+}
+.ac-switch:hover {
+  color: var(--text);
+}
+.ac-switch.on .ac-knob {
+  background: var(--accent);
+}
+.ac-switch.on .ac-knob::after {
+  transform: translateX(12px);
+}
+.ac-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ac-current {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ac-status {
+  display: grid;
+  gap: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-knob,
+  .ac-knob::after {
+    transition: none;
+  }
+}
+
+/* Auto Claude dialog */
+.gmodal-box.acd-box {
+  width: min(640px, 100%);
+}
+.acd {
+  display: grid;
+  gap: 18px;
+  padding: 16px 20px 18px;
+  overflow: auto;
+}
+.acd-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.acd-status-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.acd-status-text b {
+  font-size: 14px;
+}
+.acd-status-text span {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.acd-count {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ac-switch.lg {
+  padding: 0;
+  height: auto;
+  border: 0;
+  background: none;
+}
+.ac-switch.lg .ac-knob {
+  width: 40px;
+  height: 22px;
+}
+.ac-switch.lg .ac-knob::after {
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+}
+.ac-switch.lg.on .ac-knob::after {
+  transform: translateX(18px);
+}
+
+.acd-queue {
+  display: grid;
+  gap: 8px;
+}
+.acd-list,
+.acd-current {
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.acd-current {
+  border-color: var(--accent);
+}
+.acd-issue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.acd-list .acd-issue + .acd-issue {
+  border-top: 1px solid var(--border);
+}
+.acd-issue:hover {
+  background: var(--surface-2);
+}
+.acd-issue .key {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.acd-sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.acd-tag {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.acd-current-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.acd-more,
+.acd-empty {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.acd-empty {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  text-align: center;
+}
+.acd-note.warn {
+  padding: 8px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  background: var(--warn-soft);
+  font-size: 12.5px;
+}
+.acd-reset {
+  justify-self: start;
+}
+
+.acd-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.acd-section h3 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.acd-group {
+  display: grid;
+  gap: 10px;
+}
+.acd-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+.acd-label {
+  display: grid;
+  gap: 1px;
+}
+.acd-label b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.acd-label span {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.acd-seg {
+  display: inline-flex;
+  justify-self: start;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.acd-seg button {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.acd-seg button[aria-checked='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.15);
+}
+.acd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.acd-chip input,
+.acd-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.acd-chip span {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.acd-chip input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.acd-chip input:focus-visible + span,
+.acd-toggle input:focus-visible ~ .acd-sw {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.acd-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.acd-toggle.off {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.acd-toggle-text {
+  display: grid;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.acd-toggle-text b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.acd-toggle-text span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.acd-sw {
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.acd-sw::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform 0.15s;
+}
+.acd-toggle input:checked ~ .acd-sw {
+  background: var(--accent);
+}
+.acd-toggle input:checked ~ .acd-sw::after {
+  transform: translateX(14px);
+}
+.acd-notes {
+  width: 100%;
+  resize: vertical;
+}
+.acd-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 560px) {
+  .acd-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .acd-foot > .muted {
+    display: none;
+  }
+}
+/* Auto Claude queue: candidates with a checkbox (ticked = will be taken). */
+.acd-picks {
+  display: grid;
+  gap: 6px;
+}
+.acd-picks-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.acd-picks .acd-list {
+  max-height: 260px;
+  overflow: auto;
+}
+.acd-list .acd-issue + .acd-issue {
+  border-top: 1px solid var(--border);
+}
+.acd-issue.pick {
+  cursor: pointer;
+}
+.acd-issue.pick input {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.acd-issue.pick.off .acd-sum,
+.acd-issue.pick.off .key,
+.acd-issue.pick.off .acd-flag {
+  opacity: 0.5;
+}
+.acd-issue .key {
+  text-decoration: none;
+}
+.acd-issue a.key:hover {
+  text-decoration: underline;
+}
+.acd-flag {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  color: var(--warn);
+  font-size: 11px;
+  white-space: nowrap;
+}
+/* tasks.html: the header's left side — Auto Claude, then the "?q=" filter chip. */
+.bar-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.q-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 10px;
+  height: 28px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.acd-log summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.acd-log ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}

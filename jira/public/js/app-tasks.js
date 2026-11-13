@@ -106,9 +106,6 @@ window.onShortcutExtra = (e, typing) => {
       $('#jql').value = p.jql || state.defaultJql;
       applyJql(p.jql);
     }
-  } else if (!typing && e.key === '/') {
-    e.preventDefault();
-    $('#search').focus();
   } else if (typing || state.openKey || e.metaKey || e.ctrlKey || e.altKey || $('.shortcuts-modal')) {
     // the shortcuts below act on the list only
   } else if (e.key === 'j' || e.key === 'k') {
@@ -162,21 +159,33 @@ function markKbFocus(scroll) {
 }
 window.onEscape = () => clearSelection();
 
+// The list has no search box (the header holds Auto Claude). A "?q=" from elsewhere (the Overview's "jump to a task")
+// still filters it: shown as a chip, × clears it.
+function renderQueryChip() {
+  const slot = $('#auto-claude-slot');
+  if (!slot) return;
+  slot.querySelector('.q-chip')?.remove();
+  if (!state.q) return;
+  slot.append(
+    h(
+      'span',
+      { class: 'q-chip', title: `The list is filtered by "${state.q}"` },
+      h('span', null, 'Filter: ', h('b', null, state.q)),
+      h('button', { class: 'icon-btn sm', title: 'Clear the filter', 'aria-label': 'Clear the filter', onClick: () => ((state.q = ''), syncUrl(), renderQueryChip(), render()) }, icon('x')),
+    ),
+  );
+}
+
 async function initPage() {
   renderPresets();
   $('#jql').value = state.jql;
-  $('#search').value = state.q;
+  renderQueryChip();
 
   $('#preset').addEventListener('change', (e) => {
     const p = presets()[Number(e.target.value)];
     if (!p) return;
     $('#jql').value = p.jql || state.defaultJql;
     applyJql(p.jql);
-  });
-  $('#search').addEventListener('input', (e) => {
-    state.q = e.target.value;
-    syncUrl();
-    render();
   });
   $('#scrim').addEventListener('click', closeDrawer);
   $('#hide-done').addEventListener('click', toggleHideDone);

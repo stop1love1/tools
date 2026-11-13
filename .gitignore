@@ -20,6 +20,7 @@ dist/
 .notifications-cache.json
 .notifications-cache.json.tmp
 .daily-report-state.json
+.auto-claude-state.json
 jira/config.json
 jira/config.json.tmp
 jira/release/

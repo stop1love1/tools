@@ -23,6 +23,7 @@ const attachments = require('./lib/attachments');
 const notifications = require('./lib/notifications');
 const dailyReport = require('./lib/daily-report');
 const dailyNotifier = require('./lib/daily-notifier');
+const autoClaude = require('./lib/auto-claude');
 const { listUsers } = require('./lib/users');
 
 // Values of the user filter that are not an accountId: every assignee / tasks nobody is assigned to.
@@ -132,6 +133,10 @@ async function api(req, res, url) {
   if (route === 'POST /api/daily-report/poll') return send(res, 200, dailyNotifier.poll());
   // Settings → Daily report "Send a test notification".
   if (route === 'POST /api/daily-report/test') return send(res, 200, { shownBy: await dailyNotifier.test() });
+
+  // Auto Claude (lib/auto-claude.js): the Tasks page's switch, settings and queue.
+  if (route === 'GET /api/auto-claude') return send(res, 200, await autoClaude.view());
+  if (route === 'POST /api/auto-claude') return send(res, 200, await autoClaude.update((await readJson(req)) || {}));
 
   // Viewing someone else: the same JQL with currentUser() swapped for their account id.
   async function forUserMapper() {
@@ -271,6 +276,7 @@ server.listen(PORT, HOST, () => {
   console.log(`MCP write tools need "Authorization: Bearer <token>" — token file: ${tokenFile}`);
   mcp.warmUp();
   dailyNotifier.start({ port: PORT, buildReport: () => dailyReport.buildDailyReport() });
+  autoClaude.start();
   if (DEV) startLiveReloadServer();
 });
 
