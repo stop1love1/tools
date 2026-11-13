@@ -917,3 +917,66 @@ button.et-open:focus-visible {
   outline-offset: 2px;
   border-radius: 4px;
 }
+/* Branches row: one line per branch of the ticket (task / develop / epic) with its MR and CI pipeline. */
+.gm-branches {
+  align-items: stretch;
+  gap: 6px;
+}
+.gbline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.gbline .gbranch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gbrole {
+  flex: 0 0 auto;
+  min-width: 44px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.gbline .gchips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* CI pipeline chip: links to the pipeline on GitLab; a running one pulses. */
+.pipechip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pipechip svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+.pipechip:hover {
+  text-decoration: underline;
+}
+.pipechip.live {
+  animation: pipe-pulse 1.6s ease-in-out infinite;
+}
+@keyframes pipe-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pipechip.live {
+    animation: none;
+  }
+}

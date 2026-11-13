@@ -13,7 +13,7 @@ function getEpic(key) {
 }
 
 function epicBlock(issue) {
-  gitState.epicTableOpen.delete(issue.key); // a freshly opened drawer starts with the ticket table folded
+  gitState.epicTableOpen.add(issue.key); // a freshly opened drawer shows the ticket table (git has its own tab)
   const box = h('section', { class: 'block git-flow', id: 'git-flow' }, h('h3', null, icon('branch'), 'Git · epic'), h('div', { class: 'muted small' }, 'Reading the epic branch…'));
   getEpic(issue.key).then(
     (d) => fillEpic(box, issue, d),
@@ -114,6 +114,8 @@ function fillEpic(box, issue, d) {
   const rank = { warn: 0, todo: 1, wait: 2 };
   items.sort((a, b) => rank[a.state] - rank[b.state]);
   const allDone = exists.length > 0 && !items.length && exists.every((r) => !d.repos[r].pending);
+  const mineItems = items.filter((i) => i.state !== 'wait');
+  if (typeof setGitTabCount === 'function') setGitTabCount(mineItems.length, mineItems.some((i) => i.state === 'warn'));
 
   box.replaceChildren(
     ...[
@@ -127,10 +129,25 @@ function fillEpic(box, issue, d) {
     ].filter(Boolean),
   );
   for (const r of exists) if (!gitState.mrData[r] || !gitState.mrs.has(r)) getMrs(r).then(redraw);
+  // CI of the epic → uat MR; while it runs, look again every 10s.
+  for (const r of exists) {
+    const p = uat[r].cell.mr && getPipelines(r, [uat[r].cell.mr.iid]);
+    if (p) p.then(redraw);
+  }
+  clearTimeout(box.pipeTimer);
+  if (exists.some((r) => uat[r].cell.mr && PIPE_LIVE.has(pipeOf(r, uat[r].cell.mr.iid)?.status))) box.pipeTimer = setTimeout(redraw, 10_000);
 }
 
 // Has the epic reached uat, and what is left to do about it? → { cell, item } (item: a "Next" entry, if any).
 function epicUat(issue, e, M) {
+  const res = epicUatState(issue, e, M);
+  // The epic → uat MR (open, else the latest): its CI pipeline is shown in the cell.
+  const m = mrsOf(M, e.name, UAT()).find((x) => x.state === 'opened') || mrsOf(M, e.name, UAT())[0];
+  if (m) res.cell.mr = m;
+  return res;
+}
+
+function epicUatState(issue, e, M) {
   const label = repoLabel(e.repo);
   const m = mrsOf(M, e.name, UAT()).find((x) => x.state === 'opened');
   const c = conflictOf(m, e.conflictUat);
@@ -178,6 +195,11 @@ function epicTable(epics, uat, tickets) {
   const row = (cls, ...kids) => h('div', { class: `gm-row${cls ? ' ' + cls : ''}`, style: cols }, kids);
   const label = (text, hint) => h('div', { class: 'gm-label' }, h('b', null, text), hint && h('span', null, hint));
   const cell = (c, extra) => h('div', { class: 'gm-cell', 'data-state': c.state, title: c.title || null }, stateDot(c.state), h('span', { class: 'gm-text' }, h('b', null, c.text), c.sub && h('span', null, c.sub), extra));
+  const uatCell = (e) => {
+    const c = uat[e.repo].cell;
+    const p = c.mr && pipeOf(e.repo, c.mr.iid);
+    return cell(c, p && h('span', { class: 'gchips' }, pipeChip(p, `MR !${c.mr.iid}`)));
+  };
   const dev = (e) => {
     const commits = tickets.flatMap((t) => (t.repos[e.repo]?.commits || []).filter((c) => !c.skip));
     if (!commits.length) return cell({ state: 'na', text: '—', sub: 'no commits of its own yet' });
@@ -190,13 +212,12 @@ function epicTable(epics, uat, tickets) {
     'div',
     { class: 'gmatrix' },
     row('gm-head', h('div', { class: 'gm-label' }, 'Epic'), epics.map((e) => h('div', { class: 'gm-repo' }, repoLabel(e.repo)))),
-    row('', label(`→ ${UAT()}`, 'one MR per epic'), epics.map((e) => cell(uat[e.repo].cell))),
+    row('', label(`→ ${UAT()}`, 'one MR per epic'), epics.map(uatCell)),
     row('', label(`→ ${DEV()}`, 'per ticket'), epics.map(dev)),
   );
 }
 
-// Folded when the drawer opens (the "Next" block already lists what needs doing); "Choose commits" / "Show commits"
-// open it. Open / closed lives in gitState, so the redraws MR / title loading cause don't fold it again.
+// Open when the drawer opens; the heading folds it. "Choose commits" / "Show commits" open it again if folded. Open / closed lives in gitState, so the redraws MR / title loading cause don't fold it again.
 function ticketTable(tickets, repos, redraw, epicKey) {
   const todo = tickets.filter((t) => Object.values(t.repos).some(hasWork)).length;
   const showAll = LS.get('epicFilter', false) || !todo;

@@ -100,10 +100,9 @@ function renderDetail(issue, d) {
 
   const block = (iconName, title, count, content) =>
     h('section', { class: 'block' }, h('h3', null, iconName && icon(iconName), title, count != null && h('span', { class: 'n' }, count)), content);
-  // Reference lists (docs, subtasks): closed each time the drawer opens, so git / description come first; the
-  // heading keeps the count and opens it.
+  // Reference lists (docs, subtasks): open by default (git has its own tab now); the heading folds them.
   const foldBlock = (iconName, title, count, content) =>
-    h('details', { class: 'block fold' }, h('summary', null, h('h3', null, icon('chevRight'), iconName && icon(iconName), title, count != null && h('span', { class: 'n' }, count))), content);
+    h('details', { class: 'block fold', open: true }, h('summary', null, h('h3', null, icon('chevRight'), iconName && icon(iconName), title, count != null && h('span', { class: 'n' }, count))), content);
 
   // One compact line of facts; the drawer's space goes to git, description and comments.
   const fact = (label, ...value) => h('span', { class: 'fact' }, h('span', { class: 'fact-l' }, label), ...value);
@@ -206,6 +205,24 @@ function renderDetail(issue, d) {
     d && block('chat', 'Comments', d.comments.length, d.comments.length ? htmlFrame(commentsHtml(d.comments), siteOf(issue)) : h('div', { class: 'muted small' }, 'No comments yet.')),
   );
 
+  // Two tabs under the title: Overview (description, comments, docs, subtasks…) and Git. Both stay in the DOM (only
+  // hidden): refreshGit() finds the git block by id to redraw it after a job, whichever tab is shown.
+  const git = typeof gitFlowBlock === 'function' ? gitFlowBlock(issue, d) : null;
+  const overview = h('div', { class: `detail-grid${side.childElementCount ? '' : ' no-side'}` }, side.childElementCount ? side : null, main);
+  const panes = { overview: h('div', { class: 'detail-pane', id: 'pane-overview', role: 'tabpanel', 'aria-labelledby': 'tab-overview' }, overview) };
+  if (git) panes.git = h('div', { class: 'detail-pane', id: 'pane-git', role: 'tabpanel', 'aria-labelledby': 'tab-git' }, git);
+  const tabs = h(
+    'div',
+    { class: 'detail-tabs', role: 'tablist' },
+    Object.keys(panes).map((id) =>
+      h(
+        'button',
+        { class: 'detail-tab', id: `tab-${id}`, role: 'tab', 'aria-controls': `pane-${id}`, onClick: () => showDetailTab(id) },
+        id === 'git' ? [icon('branch'), 'Git', h('span', { class: 'tab-n', id: 'git-tab-n', hidden: true })] : [icon('doc'), 'Overview'],
+      ),
+    ),
+  );
+
   drawer.replaceChildren(
     detailHead(issue, issue.key),
     h(
@@ -214,13 +231,32 @@ function renderDetail(issue, d) {
       h('h2', { class: 'detail-title' }, issue.summary),
       urgency(issue).reasons.length > 0 && h('div', { class: 'row-reasons' }, reasonChips(issue)),
       meta,
-      // Git is what you act on: right under the title (git.js missing on an old server: skipped).
-      typeof gitFlowBlock === 'function' && gitFlowBlock(issue, d),
-      h('div', { class: `detail-grid${side.childElementCount ? '' : ' no-side'}` }, side.childElementCount ? side : null, main),
+      git && tabs,
+      Object.values(panes),
     ),
   );
+  showDetailTab(LS.get('detailTab', 'overview'), { remember: false });
   refreshDrawerStatus();
   $('.drawer-body', drawer).scrollTop = scroll;
+}
+
+// Shows one tab of the drawer (overview | git); the choice is remembered for the next drawer.
+function showDetailTab(id, { remember = true } = {}) {
+  const drawer = $('#drawer');
+  if (!$(`#pane-${id}`, drawer)) id = 'overview';
+  for (const pane of drawer.querySelectorAll('.detail-pane')) pane.hidden = pane.id !== `pane-${id}`;
+  for (const tab of drawer.querySelectorAll('.detail-tab')) tab.setAttribute('aria-selected', String(tab.id === `tab-${id}`));
+  if (remember) LS.set('detailTab', id);
+}
+
+// The Git tab's badge: how many "Next" items are the user's move (warn: one of them needs a fix). Called by the git
+// block once it has read the flow.
+function setGitTabCount(n, warn = false) {
+  const badge = $('#git-tab-n');
+  if (!badge) return;
+  badge.hidden = !n;
+  badge.textContent = n ? String(n) : '';
+  badge.classList.toggle('warn', warn);
 }
 
 function commentsHtml(comments) {
@@ -280,7 +316,15 @@ function htmlFrame(html, site) {
   frame.addEventListener('load', () => {
     const doc = frame.contentDocument;
     if (!doc) return;
-    frame.style.height = doc.documentElement.scrollHeight + 2 + 'px';
+    // Fit the frame to its content — and again whenever that changes: it may load while its tab is hidden (no layout,
+    // height 0), images arrive later, the drawer gets wider / narrower. The body's own box (not the document's
+    // scrollHeight, which never drops below the frame) so it can shrink too.
+    const fit = () => {
+      const hgt = Math.ceil(doc.body.getBoundingClientRect().height);
+      if (hgt > 0) frame.style.height = hgt + 2 + 'px';
+    };
+    fit();
+    new frame.contentWindow.ResizeObserver(fit).observe(doc.body);
     // Images open in the lightbox instead of following the link Jira wraps them in.
     doc.addEventListener('click', (e) => {
       const img = e.target.closest?.('img');

@@ -9,9 +9,9 @@ const { httpError } = require('../util');
 
 const cache = new Map(); // repo → { at, promise }
 
-function glabApi(bin, host, endpoint) {
+function glabApi(bin, host, endpoint, { paginate = true } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(bin, ['api', '--hostname', host, '--paginate', endpoint], { timeout: 20_000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(bin, ['api', '--hostname', host, ...(paginate ? ['--paginate'] : []), endpoint], { timeout: 20_000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const text = String(stderr || err.message);
         const why = err.code === 'ENOENT' ? `${bin} not found` : err.killed || /timeout|dial tcp/i.test(text) ? 'GitLab not reachable (VPN?)' : text.trim().split('\n').pop();

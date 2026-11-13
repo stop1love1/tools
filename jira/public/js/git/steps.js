@@ -42,7 +42,7 @@ function stageModel(issue, f, r, M, redraw) {
       .map((m) => ({
         state: m.state === 'merged' ? 'done' : m.state === 'opened' ? (m.conflicts ? 'warn' : 'wait') : 'na',
         text: `MR → ${name}`,
-        chips: [mrChip(m), ...mrFacts(sansConflict({ ...m, comments: 0 }))],
+        chips: [mrChip(m), pipeChip(pipeOf(repo, m.iid), `MR !${m.iid}`), ...mrFacts(sansConflict({ ...m, comments: 0 }))],
       }));
   const where = (b) => [
     b.local ? gitChip('local') : null,
@@ -385,7 +385,16 @@ function stageModel(issue, f, r, M, redraw) {
     uat?.legacy && { text: `no -${UAT()} suffix`, title: 'Older branch name without the -uat suffix' },
   ].filter(Boolean);
 
-  return { repo, label, r, branch, branchChips, cells };
+  // Every branch of the ticket in this repo, with the MR whose pipeline is that branch's CI (the team's CI runs on MR
+  // events only): the task branch has none (it goes to the epic by cherry-pick), -develop → develop, the epic → uat.
+  const latestMr = (src, tgt) => openMr(src, tgt) || mrs(src, tgt)[0] || null;
+  const branches = [
+    uat && { name: uat.name, role: 'task', mr: null },
+    dev && { name: dev.name, role: DEV(), mr: latestMr(dev.name, DEV()) },
+    { name: epic.name, role: 'epic', mr: latestMr(epic.name, UAT()) },
+  ].filter(Boolean);
+
+  return { repo, label, r, branch, branchChips, branches, cells };
 }
 
 // Rule checks (lms/.cursor/rules/git-workflow.mdc).

@@ -85,9 +85,19 @@ function fillFlow(box, issue, f, kids = []) {
   }
 
   const models = ok.map((repo) => stageModel(issue, f, f.repos[repo], gitState.mrData[repo], redraw));
+  // CI pipelines of the ticket's MRs: fetched behind the render; while one runs, look again every 10s.
+  for (const m of models) {
+    const iids = m.branches.filter((b) => b.mr).map((b) => b.mr.iid);
+    const p = iids.length > 0 && getPipelines(m.repo, iids);
+    if (p) p.then(redraw);
+  }
+  clearTimeout(box.pipeTimer);
+  if (models.some((m) => m.branches.some((b) => b.mr && PIPE_LIVE.has(pipeOf(m.repo, b.mr.iid)?.status)))) box.pipeTimer = setTimeout(redraw, 10_000);
   const items = nextItems(models);
   if (hint) items.unshift(hint);
   const allDone = models.every((m) => Object.values(m.cells).every((c) => c.state === 'done'));
+  const mineItems = items.filter((i) => i.state !== 'wait');
+  if (typeof setGitTabCount === 'function') setGitTabCount(mineItems.length, mineItems.some((i) => i.state === 'warn'));
 
   const firstMine = items.find((i) => i.state !== 'wait' && i.cell)?.cell || null;
   const sel = gitState.sel.has(issue.key) ? gitState.sel.get(issue.key) : firstMine;
@@ -144,18 +154,12 @@ function nextItems(models) {
 
 const stateDot = (state) => h('span', { class: 'gdot', 'data-state': state, 'aria-hidden': 'true' }, state === 'done' ? icon('check') : state === 'warn' ? '!' : '');
 
-function nextBlock(items, { allDone = false, choose, mrOff = false } = {}) {
+function nextBlock(items, { choose } = {}) {
   const mine = items.filter((i) => i.state !== 'wait');
-  const waiting = items.filter((i) => i.state === 'wait');
-  const head = mine.length
-    ? `Next · ${mine.length} for you${waiting.length ? ` · ${waiting.length} waiting` : ''}`
-    : waiting.length
-      ? `Nothing for you · waiting on ${waiting.length}`
-      : allDone
-        ? `Done — in ${UAT()} and ${DEV()}`
-        : mrOff
-          ? 'Nothing for you right now · MR status unavailable'
-          : 'Nothing to do right now';
+  // Only the user's moves. What waits on others (an MR in review / draft…) is already in the stage table and the
+  // Branches row (MR + CI chips), so nothing for you = no block at all.
+  if (!mine.length) return null;
+  const head = `Next · ${mine.length} for you`;
   const item = (i) =>
     h(
       'div',
@@ -177,7 +181,7 @@ function nextBlock(items, { allDone = false, choose, mrOff = false } = {}) {
           ),
       ),
     );
-  return h('div', { class: `gnext${mine.length ? ' mine' : allDone ? ' done' : ''}` }, h('div', { class: 'gnext-head' }, head), [...mine, ...waiting].map(item));
+  return h('div', { class: 'gnext mine' }, h('div', { class: 'gnext-head' }, head), mine.map(item));
 }
 
 // Rows are stages, columns are repos. A ticket's branch usually has the same name in every repo: one cell then.
@@ -186,22 +190,35 @@ function stageTable(models, sel, choose) {
   const row = (cls, ...kids) => h('div', { class: `gm-row${cls ? ' ' + cls : ''}`, style: cols }, kids);
   const label = (text, hint) => h('div', { class: 'gm-label' }, h('b', null, text), hint && h('span', null, hint));
 
-  const names = models.map((m) => m.branch);
-  const same = models.length > 1 && names.every((n) => n && n === names[0]);
-  const chips = (list, prefix) => list.map((c) => gitChip(prefix ? `${c.text} · ${prefix}` : c.text, c.kind || '', c.title));
-  const branchCell = (name, chipEls, span) =>
-    h(
+  const chips = (list) => list.map((c) => gitChip(c.text, c.kind || '', c.title));
+  // Each repo: the ticket's branches (task, -develop, epic), each with its MR and that MR's CI pipeline — the team's
+  // CI runs on MR events, so the MR's pipeline is the branch's. The name copies; the chips open GitLab.
+  const branchLine = (m, b, extra) => {
+    const mrKnown = !!gitState.mrData[m.repo]?.byBranch;
+    const p = b.mr && pipeOf(m.repo, b.mr.iid);
+    return h(
       'div',
-      { class: `gm-cell gm-branch${span ? ' span' : ''}` },
-      name ? h('button', { class: 'gcode gbranch', title: `${name}\nClick to copy`, onClick: () => copyText(name, 'Branch name copied') }, name) : h('span', { class: 'muted' }, '—'),
-      chipEls.length > 0 && h('span', { class: 'gchips' }, chipEls),
+      { class: 'gbline' },
+      h('span', { class: 'gbrole' }, b.role),
+      h('button', { class: 'gcode gbranch', title: `${b.name}\nClick to copy`, onClick: () => copyText(b.name, 'Branch name copied') }, b.name),
+      h(
+        'span',
+        { class: 'gchips' },
+        b.mr && mrChip(b.mr),
+        p
+          ? pipeChip(p, `MR !${b.mr.iid}`)
+          : b.mr && (gitState.pipes.has(`${m.repo}:mr:${b.mr.iid}`) ? h('span', { class: 'muted small', title: 'GitLab has no pipeline for this MR' }, 'no CI run') : h('span', { class: 'muted small' }, 'CI…')),
+        !b.mr && b.role === 'task' && h('span', { class: 'muted small', title: 'Task branches reach the epic by cherry-pick: no MR, so no CI run' }, 'no CI'),
+        !b.mr && b.role !== 'task' && mrKnown && h('span', { class: 'muted small' }, 'no MR yet'),
+        extra,
+      ),
     );
-  // One branch cell for every repo: a chip all repos share is shown once, the others say which repo they are about.
-  const shared = (c) => models.every((m) => m.branchChips.some((x) => x.text === c.text));
-  const sharedChips = same ? [...chips(models[0].branchChips.filter(shared)), ...models.flatMap((m) => chips(m.branchChips.filter((c) => !shared(c)), m.label))] : [];
-  const branchRow = same
-    ? row('', label('Branch', 'click to copy'), branchCell(names[0], sharedChips, true))
-    : row('', label('Branch', 'click to copy'), models.map((m) => branchCell(m.branch, chips(m.branchChips))));
+  };
+  const branchRow = row(
+    '',
+    label('Branches', 'copy · CI'),
+    models.map((m) => h('div', { class: 'gm-cell gm-branch gm-branches' }, m.branches.map((b, i) => branchLine(m, b, i === 0 && b.name === m.branch ? chips(m.branchChips) : null)))),
+  );
 
   const cell = (m, id) => {
     const c = m.cells[id];

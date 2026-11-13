@@ -31,6 +31,8 @@ const gitState = {
   epicTableOpen: new Set(), // epics whose "Tickets on the epic" table is unfolded (folded each time the drawer opens)
   devPreset: new Map(), // `${ticket}:${repo}` → commits just cherry-picked onto the epic, pre-ticked for develop
   devTargets: new Map(), // `${repo}:${ticket}` → the -develop branch chosen in the epic view
+  pipes: new Map(), // CI pipelines, see getPipelines
+  pipesLoading: new Set(),
   unticked: new Map(), // commit list (scope) → shas the user unticked: survives the redraws MR / title loading cause
   epicTitles: new Map(), // epic key → { ticket: summary }
   jiraMrs: new Map(), // ticket → MR links recorded on Jira (shown when GitLab can't be reached)
@@ -83,6 +85,64 @@ function getMrs(repo) {
     gitState.mrs.set(repo, p);
   }
   return gitState.mrs.get(repo);
+}
+
+// CI pipelines. The team's CI runs on MR events and on pushes to develop / uat — so a branch's pipeline is its MR's.
+// gitState.pipes: `${repo}:mr:${iid}` | `${repo}:ref:${ref}` → { at, value }. Never awaited by a render.
+const PIPE_LIVE = new Set(['created', 'waiting_for_resource', 'preparing', 'pending', 'running', 'scheduled']);
+const pipeOf = (repo, iid) => gitState.pipes.get(`${repo}:mr:${iid}`)?.value || null;
+const refPipeOf = (repo, ref) => gitState.pipes.get(`${repo}:ref:${ref}`)?.value || null;
+// Fetches what is missing or still running (re-read after 8s); → a promise when something was fetched, else null.
+function getPipelines(repo, iids = [], refs = []) {
+  const stale = (k) => {
+    const hit = gitState.pipes.get(k);
+    return !hit || (PIPE_LIVE.has(hit.value?.status) && Date.now() - hit.at > 8_000);
+  };
+  const mrs = [...new Set(iids)].filter((i) => stale(`${repo}:mr:${i}`) && !gitState.pipesLoading.has(`${repo}:mr:${i}`)).slice(0, 10);
+  const rs = [...new Set(refs)].filter((r) => stale(`${repo}:ref:${r}`) && !gitState.pipesLoading.has(`${repo}:ref:${r}`));
+  if (!mrs.length && !rs.length) return null;
+  const keys = [...mrs.map((i) => `${repo}:mr:${i}`), ...rs.map((r) => `${repo}:ref:${r}`)];
+  keys.forEach((k) => gitState.pipesLoading.add(k));
+  const q = new URLSearchParams([['repo', repo], ...mrs.map((i) => ['mr', i]), ...rs.map((r) => ['ref', r])]);
+  return api(`/api/git/pipelines?${q}`)
+    .then((d) => {
+      const at = Date.now();
+      for (const [i, v] of Object.entries(d.mrs || {})) gitState.pipes.set(`${repo}:mr:${i}`, { at, value: v });
+      for (const [r, v] of Object.entries(d.refs || {})) gitState.pipes.set(`${repo}:ref:${r}`, { at, value: v });
+    })
+    .catch(() => {})
+    .finally(() => keys.forEach((k) => gitState.pipesLoading.delete(k)));
+}
+const PIPE_LOOK = {
+  success: ['✓', 'passed', 'ok'],
+  failed: ['✗', 'failed', 'danger'],
+  running: ['●', 'running', 'accent'],
+  pending: ['◌', 'pending', ''],
+  created: ['◌', 'created', ''],
+  waiting_for_resource: ['◌', 'waiting', ''],
+  preparing: ['◌', 'preparing', ''],
+  scheduled: ['◌', 'scheduled', ''],
+  canceled: ['⊘', 'canceled', 'gone'],
+  skipped: ['»', 'skipped', 'gone'],
+  manual: ['▶', 'manual', 'warn'],
+};
+// A pipeline as a chip linking to it on GitLab; a failed one names its failed jobs. what: "MR !3700", "develop deploy"…
+function pipeChip(p, what = '') {
+  if (!p) return null;
+  const [mark, word, kind] = PIPE_LOOK[p.status] || ['?', p.status, ''];
+  const failed = p.failed?.length ? ` · ${p.failed.map((j) => j.name).slice(0, 2).join(', ')}${p.failed.length > 2 ? ` +${p.failed.length - 2}` : ''}` : '';
+  return h(
+    'a',
+    {
+      class: `gchip pipechip ${kind}${PIPE_LIVE.has(p.status) ? ' live' : ''}`,
+      href: p.url,
+      target: '_blank',
+      rel: 'noopener',
+      title: `Pipeline #${p.id}${what ? ` of ${what}` : ''}: ${word}${p.failed?.length ? `\nFailed jobs:\n${p.failed.map((j) => `· ${j.stage} / ${j.name}`).join('\n')}` : ''}\n${p.ref} @ ${p.sha} · ${rel(p.updated)}\nClick to open on GitLab`,
+    },
+    icon('pipeline'),
+    `${mark} ${word}${failed}`,
+  );
 }
 
 const MR_STATE = { opened: ['open', 'accent'], merged: ['merged', 'ok'], closed: ['closed', 'gone'], locked: ['locked', 'warn'] };

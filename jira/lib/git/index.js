@@ -5,6 +5,7 @@
 const { settings } = require('./settings');
 const { flow, epicView, overview, branches } = require('./read');
 const { mrs, clearMrs } = require('./mrs');
+const { pipelines } = require('./pipelines');
 const { startJob, getJob, listJobs } = require('./jobs');
 const { ACTIONS, TITLES, KEY_RE, knownDir } = require('./actions');
 const { openFolder } = require('../editor');
@@ -43,6 +44,12 @@ async function handle(req, url) {
     return epicView(k);
   }
   if (req.method === 'GET' && p === '/mrs') return mrs(repoParam(url.searchParams.get('repo')), url.searchParams.has('fresh'));
+  // ?repo=backend&mr=3700&mr=3802&ref=develop: the latest pipeline of each MR, and the latest push (deploy) pipeline of
+  // develop / uat.
+  if (req.method === 'GET' && p === '/pipelines') {
+    const q = url.searchParams;
+    return pipelines(repoParam(q.get('repo')), { mrs: q.getAll('mr'), refs: q.getAll('ref') }, q.has('fresh'));
+  }
   if (req.method === 'GET' && p === '/branch-sprints') {
     const keys = url.searchParams.getAll('key');
     if (keys.length > 300 || !keys.every((k) => KEY_RE.test(k))) throw httpError(400, 'Invalid issue keys');
