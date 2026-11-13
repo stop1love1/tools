@@ -28,8 +28,10 @@ const gitState = {
   epics: new Map(), // epic key → Promise<epic view>
   sel: new Map(), // issue key → the open panel of its git block (`${repo}:${stage}`), null once closed
   epicOpen: new Set(), // tickets whose row is expanded in the epic view
+  epicTableOpen: new Set(), // epics whose "Tickets on the epic" table is unfolded (folded each time the drawer opens)
   devPreset: new Map(), // `${ticket}:${repo}` → commits just cherry-picked onto the epic, pre-ticked for develop
   devTargets: new Map(), // `${repo}:${ticket}` → the -develop branch chosen in the epic view
+  unticked: new Map(), // commit list (scope) → shas the user unticked: survives the redraws MR / title loading cause
   epicTitles: new Map(), // epic key → { ticket: summary }
   jiraMrs: new Map(), // ticket → MR links recorded on Jira (shown when GitLab can't be reached)
   cleanupAll: false,
@@ -219,6 +221,9 @@ const ACTION_TITLES = {
   get 'pick-develop'() {
     return `Cherry-pick to ${DEV()}`;
   },
+  get 'rebuild-develop'() {
+    return `Rebuild from ${DEV()}`;
+  },
   'pick-epic': 'Cherry-pick to epic',
   skip: 'Skip commit',
   abort: 'Abort',
@@ -227,7 +232,7 @@ const ACTION_TITLES = {
   'prune-backups': 'Prune backups',
   'stash-pop': 'Pop stash',
 };
-const DANGER_ACTIONS = new Set(['rebase-epic', 'abort', 'undo', 'delete-branches', 'prune-backups']);
+const DANGER_ACTIONS = new Set(['rebase-epic', 'rebuild-develop', 'abort', 'undo', 'delete-branches', 'prune-backups']);
 
 async function gitAction(body, confirmText) {
   if (confirmText) {
@@ -292,17 +297,52 @@ const rebaseTaskAct = (repo, epicKey, b) =>
     title: `Rebase ${b.name} onto origin/epic/${epicKey} and ${b.remote ? 'force-push it (with lease)' : 'push it'} — a backup is kept (Undo)`,
   });
 
-// The epic is behind / conflicts with uat: rebase it (keeping each task's merge commit) and force-push. Shared branch → confirm.
+// The team rule (git-workflow.mdc step 4): a pushed epic that fell behind / conflicts with uat is NOT rebased or
+// force-pushed — tell the lead, resolve on the epic → uat MR (or fix on a task branch and pick it). So this is never a
+// "next step"; it sits under "Other options" for when the lead decides to rebase anyway.
+const EPIC_CONFLICT_WHY = () =>
+  `Team rule: don't rebase / force-push the epic. Tell the lead, then resolve on the epic → ${UAT()} MR (GitLab "Resolve conflicts"), or fix it on a task branch and cherry-pick that onto the epic.`;
 const rebaseEpicAct = (repo, epicKey) =>
   act(
-    `Rebase the epic onto ${UAT()}…`,
+    `Rebase & force-push the epic onto ${UAT()} (only if the lead asks)…`,
     () =>
       gitAction(
         { action: 'rebase-epic', repo, epic: epicKey },
-        `Rebase epic/${epicKey} onto origin/${UAT()} (keeping each task's merge commit) and FORCE-PUSH it?\n\nThe epic is shared: tell the team first. Open task branches will need a rebase afterwards.`,
+        `The team rule says NOT to rebase / force-push a pushed epic. Only go on if the lead decided so.\n\nRebase epic/${epicKey} onto origin/${UAT()} (keeping each task's merge commit) and FORCE-PUSH it? Open task branches will need a rebase afterwards.`,
       ),
-    { danger: true, icon: 'rebase', title: `Rebase epic/${epicKey} onto ${UAT()} — force-push` },
+    // Not red: it's an escape hatch, not an alert (the confirm dialog is still the danger one).
+    { icon: 'rebase', title: `Rebase epic/${epicKey} onto ${UAT()} — force-push (against the team rule)` },
   );
+
+// develop was rewritten after the -develop branch was cut: replay its own commits on the new develop.
+const rebuildDevAct = (repo, branch, merges) =>
+  act(
+    `Rebuild from ${DEV()}`,
+    () =>
+      gitAction(
+        { action: 'rebuild-develop', repo, branch },
+        `${branch} carries ${merges} merge commit(s) that ${DEV()} no longer has: ${DEV()} was rewritten (reset / force-pushed) after the branch was cut. Its MR would bring them all back.\n\nRecreate it from origin/${DEV()} with only its own commits (the ones on top of the old base) and force-push it (with lease)? A backup is kept (Undo).`,
+      ),
+    { icon: 'rebase', title: `Replay ${branch}'s own commits on origin/${DEV()} and force-push` },
+  );
+
+// Commit checkboxes that keep what the user unticked across redraws. scope: one list (`${repo}:${ticket}:dev` …).
+const unticked = (scope) => (gitState.unticked.has(scope) ? gitState.unticked.get(scope) : gitState.unticked.set(scope, new Set()).get(scope));
+const tickedOf = (scope, list) => list.filter((c) => !unticked(scope).has(c.sha));
+const tickBox = (scope, c, onChange) =>
+  h('input', {
+    type: 'checkbox',
+    checked: !unticked(scope).has(c.sha),
+    value: c.sha,
+    'aria-label': c.subject,
+    onChange: (e) => {
+      e.target.checked ? unticked(scope).delete(c.sha) : unticked(scope).add(c.sha);
+      onChange?.();
+    },
+  });
+
+// Why a commit is left out of a pick: it was reverted later on the branch, or it is that revert.
+const skipText = (x) => (x?.skip === 'reverted' ? `reverted by ${x.by}` : x?.skip === 'revert' ? `reverts ${x.of.join(', ')}` : '');
 
 // The -develop branch conflicts with develop: rebase it onto develop and push (own branch, backup kept → no confirm).
 const syncDevAct = (repo, branch) =>
@@ -365,17 +405,28 @@ function mrUrl(web, source, target, title, description) {
 
 const mrListUrl = (web, source) => `${web}/-/merge_requests?scope=all&state=all&source_branch=${encodeURIComponent(source)}`;
 
-function mrDescription(key, epicBranch, devBranch) {
+// MR description skeleton in the team format (git-workflow.mdc, 2026-10-23: Vietnamese, like the epic MRs). The uat
+// and develop MRs of the same diff must carry the same title and description, so the develop branch isn't named here.
+function mrDescription(key, epicBranch) {
+  const epicKey = (epicBranch || '').replace(/^epic\//, '') || key;
+  const site = CFG.jira.siteUrl || 'https://vin3s.atlassian.net';
   return [
-    '## Summary', '', '', '## Changes', '', '- ', '', '## Test cases', '', '- [ ] ', '',
-    '## Checklist', '', ...CFG.git.mrChecklist.map((c) => `- [ ] ${c}`), '',
-    '## Related issues / links', '',
-    `- Epic: \`${epicBranch}\``,
-    devBranch && `- Develop branch: \`${devBranch}\``,
-    `- Ticket: ${key}`,
-  ]
-    .filter((l) => typeof l === 'string')
-    .join('\n');
+    '## Mục đích', '',
+    `Epic [${epicKey}](${String(site).replace(/\/$/, '')}/browse/${epicKey}): <tên tính năng> — <1–2 câu: giải quyết gì, cho ai>.`, '',
+    `Stories: ${key} (<phần>)`, '',
+    '<Repo kia> tương ứng: !<n> (uat) · develop: chưa tạo', '',
+    'PRD: [<tên PRD>](<link Confluence>)', '',
+    '## Các phần đã làm', '',
+    `**<Nhóm thay đổi> (${key})**`, '- <hành vi thay đổi — không liệt kê path file>', '',
+    '**Khác**', '- không có', '',
+    '## API changes', '',
+    '| Method | Endpoint | Thay đổi | Chi tiết |', '|---|---|---|---|', '| | | **Mới** / **Sửa** | |', '',
+    'Tương thích ngược: <…>.', '',
+    '## Cấu hình khi deploy', '',
+    '1. **Migration**: không có.', '2. **Biến môi trường**: không có biến mới.', '3. **Backfill**: không có.', '4. **Phân quyền**: không có quyền mới.', '5. **Phụ thuộc FE/BE**: không có.', '',
+    '## Kiểm tra', '',
+    '- <hook / build / lint đã chạy>', '- <unit test>', '- <test tay; ghi rõ phần chưa test>',
+  ].join('\n');
 }
 
 // iconOnly: secondary / repeated actions show just their icon (label becomes the tooltip + aria-label).

@@ -13,17 +13,85 @@ const { mapPool } = require('../util');
 
 const ticketIds = (s, branch) => s.taskMatch(branch)?.ids || [];
 
-// Commits whose subject starts with one of the tickets ("<KEY>-123: …"), oldest first.
+// "(cherry picked from commit <sha>)" lines that `cherry-pick -x` leaves in the message: the exact source of a copy.
+const pickedFromRe = /cherry picked from commit ([0-9a-f]{7,40})/g;
+const pickedFrom = (body) => [...(body || '').matchAll(pickedFromRe)].map((m) => m[1]);
+
+// Commits whose subject starts with one of the tickets ("<KEY>-123: …"), oldest first. `from`: the shas it was
+// cherry-picked from (-x).
 async function ticketCommits(s, cwd, revs, ids) {
   if (!revs.length || !ids.length) return [];
   const r = await git(cwd, [
-    'log', '--no-merges', '--reverse', '-E', s.since, '--format=%H%x00%s%x00%cI',
+    'log', '--no-merges', '--reverse', '-E', s.since, '--format=%H%x00%s%x00%cI%x00%b%x1e',
     ...ids.flatMap((id) => ['--grep', s.grep(id)]), ...revs, '--',
   ]);
-  return r.stdout.split('\n').filter(Boolean).map((l) => {
-    const [sha, subject, date] = l.split('\0');
-    return { sha, subject, date };
+  return r.stdout
+    .split('\x1e')
+    .map((l) => l.replace(/^\n/, ''))
+    .filter(Boolean)
+    .map((l) => {
+      const [sha, subject, date, body] = l.split('\0');
+      return { sha, subject, date, from: pickedFrom(body) };
+    });
+}
+
+// Commits that undo others: git revert's "This reverts commit <sha>." or a hand-written "Reverts <sha>, <sha> and <sha>".
+// → Map revert sha → [target shas, possibly abbreviated].
+const revertRe = /\breverts?\s+(?:commits?\s+)?((?:[0-9a-f]{7,40}\b(?:\s*(?:,|and|&)\s*|\s+))*[0-9a-f]{7,40}\b)/gi;
+async function revertTargets(cwd, shas) {
+  const map = new Map();
+  if (!shas.length) return map;
+  const r = await git(cwd, ['show', '-s', '--format=%H%x00%B%x1e', ...shas]);
+  for (const rec of r.stdout.split('\x1e')) {
+    const [sha, body] = rec.replace(/^\s+/, '').split('\0');
+    if (!sha || !body) continue;
+    const targets = [...body.matchAll(revertRe)].flatMap((m) => m[1].match(/[0-9a-f]{7,40}/g)).filter((t) => !sha.startsWith(t));
+    if (targets.length) map.set(sha, [...new Set(targets)]);
+  }
+  return map;
+}
+
+// A commit and the commit that reverts it cancel out: picking them onto a branch that has neither only adds noise
+// (or conflicts, or undoes the redo that came after). → Map sha → { skip: 'reverted', by } | { skip: 'revert', of }.
+// Not skipped: an original already on the target (its revert is then needed there too) and a revert of such a commit.
+function revertPairs(list, reverts, isOn) {
+  const out = new Map();
+  const find = (p) => list.find((c) => c.sha.startsWith(p));
+  for (const r of list) {
+    const targets = (reverts.get(r.sha) || []).map(find).filter(Boolean);
+    if (!targets.length) continue;
+    for (const t of targets) if (!isOn(t)) out.set(t.sha, { skip: 'reverted', by: r.sha.slice(0, 9) });
+    if (!targets.some(isOn) && !isOn(r)) out.set(r.sha, { skip: 'revert', of: targets.map((t) => t.sha.slice(0, 9)) });
+  }
+  return out;
+}
+
+// Is `c` (one of `list`) also in the index of another branch's commits? By the -x trailer, else the patch id, else
+// the subject — only when no other commit of `list` has the same subject (a redone commit often keeps its subject).
+function matcher(list, pids) {
+  const count = new Map();
+  for (const c of list) count.set(c.subject, (count.get(c.subject) || 0) + 1);
+  const index = (copies) => ({
+    from: new Set(copies.flatMap((c) => c.from || [])),
+    pids: new Set(copies.map((c) => pids.get(c.sha)).filter(Boolean)),
+    subjects: new Set(copies.map((c) => c.subject)),
+    copies,
   });
+  const has = (ix, c) =>
+    [...ix.from].some((f) => c.sha.startsWith(f)) || ix.pids.has(pids.get(c.sha)) || (count.get(c.subject) === 1 && ix.subjects.has(c.subject));
+  // The copy itself (to cherry-pick from it): the same tests, in the same order.
+  const copyOf = (ix, c) =>
+    ix.copies.find((x) => (x.from || []).some((f) => c.sha.startsWith(f))) ||
+    ix.copies.find((x) => pids.get(x.sha) && pids.get(x.sha) === pids.get(c.sha)) ||
+    (count.get(c.subject) === 1 ? ix.copies.find((x) => x.subject === c.subject) : null);
+  return { index, has, copyOf };
+}
+
+// Merge commits on a -develop branch that develop doesn't have: a -develop branch is cherry-picks on top of develop,
+// so these mean it was cut from a develop that has since been rewritten (reset / force-pushed). Its MR would bring
+// all of them back.
+async function staleMerges(cwd, tip, develop) {
+  return Number((await git(cwd, ['rev-list', '--count', '--merges', tip, `^origin/${develop}`])).stdout.trim()) || 0;
 }
 
 // Cherry-picks get new SHAs; match them by patch id (same diff) or, after a conflict, by subject.
@@ -171,7 +239,8 @@ async function repoFlow(s, repo, key, epicKey, pin) {
     ticketCommits(s, cwd, source, ids),
     devTips.length ? ticketCommits(s, cwd, devTips, ids) : [],
     ticketCommits(s, cwd, [`origin/${DEV}`], ids),
-    epicRef && tips.length ? ticketCommits(s, cwd, [epicRef], ids) : [],
+    // Also without a task branch: the commits are then read from the epic itself (committed straight onto it).
+    epicRef ? ticketCommits(s, cwd, [epicRef], ids) : [],
     ticketCommits(s, cwd, [`origin/${UAT}`], ids),
     uatName ? ticketCommits(s, cwd, [tipOf(uatName)], ids) : [],
   ]);
@@ -185,12 +254,14 @@ async function repoFlow(s, repo, key, epicKey, pin) {
     if (!seen || (primaryShas.has(c.sha) && !primaryShas.has(seen.sha)) || (!primaryShas.has(seen.sha) && Date.parse(c.date) > Date.parse(seen.date))) byPatch.set(id, c);
   }
   const taskCommits = [...byPatch.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date)).slice(-100);
-  const index = (list) => ({ subjects: new Set(list.map((c) => c.subject)), pids: new Set(list.map((c) => pids.get(c.sha)).filter(Boolean)) });
+  const { index, has, copyOf } = matcher(taskCommits, pids);
   const inBranch = index(onBranch);
   const inDevelop = index(onDevelop);
   const inEpic = index(onEpic);
   const inUat = index(onUat);
-  const has = (ix, c) => ix.pids.has(pids.get(c.sha)) || ix.subjects.has(c.subject);
+  // No task branch: the ticket's commits were read from the epic — work committed straight onto it (against the
+  // rule, but done: nothing left to start or pick onto the epic).
+  flow.onEpicDirectly = !tips.length && taskCommits.length > 0;
   flow.commits = taskCommits.map((c) => ({
     sha: c.sha,
     short: c.sha.slice(0, 9),
@@ -199,8 +270,18 @@ async function repoFlow(s, repo, key, epicKey, pin) {
     inDevelop: has(inDevelop, c),
     inUat: has(inUat, c),
     inEpic: has(inEpic, c),
+    // The rule picks the epic's SHAs onto -develop (so -x points at the epic): the epic's copy of this commit.
+    epicSha: copyOf(inEpic, c)?.sha || null,
     picked: has(inBranch, c) || has(inDevelop, c),
   }));
+  // A commit reverted later on the branch (work redone) and its revert: neither is to be picked.
+  const reverts = await revertTargets(cwd, flow.commits.map((c) => c.sha));
+  const skipDev = revertPairs(flow.commits, reverts, (c) => c.picked);
+  const skipEpic = revertPairs(flow.commits, reverts, (c) => c.inEpic);
+  for (const c of flow.commits) {
+    c.skipDev = skipDev.get(c.sha) || null;
+    c.skipEpic = skipEpic.get(c.sha) || null;
+  }
   // Which epics already carry this ticket's commits — Jira's parent Epic isn't always the branch that was used.
   const epicBranches = [...remote.keys()].filter((b) => s.epicRe.test(b));
   const grep = ids.flatMap((id) => ['--grep', s.grep(id)]);
@@ -221,7 +302,11 @@ async function repoFlow(s, repo, key, epicKey, pin) {
   // Commits on a branch that aren't this ticket's: branched off the wrong base (develop ↔ uat), or a wrong message.
   const ticketRe = new RegExp(`^${s.key}-(${ids.join('|')}):`);
   if (flow.uat) flow.uat.foreign = await foreignCommits(s, cwd, tipOf(uatName), [epicRef, `origin/${UAT}`].filter(Boolean), ticketRe);
-  if (flow.develop && devTip) flow.develop.foreign = await foreignCommits(s, cwd, devTip, [`origin/${DEV}`], ticketRe);
+  if (flow.develop && devTip) {
+    flow.develop.staleBase = await staleMerges(cwd, devTip, DEV);
+    // Cut from an old develop: every old-develop commit would look "foreign" — staleBase already says it all.
+    flow.develop.foreign = flow.develop.staleBase ? [] : await foreignCommits(s, cwd, devTip, [`origin/${DEV}`], ticketRe);
+  }
 
   // Would each MR still to merge conflict? Checked locally, so it works off VPN, before the MR exists, and while
   // GitLab still says "checking". The source is the local tip when there is one (what the next push sends).
@@ -229,7 +314,7 @@ async function repoFlow(s, repo, key, epicKey, pin) {
     // Also after a merge: new commits on the branch need another MR into the epic.
     flow.uat && epicRef && flow.uat.aheadEpic > 0 ? mergeConflicts(cwd, epicRef, tipOf(uatName)) : null,
     epicRef && flow.epic.pending > 0 ? mergeConflicts(cwd, `origin/${UAT}`, epicRef) : null,
-    devTip && !(flow.commits.length && flow.commits.every((c) => c.inDevelop)) ? mergeConflicts(cwd, `origin/${DEV}`, devTip) : null,
+    devTip && !flow.develop?.staleBase && !(flow.commits.length && flow.commits.every((c) => c.inDevelop)) ? mergeConflicts(cwd, `origin/${DEV}`, devTip) : null,
   ]);
   if (flow.uat) flow.uat.conflictEpic = taskVsEpic ?? null;
   flow.epic.conflictUat = epicVsUat ?? null;
@@ -275,6 +360,7 @@ async function repoEpic(s, repo, key) {
     counts(cwd, ref, `origin/${s.uat}`),
     lines(['rev-list', '--first-parent', s.since, `origin/${s.uat}`]).then((l) => new Set(l)),
     lines(['rev-list', s.since, `origin/${s.uat}`]).then((l) => new Set(l)),
+    // Only for commits without a ticket (not offered for picking); ticket commits are matched precisely below.
     lines(['log', '--no-merges', s.since, '--format=%s', `origin/${s.develop}`]).then((l) => new Set(l)),
   ]);
   res.pending = vsUat?.onlyA ?? null;
@@ -335,12 +421,33 @@ async function repoEpic(s, repo, key) {
       if (!cur || (s.taskMatch(cur).legacy && !m.legacy)) (branches[t] ||= {})[m.track] = b;
     }
   }
-  for (const [t, b] of Object.entries(branches)) {
-    if (!b.develop) continue;
-    const tip = local.has(b.develop) ? `refs/heads/${b.develop}` : `origin/${b.develop}`;
-    const onBranch = new Set(await lines(['log', '--no-merges', '-n', '300', '--format=%s', tip, `^origin/${s.develop}`, '--']));
-    for (const g of groups) for (const c of g.commits) if (c.ticket === t && onBranch.has(c.subject)) c.onDevBranch = true;
-  }
+  // On develop / on the ticket's -develop branch: by the -x trailer, patch id, or a subject no other epic commit has
+  // (a redone commit often keeps the subject of the one it replaced — matching by subject alone marks both as there).
+  const all = groups.flatMap((g) => g.commits).filter((c) => c.ticket);
+  const ids = [...tickets].map((t) => t.split('-')[1]);
+  const tipOf = (b) => (local.has(b) ? `refs/heads/${b}` : `origin/${b}`);
+  const devBranches = Object.entries(branches).filter(([, b]) => b.develop);
+  const [onDevelop, ...onBranches] = await Promise.all([
+    ticketCommits(s, cwd, [`origin/${s.develop}`], ids),
+    ...devBranches.map(([, b]) => ticketCommits(s, cwd, [tipOf(b.develop), `^origin/${s.develop}`], ids)),
+  ]);
+  const pids = await patchIds(cwd, [...all, ...onDevelop, ...onBranches.flat()].map((c) => c.sha));
+  const { index, has } = matcher(all, pids);
+  const inDev = index(onDevelop);
+  for (const c of all) c.inDevelop = has(inDev, c);
+  devBranches.forEach(([t, b], i) => {
+    const ix = index(onBranches[i]);
+    for (const c of all) if (c.ticket === t && !c.inDevelop && has(ix, c)) c.onDevBranch = true;
+  });
+  // A commit reverted later on the epic and its revert: neither is to be picked onto develop.
+  const skip = revertPairs(all, await revertTargets(cwd, all.map((c) => c.sha)), (c) => c.inDevelop || c.onDevBranch);
+  for (const c of all) if (skip.has(c.sha)) Object.assign(c, skip.get(c.sha));
+  // -develop branches cut from a develop that has since been rewritten (see staleMerges).
+  res.devStale = {};
+  await mapPool(devBranches, 4, async ([, b]) => {
+    const n = await staleMerges(cwd, tipOf(b.develop), s.develop);
+    if (n) res.devStale[b.develop] = n;
+  });
   res.branches = branches;
   // Jira decides which tickets belong to this epic; commits of other epics' tickets must not be picked from here.
   res.ticketEpics = {};
@@ -422,4 +529,4 @@ async function branches(repo) {
   return { repo, branches: list, backups: { total: backups.length, old, days } };
 }
 
-module.exports = { flow, epicView, overview, branches, ticketIds };
+module.exports = { flow, epicView, overview, branches, ticketIds, _internal: { revertTargets, revertPairs, matcher } };

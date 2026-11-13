@@ -84,7 +84,7 @@ function fillFlow(box, issue, f, kids = []) {
     return;
   }
 
-  const models = ok.map((repo) => stageModel(issue, f, f.repos[repo], gitState.mrData[repo]));
+  const models = ok.map((repo) => stageModel(issue, f, f.repos[repo], gitState.mrData[repo], redraw));
   const items = nextItems(models);
   if (hint) items.unshift(hint);
   const allDone = models.every((m) => Object.values(m.cells).every((c) => c.state === 'done'));

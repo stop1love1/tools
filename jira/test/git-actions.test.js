@@ -185,6 +185,8 @@ test('pick-epic cherry-picks the task commits onto the epic and pushes fast-forw
   assert.equal(job.status, 'ok', job.error);
   assert.equal(job.result.notInEpic, 0, 'git cherry finds every task commit on the epic');
   assert.equal(sh(origin, 'log', '-1', '--format=%s', 'refs/heads/epic/VLEARN-100'), 'VLEARN-123: add y');
+  // The rule picks with -x: the epic's copy names the task commit it came from.
+  assert.match(sh(origin, 'log', '-1', '--format=%b', 'refs/heads/epic/VLEARN-100'), new RegExp(`cherry picked from commit ${sha}`));
 });
 
 test('pick-epic refuses a commit that belongs to another ticket', async () => {
@@ -295,4 +297,75 @@ test('prune-backups deletes only backup refs older than the limit', async () => 
   assert.equal(job.status, 'ok', job.error);
   const left = sh(repo, 'for-each-ref', '--format=%(refname)', 'refs/dash-backup/prune-me/').split('\n').filter(Boolean);
   assert.deepEqual(left, [fresh]);
+});
+
+// develop rewritten (reset / force-pushed) after a -develop branch was cut from it.
+const DEV_BRANCH = 'feature/VLEARN-400-thing-develop';
+
+test('pick-develop refuses a -develop branch cut from a rewritten develop; rebuild-develop keeps only its own commits', async () => {
+  sh(other, 'fetch', '-q', 'origin');
+  sh(other, 'checkout', '-q', '-B', 'develop', 'origin/uat');
+  write(other, 'd.txt', 'old develop\n');
+  commitAll(other, 'old develop work');
+  sh(other, 'checkout', '-q', '-b', 'side');
+  write(other, 'side.txt', 'side\n');
+  commitAll(other, 'VLEARN-9: side');
+  sh(other, 'checkout', '-q', 'develop');
+  sh(other, 'merge', '-q', '--no-ff', '-m', "Merge branch 'side' into 'develop'", 'side');
+  sh(other, 'push', '-q', 'origin', 'develop');
+  sh(other, 'checkout', '-q', '-b', DEV_BRANCH);
+  write(other, 'own.txt', 'own\n');
+  commitAll(other, 'VLEARN-400: own work');
+  sh(other, 'push', '-q', 'origin', DEV_BRANCH);
+  const own = sh(other, 'rev-parse', 'HEAD');
+  // develop is rewritten: reset to uat plus a new commit.
+  sh(other, 'checkout', '-q', '-B', 'develop', 'origin/uat');
+  write(other, 'n.txt', 'new develop\n');
+  commitAll(other, 'new develop');
+  sh(other, 'push', '-q', '--force', 'origin', 'develop');
+
+  const pick = await run({ action: 'pick-develop', branch: DEV_BRANCH, shas: [own] });
+  assert.equal(pick.status, 'error');
+  assert.match(pick.error, /develop was rewritten/);
+
+  const job = await run({ action: 'rebuild-develop', branch: DEV_BRANCH });
+  assert.equal(job.status, 'ok', job.error);
+  const tip = `refs/heads/${DEV_BRANCH}`;
+  assert.equal(sh(origin, 'rev-list', '--count', '--merges', tip, '^refs/heads/develop'), '0', 'no old merge left');
+  assert.equal(sh(origin, 'log', '--format=%s', tip, '^refs/heads/develop'), 'VLEARN-400: own work', 'only its own commit, on the new develop');
+  assert.ok(job.log.some((l) => /dropping its old develop base/.test(l)));
+
+  const again = await run({ action: 'rebuild-develop', branch: DEV_BRANCH });
+  assert.equal(again.status, 'error');
+  assert.match(again.error, /already on top of develop/);
+});
+
+test('a commit and its later revert cancel out; a revert of a commit already on the target is kept', async () => {
+  const { revertTargets, revertPairs } = require('../lib/git/read')._internal;
+  sh(other, 'checkout', '-q', '-B', 'reverts', 'origin/uat');
+  write(other, 'r.txt', 'first try\n');
+  commitAll(other, 'VLEARN-500: first try');
+  const a = sh(other, 'rev-parse', 'HEAD');
+  sh(other, 'rm', '-q', 'r.txt');
+  sh(other, 'commit', '-q', '-m', 'VLEARN-500: Revert the first try to redo it', '-m', `Reverts ${a.slice(0, 9)} so it can be redone.`);
+  const b = sh(other, 'rev-parse', 'HEAD');
+  sh(other, 'revert', '--no-edit', b); // git's own message: "This reverts commit <b>."
+  const c = sh(other, 'rev-parse', 'HEAD');
+  write(other, 'r.txt', 'redo\n');
+  commitAll(other, 'VLEARN-500: redo');
+  const d = sh(other, 'rev-parse', 'HEAD');
+
+  const reverts = await revertTargets(other, [a, b, c, d]);
+  assert.deepEqual(reverts.get(b), [a.slice(0, 9)], 'hand-written "Reverts <sha>"');
+  assert.deepEqual(reverts.get(c), [b], 'git revert');
+  assert.ok(!reverts.has(a) && !reverts.has(d));
+
+  const list = [a, b, d].map((sha) => ({ sha }));
+  const none = revertPairs(list, reverts, () => false);
+  assert.equal(none.get(a)?.skip, 'reverted');
+  assert.equal(none.get(b)?.skip, 'revert');
+  assert.ok(!none.has(d), 'the redo is picked');
+
+  const aOnTarget = revertPairs(list, reverts, (x) => x.sha === a);
+  assert.ok(!aOnTarget.has(b), 'the original is already there: its revert is needed too');
 });

@@ -302,7 +302,7 @@ function client() {
     workflow,
     daily,
     agent: { mcp: mcp.enabled, writes: mcp.allowWrites },
-    jira: { defaultJql: jira.defaultJql, presets: jira.presets, autoRefreshMinutes: jira.autoRefreshMinutes },
+    jira: { siteUrl: jira.siteUrl, defaultJql: jira.defaultJql, presets: jira.presets, autoRefreshMinutes: jira.autoRefreshMinutes },
     git: {
       repos: git.repos.map(({ id, label }) => ({ id, label })),
       projectKey: git.projectKey,

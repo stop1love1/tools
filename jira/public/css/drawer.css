@@ -154,3 +154,32 @@ iframe.desc {
   margin: auto;
   cursor: zoom-out;
 }
+
+/* Folded blocks (Confluence docs, Subtasks): the heading is the toggle. */
+details.block.fold > summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: 6px;
+}
+details.block.fold > summary::-webkit-details-marker {
+  display: none;
+}
+details.block.fold > summary h3 {
+  margin-bottom: 0;
+}
+details.block.fold[open] > summary h3 {
+  margin-bottom: 8px;
+}
+details.block.fold > summary h3 svg:first-child {
+  transition: transform 0.15s;
+}
+details.block.fold[open] > summary h3 svg:first-child {
+  transform: rotate(90deg);
+}
+details.block.fold > summary:hover h3 {
+  color: var(--text);
+}
+details.block.fold > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

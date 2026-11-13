@@ -133,13 +133,3 @@
 .gicon.danger:hover {
   background: var(--danger-soft);
 }
-.gnomr {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  color: var(--muted);
-}
-.gnomr svg {
-  width: 13px;
-  height: 13px;
-}

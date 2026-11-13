@@ -18,7 +18,7 @@ const MAX_OUTPUT = 60_000; // characters of one tool result; longer ones are cut
 const JOB_WAIT_DEFAULT = 20; // seconds run_git_action waits before handing back a still-running job id
 
 // run_git_action steps that rewrite or delete history / refs: they need "Allow destructive git steps" on top of "Allow write tools".
-const DESTRUCTIVE_ACTIONS = new Set(['sync-task', 'sync-develop', 'rebase-epic', 'undo', 'delete-branches', 'prune-backups']);
+const DESTRUCTIVE_ACTIONS = new Set(['sync-task', 'sync-develop', 'rebuild-develop', 'rebase-epic', 'undo', 'delete-branches', 'prune-backups']);
 const isDestructive = (action, params) => DESTRUCTIVE_ACTIONS.has(action) || (action === 'push' && !!params?.force);
 
 const issueKey = (k) => {
@@ -215,10 +215,10 @@ const TOOLS = [
     name: 'create_merge_request',
     write: true,
     description:
-      'Open a GitLab merge request the team way (title "<KEY>-123: <commit subject>" — the same for epic-uat and develop — and the description template with checklist) and return its link. ' +
+      'Open a GitLab merge request the team way (title "<KEY>-123: <commit subject>" — the same for epic-uat and develop — and the team\'s Vietnamese description: Mục đích / Các phần đã làm / Cấu hình khi deploy / Kiểm tra, identical for the uat and develop MRs) and return its link. Write summary and changes in Vietnamese; fill the <…> placeholders on GitLab afterwards. ' +
       'kind: "epic-uat" = epic → uat, "develop" = the -develop branch → develop; "task-epic" (task → epic) is legacy: put the task into the epic with run_git_action pick-epic instead. The source branch must be pushed. ' +
       'Returns the existing MR when one is already open for the same branches. ' +
-      'checklist: tick only what you really checked, each with a short note (shown after "—"); items not listed stay [ ]. Use the same title, summary and changes for the uat and develop MRs; only the Build note differs (the command run on each branch). ' +
+      'checklist: what you really checked, each with a short note — listed under Kiểm tra; unchecked items are left out. Use the same title, summary and changes for the uat and develop MRs. ' +
       'testCases: plain strings stay [ ]; pass {text, checked: true, note} only when you really called the API or tested by hand.',
     inputSchema: {
       type: 'object',
@@ -226,8 +226,8 @@ const TOOLS = [
         repo: str('Repo id'),
         key: str('Issue key'),
         kind: { type: 'string', enum: Object.keys(MR_KINDS) },
-        summary: str('1–3 sentences: what and why (English)'),
-        changes: { type: 'array', items: { type: 'string' }, description: 'Bullet list of the changes' },
+        summary: str('<tên tính năng> — 1–2 câu: giải quyết gì, cho ai (Vietnamese, for "Mục đích")'),
+        changes: { type: 'array', items: { type: 'string' }, description: '"Các phần đã làm": behaviour changes in Vietnamese, no file paths' },
         testCases: {
           type: 'array',
           description: 'How to verify. A string = not run yet ([ ]); an object ticks it only with proof of a real API call / manual test.',
@@ -263,11 +263,11 @@ const TOOLS = [
       'Actions and their params (all take repo unless noted):',
       '- fetch; checkout {branch}; push {branch, force?}; stash-pop {ref}',
       '- ensure-epic {epic}; start-task {key, repos[], branch, epic?, stash?} (no repo; branch <type>/<KEY>-<id>-<desc>-uat)',
-      '- create-task {epic, branch}; sync-task {epic, branch} (rebase task onto epic + push); sync-develop {branch (…-develop)} (rebase onto develop + push); rebase-epic {epic}',
-      '- pick-develop {branch (…-develop), shas[]}; pick-epic {epic, branch (task …-uat), shas[]} (how a task gets into the epic, instead of an MR task → epic: cherry-pick the task\'s commits straight onto the epic and push, fast-forward only; the log ends with a git cherry check — no "+" line = fully on the epic); commit {message "<KEY>-123: …", files[], push?, skip?[] (pre-commit hook ids to skip, passed as SKIP=; only for a hook failing for reasons unrelated to the change, e.g. npm-audit / trivy-fs)}',
+      '- create-task {epic, branch}; sync-task {epic, branch} (rebase task onto epic + push); sync-develop {branch (…-develop)} (rebase onto develop + push); rebuild-develop {branch (…-develop)} (develop was rewritten: replay the branch\'s own commits on the new develop + force-push); rebase-epic {epic} (against the team rule — only when the lead asks)',
+      '- pick-develop {branch (…-develop), shas[]} (cherry-pick -x; pass the epic\'s SHAs; refused on a branch cut from a rewritten develop); pick-epic {epic, branch (task …-uat), shas[]} (how a task gets into the epic, instead of an MR task → epic: cherry-pick -x the task\'s commits straight onto the epic and push, fast-forward only; the log ends with a git cherry check — no "+" line = fully on the epic); commit {message "<KEY>-123: …", files[], push?, skip?[] (pre-commit hook ids to skip, passed as SKIP=; only for a hook failing for reasons unrelated to the change, e.g. npm-audit / trivy-fs)}',
       '- continue / skip / abort {dir?} (continue / skip also do the push the stopped step owed); undo {branch}; delete-branches {branches[]}; prune-backups {days}',
       `Waits for the job up to waitSeconds (default ${JOB_WAIT_DEFAULT}) and returns its status and log; a job still running then comes back with status "running" and its id: follow it with get_git_job.`,
-      'Destructive steps (sync-task, sync-develop, rebase-epic, undo, delete-branches, prune-backups, push with force) are refused unless "Allow destructive git steps" is on in Settings → MCP.',
+      'Destructive steps (sync-task, sync-develop, rebuild-develop, rebase-epic, undo, delete-branches, prune-backups, push with force) are refused unless "Allow destructive git steps" is on in Settings → MCP.',
     ].join('\n'),
     inputSchema: {
       type: 'object',

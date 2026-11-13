@@ -80,21 +80,27 @@ function testCaseLines(testCases) {
   });
 }
 
-function description({ key, summary, changes, testCases, checklist, epicBranch, devBranch, url }) {
+// The team format (lms/.cursor/rules/git-workflow.mdc, 2026-10-23: Vietnamese, like the epic MRs — Mục đích / Các phần
+// đã làm / API / Cấu hình khi deploy / Kiểm tra). The uat and develop MRs of one diff must carry the same title and
+// description, so nothing here depends on the target branch. Placeholders in <…> are left for the author to fill.
+function description({ key, summary, changes, testCases, checklist, epicBranch, site }) {
   const list = (items, empty) => (items?.length ? items.map((x) => `- ${x}`) : [empty]);
   const cases = testCaseLines(testCases);
+  const checked = checklistLines(checklist).filter((l) => l.startsWith('- [x]'));
+  const epicKey = (epicBranch || '').replace(/^epic\//, '') || key;
+  const link = (k) => (site ? `[${k}](${site}/browse/${k})` : k);
   return [
-    '## Summary', '', summary || '', '',
-    '## Changes', '', ...list(changes, '- '), '',
-    '## Test cases', '', ...(cases.length ? cases : ['- [ ] ']), '',
-    '## Checklist', '', ...checklistLines(checklist), '',
-    '## Related issues / links', '',
-    epicBranch && `- Epic: \`${epicBranch}\``,
-    devBranch && `- Develop branch: \`${devBranch}\``,
-    `- Ticket: ${key}${url ? ` (${url})` : ''}`,
-  ]
-    .filter((l) => typeof l === 'string')
-    .join('\n');
+    '## Mục đích', '',
+    `Epic ${link(epicKey)}: ${summary || '<tên tính năng> — <1–2 câu: giải quyết gì, cho ai>'}`, '',
+    `Stories: ${key}`, '',
+    '<Repo kia> tương ứng: !<n> (uat) · develop: chưa tạo', '',
+    '## Các phần đã làm', '',
+    ...list(changes, '- <hành vi thay đổi — không liệt kê path file>'), '',
+    '## Cấu hình khi deploy', '',
+    '1. **Migration**: <tên migration> / không có.', '2. **Biến môi trường**: <…> / không có biến mới.', '3. **Backfill**: <…> / không có.', '4. **Phân quyền**: <…> / không có quyền mới.', '5. **Phụ thuộc FE/BE**: <…> / không có.', '',
+    '## Kiểm tra', '',
+    ...(cases.length || checked.length ? [...checked, ...cases] : ['- <hook / build / lint đã chạy>', '- <test tay; ghi rõ phần chưa test>']),
+  ].join('\n');
 }
 
 // Returns { url, iid, source, target, title, created } for the MR of `kind` for ticket `key` in `repo`.
@@ -140,8 +146,7 @@ async function createMergeRequest({ repo, key, kind = 'epic-uat', title, summary
     testCases,
     checklist,
     epicBranch: r.epic.name,
-    devBranch: kind === 'task-epic' ? s.toDevelop(source) : kind === 'develop' ? source : null,
-    url: `${config.get().jira.siteUrl.replace(/\/+$/, '')}/browse/${key}`,
+    site: config.get().jira.siteUrl.replace(/\/+$/, ''),
   });
   try {
     const m = await glab([

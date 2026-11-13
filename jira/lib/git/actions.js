@@ -1,8 +1,10 @@
 'use strict';
 
 // Git flow steps, run as jobs. Follows lms/.cursor/rules/git-workflow.mdc:
-//   epic/<KEY>-<epic> (off uat) → <prefix>/<KEY>-<id>-<desc>-uat (off the epic) → task cherry-picked onto the epic (pick-epic)
-//   → one MR epic → uat → <prefix>/<KEY>-<id>-<desc>-develop (off develop, cherry-picked) → MR → develop.
+//   epic/<KEY>-<epic> (off uat) → <prefix>/<KEY>-<id>-<desc>-uat (off the epic) → `cherry-pick -x` onto the epic (pick-epic)
+//   → one MR epic → uat → <prefix>/<KEY>-<id>-<desc>-develop (off develop, `cherry-pick -x` of the epic's SHAs) → MR → develop.
+// The rule says never to rebase / force-push a pushed epic (step 4: tell the lead, resolve on the epic → uat MR);
+// rebase-epic stays only for when the lead decides otherwise, and the UI never offers it as the next step.
 //
 // Safety:
 // - A step runs in the worktree that already has the branch checked out; otherwise in a scratch
@@ -360,7 +362,8 @@ const ACTIONS = {
     return rebaseAndPush(ctx, repo, branch, `origin/${ctx.s.develop}`);
   },
 
-  // Epic fell behind uat: rebase it keeping each task's merge commit, then force-push (rule step 5).
+  // Epic fell behind uat: rebase it keeping each task's merge commit, then force-push. Against rule step 4 unless the
+  // lead asked for it — the UI only shows it under "Other options".
   async 'rebase-epic'(ctx, { repo, epic }) {
     const { s } = ctx;
     const name = `epic/${issueKey(epic)}`;
@@ -403,6 +406,11 @@ const ACTIONS = {
     if (foreign.length) throw httpError(400, `These commits belong to other tickets than ${branch}:\n${foreign.join('\n')}`);
     if (!regular.length) throw httpError(400, 'No regular commits to cherry-pick.');
     const exists = (await localHas(ctx, repo, branch)) || (await remoteHas(ctx, repo, branch));
+    if (exists) {
+      const tip = (await localHas(ctx, repo, branch)) ? `refs/heads/${branch}` : `origin/${branch}`;
+      const stale = Number((await git(s.repos[repo], ['rev-list', '--count', '--merges', tip, `^origin/${s.develop}`])).stdout.trim()) || 0;
+      if (stale) throw httpError(409, `${branch} carries ${stale} merge commit(s) that ${s.develop} no longer has (${s.develop} was rewritten). Rebuild it from ${s.develop} first.`);
+    }
     const dir = exists ? await dirFor(ctx, repo, branch) : await dirFor(ctx, repo, branch, { createFrom: `origin/${s.develop}` });
     if (exists && (await remoteHas(ctx, repo, branch))) {
       const c = await counts(dir, branch, `origin/${branch}`);
@@ -410,7 +418,8 @@ const ACTIONS = {
     }
     await backup(ctx, dir, branch);
     try {
-      await ctx.run(dir, ['cherry-pick', ...regular], { noHooks: true, timeout: 600_000 });
+      // -x: the message records the epic SHA it came from (the rule's way to trace a task back).
+      await ctx.run(dir, ['cherry-pick', '-x', ...regular], { noHooks: true, timeout: 600_000 });
     } catch (e) {
       return conflictOr(e, dir, { repo, branch }).catch(async (err) => {
         // Not a conflict (e.g. bad commit): don't leave a half-done sequence behind.
@@ -419,6 +428,45 @@ const ACTIONS = {
       });
     }
     await push(ctx, repo, branch);
+    return { dir };
+  },
+
+  // develop was rewritten (reset / force-pushed) after this -develop branch was cut: put the branch's own commits —
+  // the non-merge ones on top of its old base, minus any develop already has — onto the new develop and force-push
+  // (with lease). A backup is kept (Undo).
+  async 'rebuild-develop'(ctx, { repo, branch }) {
+    const { s } = ctx;
+    branch = taskBranch(s, branch, s.develop);
+    await fetchOrigin(ctx, repo);
+    const cwd = s.repos[repo];
+    const onOrigin = await remoteHas(ctx, repo, branch);
+    const tip = (await localHas(ctx, repo, branch)) ? `refs/heads/${branch}` : onOrigin ? `origin/${branch}` : null;
+    if (!tip) throw httpError(404, `${branch} does not exist.`);
+    const chain = (await git(cwd, ['rev-list', '--first-parent', '--parents', tip, `^origin/${s.develop}`])).stdout.split('\n').filter(Boolean).map((l) => l.split(' '));
+    const own = [];
+    for (const [sha, ...parents] of chain) {
+      if (parents.length > 1) break; // the old base starts at its first merge commit
+      own.push(sha);
+    }
+    if (own.length === chain.length) throw httpError(409, `${branch} is already on top of ${s.develop} — use "Rebase onto ${s.develop}" if it conflicts.`);
+    const already = new Set((await git(cwd, ['cherry', `origin/${s.develop}`, tip])).stdout.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2)));
+    const keep = own.filter((x) => !already.has(x)).reverse();
+    if (!keep.length) throw httpError(409, `None of ${branch}'s own commits is missing from ${s.develop} — nothing to keep. Delete the branch or pick again.`);
+    ctx.log(`Keeping ${keep.length} commit(s) of ${branch}; dropping its old ${s.develop} base (${chain.length - own.length} commits).`);
+    const lease = onOrigin ? (await git(cwd, ['rev-parse', `origin/${branch}`])).stdout.trim() : undefined;
+    const dir = await dirFor(ctx, repo, branch);
+    await backup(ctx, dir, branch);
+    await ctx.run(dir, ['reset', '--hard', `origin/${s.develop}`], { noHooks: true });
+    try {
+      // No -x: these are already copies; their messages keep the trailer of the first pick.
+      await ctx.run(dir, ['cherry-pick', ...keep], { noHooks: true, timeout: 600_000 });
+    } catch (e) {
+      return conflictOr(e, dir, { repo, branch, force: onOrigin, lease }).catch(async (err) => {
+        await git(dir, ['cherry-pick', '--quit']);
+        throw err;
+      });
+    }
+    await push(ctx, repo, branch, { force: onOrigin, lease });
     return { dir };
   },
 
@@ -450,7 +498,7 @@ const ACTIONS = {
     if (c?.onlyB) await ctx.run(dir, ['merge', '--ff-only', `origin/${epicName}`]);
     await backup(ctx, dir, epicName);
     try {
-      await ctx.run(dir, ['cherry-pick', ...regular], { noHooks: true, timeout: 600_000 });
+      await ctx.run(dir, ['cherry-pick', '-x', ...regular], { noHooks: true, timeout: 600_000 });
     } catch (e) {
       return conflictOr(e, dir, { repo, branch: epicName }).catch(async (err) => {
         await git(dir, ['cherry-pick', '--quit']);
@@ -586,6 +634,7 @@ const TITLES = {
   'rebase-epic': 'Rebase epic',
   'pick-epic': 'Cherry-pick to epic',
   'pick-develop': 'Cherry-pick to develop',
+  'rebuild-develop': 'Rebuild from develop',
   continue: 'Continue',
   skip: 'Skip commit',
   abort: 'Abort',

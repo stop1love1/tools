@@ -13,6 +13,7 @@ function getEpic(key) {
 }
 
 function epicBlock(issue) {
+  gitState.epicTableOpen.delete(issue.key); // a freshly opened drawer starts with the ticket table folded
   const box = h('section', { class: 'block git-flow', id: 'git-flow' }, h('h3', null, icon('branch'), 'Git · epic'), h('div', { class: 'muted small' }, 'Reading the epic branch…'));
   getEpic(issue.key).then(
     (d) => fillEpic(box, issue, d),
@@ -51,11 +52,12 @@ function fillEpic(box, issue, d) {
   const live = repos.filter((r) => !d.repos[r].error);
   const exists = live.filter((r) => d.repos[r].exists);
   const M = (r) => gitState.mrData[r];
+  const children = new Set(Object.keys(gitState.titles || {}));
 
   // The epic's tickets across repos: one entry per ticket, with each repo's commits.
   const byKey = new Map();
   for (const r of exists) {
-    for (const t of epicTickets(d.repos[r], issue.key)) {
+    for (const t of epicTickets(d.repos[r], issue.key, children)) {
       if (!byKey.has(t.key)) byKey.set(t.key, { key: t.key, keys: [], title: t.title, latest: 0, repos: {} });
       const x = byKey.get(t.key);
       x.repos[r] = t;
@@ -64,45 +66,51 @@ function fillEpic(box, issue, d) {
       x.latest = Math.max(x.latest, t.latest);
     }
   }
-  const needsPick = (t) => Object.values(t.repos).some((x) => x.missing.length > 0);
+  const needsPick = (t) => Object.values(t.repos).some(hasWork);
   const tickets = [...byKey.values()].sort((a, b) => needsPick(b) - needsPick(a) || b.latest - a.latest);
 
   const uat = Object.fromEntries(exists.map((r) => [r, epicUat(issue, d.repos[r], M(r))]));
   const items = [];
-  for (const r of live.filter((x) => !d.repos[x].exists)) {
-    const e = d.repos[r];
-    items.push({
-      state: 'wait',
-      repo: repoLabel(r),
-      title: `${e.name} is not on origin`,
-      why: `Created from ${UAT()} when the first task of this epic starts.`,
-      secondary: [act(`Create from ${UAT()}`, () => gitAction({ action: 'ensure-epic', repo: r, epic: issue.key }, `Create ${e.name} from origin/${UAT()} and push it?`))],
-    });
-  }
+  // A repo without the epic branch is simply not started — nothing to do or wait for, so it stays out of "Next"
+  // (the footer offers creating it).
   for (const r of exists) if (uat[r].item) items.push(uat[r].item);
+  const show = (t) => () => {
+    gitState.epicTableOpen.add(issue.key);
+    gitState.epicOpen.add(t.key);
+    LS.set('epicFilter', false);
+    redraw();
+  };
   const picks = tickets.flatMap((t) =>
     exists
-      .filter((r) => t.repos[r]?.missing.length > 0)
+      .filter((r) => t.repos[r] && hasWork(t.repos[r]))
       .map((r) => {
         const x = t.repos[r];
+        const name = t.keys.length > 1 ? `${t.keys[0]} (+${t.keys.length - 1})` : t.key;
+        if (x.needsRebuild) {
+          return {
+            state: 'warn',
+            repo: repoLabel(r),
+            title: `${name}: ${x.target} is based on an old ${DEV()}`,
+            why: `${DEV()} was rewritten after the branch was cut: its MR would bring back ${x.stale} old merge(s). Rebuild it from ${DEV()} (only its own commits are kept, backup kept)${x.missing.length ? `, then pick the ${x.missing.length} missing commit(s)` : ''}.`,
+            primary: rebuildDevAct(r, x.target, x.stale),
+            secondary: [act('Show commits', show(t))],
+          };
+        }
+        const n = tickedOf(pickScope(x), x.missing).length;
         return {
           state: 'todo',
           repo: repoLabel(r),
-          title: `${t.keys.join(' + ')}: ${x.missing.length} commit(s) not on ${DEV()}`,
+          title: `${name}: ${x.missing.length} commit(s) not on ${DEV()}`,
           why: x.target ? `Into ${x.target}, then pushed.` : `No -${DEV()} branch known yet — you'll be asked for one.`,
-          primary: act(`Cherry-pick ${x.missing.length} → ${DEV()}`, () => pickTicket(r, x, x.missing.map((c) => c.sha), redraw)),
-          secondary: [
-            act('Choose commits', () => {
-              gitState.epicOpen.add(t.key);
-              LS.set('epicFilter', false);
-              redraw();
-            }),
-          ],
+          primary: act(n === x.missing.length ? `Cherry-pick ${n} → ${DEV()}` : `Cherry-pick ${n} of ${x.missing.length} → ${DEV()}`, () => pickTicket(r, x, redraw)),
+          secondary: [act('Choose commits', show(t))],
         };
       }),
   );
+  // Rebuilds first (warn), then picks; the rest is in the ticket table.
+  picks.sort((a, b) => (a.state === 'warn' ? 0 : 1) - (b.state === 'warn' ? 0 : 1));
   items.push(...picks.slice(0, 4));
-  if (picks.length > 4) items.push({ state: 'todo', title: `+${picks.length - 4} more to cherry-pick — see the tickets below` });
+  if (picks.length > 4) items.push({ state: 'todo', title: `+${picks.length - 4} more — see the tickets below` });
   const rank = { warn: 0, todo: 1, wait: 2 };
   items.sort((a, b) => rank[a.state] - rank[b.state]);
   const allDone = exists.length > 0 && !items.length && exists.every((r) => !d.repos[r].pending);
@@ -113,8 +121,8 @@ function fillEpic(box, issue, d) {
       ...broken,
       live.length > 0 && nextBlock(items, { allDone, mrOff: exists.some((r) => M(r)?.error) }),
       exists.length > 0 && epicTable(exists.map((r) => d.repos[r]), uat, tickets),
-      exists.length > 0 && ticketTable(tickets, exists, redraw),
-      exists.length > 0 && epicFooter(issue, exists.map((r) => d.repos[r]), tickets, uat),
+      exists.length > 0 && ticketTable(tickets, exists, redraw, issue.key),
+      live.length > 0 && epicFooter(issue, exists.map((r) => d.repos[r]), tickets, uat, live.filter((r) => !d.repos[r].exists).map((r) => d.repos[r])),
       mrUnavailable(exists, null),
     ].filter(Boolean),
   );
@@ -133,9 +141,13 @@ function epicUat(issue, e, M) {
     return { cell: { state: 'done', text: done ? `Merged into ${UAT()}` : `In ${UAT()}`, sub: done ? `${fmtDate(done.date)} · ${done.sha}` : '' } };
   }
   if (c) {
+    const files = c.files.length ? `${c.files.length} file(s): ${c.files.join(', ')}` : '';
+    // No MR yet: only a heads-up in the table — there is nothing to resolve on until the epic is ready for uat.
+    if (!m) return { cell: { state: 'warn', text: `Would conflict with ${UAT()}`, sub: `no MR yet · ${waiting}`, title: files } };
+    // Team rule (git-workflow.mdc step 4): never rebase / force-push the epic — tell the lead, resolve on the MR.
     return {
-      cell: { state: 'warn', text: m ? `MR !${m.iid} conflicts` : `Conflicts with ${UAT()}`, sub: waiting },
-      item: { state: 'warn', repo: label, title: `The epic conflicts with ${UAT()}${conflictFiles(c)}`, why: 'The epic is shared: tell the team before rebasing it (force-push). Open task branches will need a rebase afterwards.', primary: rebaseEpicAct(e.repo, issue.key), secondary: [open].filter(Boolean) },
+      cell: { state: 'warn', text: `MR !${m.iid} conflicts`, sub: waiting, title: files },
+      item: { state: 'warn', repo: label, title: `Epic MR !${m.iid} conflicts with ${UAT()}${conflictFiles(c)}`, why: EPIC_CONFLICT_WHY(), secondary: [open] },
     };
   }
   if (m) {
@@ -165,11 +177,13 @@ function epicTable(epics, uat, tickets) {
   const cols = `--cols:${epics.length}`;
   const row = (cls, ...kids) => h('div', { class: `gm-row${cls ? ' ' + cls : ''}`, style: cols }, kids);
   const label = (text, hint) => h('div', { class: 'gm-label' }, h('b', null, text), hint && h('span', null, hint));
-  const cell = (c, extra) => h('div', { class: 'gm-cell', 'data-state': c.state }, stateDot(c.state), h('span', { class: 'gm-text' }, h('b', null, c.text), c.sub && h('span', null, c.sub), extra));
+  const cell = (c, extra) => h('div', { class: 'gm-cell', 'data-state': c.state, title: c.title || null }, stateDot(c.state), h('span', { class: 'gm-text' }, h('b', null, c.text), c.sub && h('span', null, c.sub), extra));
   const dev = (e) => {
-    const commits = tickets.flatMap((t) => t.repos[e.repo]?.commits || []);
+    const commits = tickets.flatMap((t) => (t.repos[e.repo]?.commits || []).filter((c) => !c.skip));
     if (!commits.length) return cell({ state: 'na', text: '—', sub: 'no commits of its own yet' });
     const on = commits.filter((c) => c.inDevelop || c.onDevBranch).length;
+    const stale = tickets.filter((t) => t.repos[e.repo]?.needsRebuild).length;
+    if (stale) return cell({ state: 'warn', text: `${on} / ${commits.length} commits`, sub: `${stale} -${DEV()} branch(es) on an old ${DEV()} — rebuild` }, h('span', { class: 'eprog' }, h('i', { style: `width:${Math.round((on / commits.length) * 100)}%` })));
     return cell({ state: on === commits.length ? 'done' : 'todo', text: `${on} / ${commits.length} commits`, sub: '' }, h('span', { class: 'eprog' }, h('i', { style: `width:${Math.round((on / commits.length) * 100)}%` })));
   };
   return h(
@@ -181,29 +195,43 @@ function epicTable(epics, uat, tickets) {
   );
 }
 
-function ticketTable(tickets, repos, redraw) {
-  const todo = tickets.filter((t) => Object.values(t.repos).some((x) => x.missing.length > 0)).length;
+// Folded when the drawer opens (the "Next" block already lists what needs doing); "Choose commits" / "Show commits"
+// open it. Open / closed lives in gitState, so the redraws MR / title loading cause don't fold it again.
+function ticketTable(tickets, repos, redraw, epicKey) {
+  const todo = tickets.filter((t) => Object.values(t.repos).some(hasWork)).length;
   const showAll = LS.get('epicFilter', false) || !todo;
-  const list = showAll ? tickets : tickets.filter((t) => Object.values(t.repos).some((x) => x.missing.length > 0));
+  const list = showAll ? tickets : tickets.filter((t) => Object.values(t.repos).some(hasWork));
   const cols = `--cols:${repos.length}`;
+  const open = gitState.epicTableOpen.has(epicKey);
+  const toggle = () => {
+    open ? gitState.epicTableOpen.delete(epicKey) : gitState.epicTableOpen.add(epicKey);
+    redraw();
+  };
   return h(
     'div',
-    { class: 'etable' },
+    { class: `etable${open ? ' open' : ''}` },
     h(
       'div',
       { class: 'etable-head' },
-      h('span', { class: 'gpanel-label' }, 'Tickets on the epic'),
+      h(
+        'button',
+        { class: 'etable-toggle', 'aria-expanded': String(open), onClick: toggle },
+        icon('chevRight'),
+        h('span', { class: 'gpanel-label' }, 'Tickets on the epic'),
+        h('span', { class: 'muted small' }, todo > 0 ? `${todo} to do · ${tickets.length}` : String(tickets.length)),
+      ),
       h('span', { class: 'spacer' }),
-      todo > 0
+      !open ? null : todo > 0
         ? h(
             'div',
             { class: 'gtabs' },
-            h('button', { 'aria-selected': String(!showAll), onClick: () => (LS.set('epicFilter', false), redraw()) }, `Needs pick (${todo})`),
+            h('button', { 'aria-selected': String(!showAll), onClick: () => (LS.set('epicFilter', false), redraw()) }, `To do (${todo})`),
             h('button', { 'aria-selected': String(showAll), onClick: () => (LS.set('epicFilter', true), redraw()) }, `All (${tickets.length})`),
           )
         : h('span', { class: 'muted small' }, tickets.length ? `${tickets.length} ticket(s) · all on ${DEV()}` : 'No tickets with commits yet'),
     ),
-    list.length > 0 &&
+    open &&
+      list.length > 0 &&
       h(
         'div',
         { class: 'etickets' },
@@ -216,7 +244,7 @@ function ticketTable(tickets, repos, redraw) {
 // The epic's commits per ticket: which are on develop, which still need picking, and where they should go.
 // Only tickets of this epic (per Jira) are listed; commits of other epics' tickets — e.g. from an epic this one
 // was stacked on — and commits without a ticket are left out entirely.
-function epicTickets(e, epicKey) {
+function epicTickets(e, epicKey, children = new Set()) {
   const map = new Map();
   for (const g of e.groups) {
     for (const c of g.commits) {
@@ -231,19 +259,31 @@ function epicTickets(e, epicKey) {
     }
   }
   const ours = (key) => key.startsWith(`${KEY()}-`) && (!e.ticketEpics?.[key] || e.ticketEpics[key] === epicKey);
-  const tickets = groupWorkedTogether(e, [...map.values()].filter((t) => ours(t.key)), ours);
+  const own = [...map.values()].filter((t) => ours(t.key));
+  // Only tickets of the epic join a row: those with commits here, or the epic's children on Jira. A key in a commit's
+  // "(…)" is usually a sub-task of the ticket — it is not a second ticket done together.
+  const rowKeys = new Set([...own.map((t) => t.key), ...children]);
+  const tickets = groupWorkedTogether(e, own, (k) => ours(k) && rowKeys.has(k));
   for (const t of tickets) {
     t.repo = e.repo;
     t.commits.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
-    t.missing = t.commits.filter((c) => !c.inDevelop && !c.onDevBranch);
+    // A commit reverted later on the epic and its revert (c.skip, from the server) are never picked.
+    t.skipped = t.commits.filter((c) => c.skip && !c.inDevelop && !c.onDevBranch);
+    t.missing = t.commits.filter((c) => !c.inDevelop && !c.onDevBranch && !c.skip);
     t.title = e.ticketTitles?.[t.key] || '';
     const b = e.branches?.[t.key] || {};
     const uatBranch = t.uatBranch || b.uat;
     t.target = gitState.devTargets.get(`${e.repo}:${t.key}`) || b.develop || (uatBranch ? toDevName(uatBranch) : '');
+    t.stale = (t.target && e.devStale?.[t.target]) || 0;
+    // Its -develop branch sits on an old develop and still has to go in: rebuild it, even when nothing is left to pick.
+    t.needsRebuild = t.stale > 0 && t.commits.some((c) => !c.inDevelop && !c.skip);
     t.latest = Math.max(...t.commits.map((c) => Date.parse(c.date)));
   }
   return tickets;
 }
+
+const pickScope = (t) => `${t.repo}:${t.key}:edev`;
+const hasWork = (x) => x.missing.length > 0 || x.needsRebuild;
 
 const byTicket = (a, b) => Number(a.split('-')[1]) - Number(b.split('-')[1]);
 
@@ -292,8 +332,12 @@ function groupWorkedTogether(e, tickets, ours) {
 
 const devTargetValidate =(x) => (devBranchRe().test(x.trim()) ? '' : `Expected feature/${KEY()}-123-description-${DEV()}`);
 
-async function pickTicket(repo, t, shas, redraw) {
-  if (!shas.length) return toast('No commit selected', 'error');
+// Cherry-picks the ticked commits of a ticket (every pick button of the epic view goes through here, so they all
+// pick the same thing: what is ticked in the ticket's row).
+async function pickTicket(repo, t, redraw) {
+  const list = tickedOf(pickScope(t), t.missing);
+  if (!list.length) return toast('No commit selected', 'error');
+  if (t.stale) return toast(`${t.target} is based on an old ${DEV()} — rebuild it first`, 'error');
   if (!t.target) {
     const v = await promptPop(`Cherry-pick ${t.key} to ${DEV()}`, {
       value: `feature/${t.key}-`,
@@ -306,8 +350,11 @@ async function pickTicket(repo, t, shas, redraw) {
     gitState.devTargets.set(`${repo}:${t.key}`, t.target);
     redraw?.();
   }
-  const list = t.missing.filter((c) => shas.includes(c.sha));
-  gitAction({ action: 'pick-develop', repo, branch: t.target, shas }, `Cherry-pick ${list.length} commit(s) of ${t.key} onto ${t.target} and push it:\n\n${list.map((c) => `${c.short} ${stripTicket(c.subject)}`).join('\n')}`);
+  const left = t.skipped?.length ? `\n\nLeft out (reverted later on the epic, or the revert itself): ${t.skipped.map((c) => c.short).join(', ')}` : '';
+  gitAction(
+    { action: 'pick-develop', repo, branch: t.target, shas: list.map((c) => c.sha) },
+    `Cherry-pick -x ${list.length} commit(s) of ${t.key} onto ${t.target} and push it:\n\n${list.map((c) => `${c.short} ${stripTicket(c.subject)}`).join('\n')}${left}`,
+  );
 }
 
 async function changeTarget(t, redraw) {
@@ -325,25 +372,38 @@ function ticketRow(t, repos, redraw) {
   };
   const titleOf = (k) => state.issues.find((i) => i.key === k)?.summary || gitState.titles?.[k] || '';
   const summary = titleOf(t.key) || t.title || '';
-  const direct = Object.values(t.repos).some((x) => x.direct);
-  const complete = !Object.values(t.repos).some((x) => x.missing.length);
+  const complete = !Object.values(t.repos).some(hasWork);
   const mark = (c) =>
     c.inDevelop ? h('span', { class: 'emark ok', title: `In ${DEV()}` }, '✓') : c.onDevBranch ? h('span', { class: 'emark picked', title: `Picked onto the -${DEV()} branch, not merged yet` }, '●') : h('span', { class: 'emark todo', title: `Not on ${DEV()} yet` }, '○');
 
+  // The row only says where each repo stands; the one pick button is in the opened row, next to the checkboxes
+  // (and in "Next", which picks the same ticked commits).
   const cell = (r) => {
     const x = t.repos[r];
     if (!x) return h('div', { class: 'et-cell muted' }, '—');
-    if (x.missing.length) return h('div', { class: 'et-cell' }, actEl(act(`Pick ${x.missing.length}`, () => pickTicket(r, x, x.missing.map((c) => c.sha), redraw), { title: x.target ? `→ ${x.target}` : `Choose the -${DEV()} branch` }), 'primary'));
-    return h('div', { class: 'et-cell ok-text' }, stateDot('done'), `${x.commits.length} / ${x.commits.length}`);
+    const live = x.commits.length - x.skipped.length;
+    if (x.needsRebuild) return h('button', { class: 'et-cell et-open warn-text', title: `${x.target} is based on an old ${DEV()} — open to rebuild it`, onClick: toggle }, stateDot('warn'), 'old base');
+    if (x.missing.length) return h('button', { class: 'et-cell et-open', title: `Open to choose and cherry-pick → ${x.target || `a -${DEV()} branch`}`, onClick: toggle }, stateDot('todo'), `${x.missing.length} to pick`);
+    return h('div', { class: 'et-cell ok-text', title: x.skipped.length ? `${x.skipped.length} reverted commit(s) left out` : null }, stateDot('done'), `${live} / ${live}`);
   };
 
   const repoBody = (r) => {
     const x = t.repos[r];
     if (!x) return null;
-    const boxes = x.missing.map((c) => h('input', { type: 'checkbox', checked: true, value: c.sha, 'aria-label': c.subject }));
-    const done = x.commits.filter((c) => !x.missing.includes(c));
-    const line = (c, lead) =>
-      h('li', { class: 'ecommit' }, h(lead ? 'label' : 'span', { class: lead ? '' : 'elabel' }, lead, mark(c), h('span', { class: 'mono muted' }, c.short), h('span', { class: `gsubj${lead ? '' : ' muted'}`, title: c.subject }, stripTicket(c.subject))), h('span', { class: 'muted small', title: `${c.author} · ${fmtDate(c.date)}` }, rel(c.date)));
+    const scope = pickScope(x);
+    const boxes = x.missing.map((c) => tickBox(scope, c, redraw));
+    const n = tickedOf(scope, x.missing).length;
+    const done = x.commits.filter((c) => !x.missing.includes(c) && !x.skipped.includes(c));
+    const line = (c, lead, note) =>
+      h(
+        'li',
+        { class: 'ecommit' },
+        h(lead ? 'label' : 'span', { class: lead ? '' : 'elabel' }, lead, mark(c), h('span', { class: 'mono muted' }, c.short), h('span', { class: `gsubj${lead ? '' : ' muted'}`, title: c.subject }, stripTicket(c.subject))),
+        note ? h('span', { class: 'muted small' }, note) : h('span', { class: 'muted small', title: `${c.author} · ${fmtDate(c.date)}` }, rel(c.date)),
+      );
+    const pickBtn = x.needsRebuild
+      ? actEl(rebuildDevAct(r, x.target, x.stale), 'primary')
+      : actEl(act(n === x.missing.length ? `Cherry-pick ${n} → ${DEV()}` : `Cherry-pick ${n} of ${x.missing.length} → ${DEV()}`, () => pickTicket(r, x, redraw)), 'primary');
     return h(
       'div',
       { class: 'et-repo' },
@@ -351,11 +411,19 @@ function ticketRow(t, repos, redraw) {
         'div',
         { class: 'etarget' },
         h('b', null, repoLabel(r)),
-        x.missing.length > 0 && ['→ ', x.target ? code(x.target) : h('span', { class: 'muted' }, `no -${DEV()} branch yet`), h('button', { class: 'link-btn', onClick: () => changeTarget(x, redraw) }, x.target ? 'change' : 'choose')],
-        !x.missing.length && h('span', { class: 'ok-text small' }, `all ${x.commits.length} on ${DEV()}`),
+        hasWork(x) && ['→ ', x.target ? code(x.target) : h('span', { class: 'muted' }, `no -${DEV()} branch yet`), h('button', { class: 'link-btn', onClick: () => changeTarget(x, redraw) }, x.target ? 'change' : 'choose')],
+        !x.missing.length && h('span', { class: 'ok-text small' }, `all ${x.commits.length - x.skipped.length} picked`),
       ),
+      x.needsRebuild && h('div', { class: 'gstep-note warn-text' }, `${x.target} carries ${x.stale} merge commit(s) that ${DEV()} no longer has — ${DEV()} was rewritten after it was cut. Rebuild it from ${DEV()} (own commits kept, backup kept)${x.missing.length ? ', then pick' : ''}.`),
       x.missing.length > 0 && h('ul', { class: 'ecommits' }, x.missing.map((c, i) => line(c, boxes[i]))),
-      x.missing.length > 0 && h('div', { class: 'gacts' }, actEl(act(`Cherry-pick → ${DEV()}`, () => pickTicket(r, x, boxes.filter((b) => b.checked).map((b) => b.value), redraw)), 'primary')),
+      hasWork(x) && h('div', { class: 'gacts' }, pickBtn),
+      x.skipped.length > 0 &&
+        h(
+          'details',
+          { class: 'edone' },
+          h('summary', null, `${x.skipped.length} left out — reverted later on the epic (work redone), or the revert itself`),
+          h('ul', { class: 'ecommits' }, x.skipped.map((c) => line(c, null, skipText(c)))),
+        ),
       done.length > 0 && h('details', { class: 'edone' }, h('summary', null, `${done.length} already on ${DEV()}`), h('ul', { class: 'ecommits' }, done.map((c) => line(c)))),
     );
   };
@@ -376,7 +444,6 @@ function ticketRow(t, repos, redraw) {
           t.keys.map((k, i) => [i > 0 && ' + ', h('a', { class: 'key', href: '#' + k, onClick: (ev) => (ev.preventDefault(), openIssueChip(k)) }, i > 0 ? k.replace(`${KEY()}-`, '') : k)]),
         ),
         h('button', { class: 'et-sum gsubj', title: summary, onClick: toggle }, summary),
-        direct && h('span', { class: 'gnomr', title: 'Committed straight to the epic, without a task MR', 'aria-label': 'no task MR' }, icon('unlink')),
       ),
       repos.map(cell),
     ),
@@ -384,14 +451,21 @@ function ticketRow(t, repos, redraw) {
   );
 }
 
-function epicFooter(issue, epics, tickets, uat) {
-  const noMr = tickets.filter((t) => Object.values(t.repos).some((x) => x.direct)).length;
+function epicFooter(issue, epics, tickets, uat, missing = []) {
   const fetched = Math.min(...epics.map((e) => e.fetchedAt || Infinity));
   const many = epics.length > 1;
   return h(
     'div',
     { class: 'gfooter' },
-    noMr > 0 && h('span', null, `${noMr} ticket(s) reached the epic without a task MR (no merge commit to revert)`),
+    // A repo without the epic branch: not started there (the first task's start creates it).
+    missing.map((e) =>
+      h(
+        'span',
+        null,
+        `${repoLabel(e.repo)}: no ${e.name} yet · `,
+        h('button', { class: 'link-btn', onClick: () => gitAction({ action: 'ensure-epic', repo: e.repo, epic: issue.key }, `Create ${e.name} from origin/${UAT()} and push it?\n\nUsually not needed: starting the first task in ${repoLabel(e.repo)} creates it.`) }, `create from ${UAT()}`),
+      ),
+    ),
     Number.isFinite(fetched) && h('span', null, `Fetched ${rel(new Date(fetched).toISOString())}`),
     h(
       'button',
@@ -403,9 +477,8 @@ function epicFooter(issue, epics, tickets, uat) {
       },
       'Fetch now',
     ),
-    // A conflict already puts the rebase in "Next"; otherwise it is only worth it when the MR conflicts.
-    epics
-      .filter((e) => e.behindUat > 0 && uat[e.repo].cell.state !== 'warn')
-      .map((e) => actEl({ ...rebaseEpicAct(e.repo, issue.key), label: `Rebase ${many ? `the ${repoLabel(e.repo)} ` : 'the '}epic onto ${UAT()}… (only if its MR conflicts)` }, 'more')),
+    // Team rule: the epic is never rebased / force-pushed. Being behind uat is normal (uat keeps moving), so the
+    // escape hatch only shows while the epic → uat MR conflicts — for when the lead decides on a rebase anyway.
+    epics.filter((e) => uat[e.repo]?.item?.state === 'warn').map((e) => actEl({ ...rebaseEpicAct(e.repo, issue.key), ...(many && { label: `${repoLabel(e.repo)}: ${rebaseEpicAct(e.repo, issue.key).label}` }) }, 'more')),
   );
 }

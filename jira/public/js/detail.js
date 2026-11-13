@@ -100,6 +100,10 @@ function renderDetail(issue, d) {
 
   const block = (iconName, title, count, content) =>
     h('section', { class: 'block' }, h('h3', null, iconName && icon(iconName), title, count != null && h('span', { class: 'n' }, count)), content);
+  // Reference lists (docs, subtasks): closed each time the drawer opens, so git / description come first; the
+  // heading keeps the count and opens it.
+  const foldBlock = (iconName, title, count, content) =>
+    h('details', { class: 'block fold' }, h('summary', null, h('h3', null, icon('chevRight'), iconName && icon(iconName), title, count != null && h('span', { class: 'n' }, count))), content);
 
   // One compact line of facts; the drawer's space goes to git, description and comments.
   const fact = (label, ...value) => h('span', { class: 'fact' }, h('span', { class: 'fact-l' }, label), ...value);
@@ -140,7 +144,7 @@ function renderDetail(issue, d) {
   const side = h(
     'div',
     { class: 'detail-side' },
-    docs.length > 0 && block('doc', 'Confluence docs', docs.length, docsList),
+    docs.length > 0 && foldBlock('doc', 'Confluence docs', docs.length, docsList),
     issue.attachments.length > 0 &&
       block(
         'clip',
@@ -172,7 +176,7 @@ function renderDetail(issue, d) {
         ),
       ),
     d?.children.length > 0 &&
-      block(
+      foldBlock(
         'tree',
         'Subtasks',
         d.children.length,
