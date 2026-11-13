@@ -280,6 +280,7 @@ function serverEnv() {
     env.DASHBOARD_OAUTH_FILE ??= path.join(data, '.oauth.json');
     env.DASHBOARD_MCP_TOKEN_FILE ??= path.join(data, '.mcp-token');
     env.DASHBOARD_DAILY_STATE_FILE ??= path.join(data, '.daily-report-state.json');
+    env.DASHBOARD_AUTO_CLAUDE_STATE_FILE ??= path.join(data, '.auto-claude-state.json');
   }
   return env;
 }
